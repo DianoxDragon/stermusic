@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=SterMusic
+GenericName=Lecteur de musique
+Comment=Écouter sa bibliothèque musicale
+Exec=stermusic %f
+Icon=stermusic
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=musique;music;lecteur;player;mp3;flac;playlist;
+StartupWMClass=stermusic

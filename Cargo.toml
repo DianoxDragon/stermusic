@@ -1,0 +1,34 @@
+[package]
+name = "stermusic"
+version = "0.2.0"
+edition = "2021"
+description = "SterMusic — un lecteur de musique pour Linux"
+license = "MIT"
+
+[dependencies]
+# Interface graphique (même version que SterCode) ; icônes SVG
+eframe = { version = "0.31", features = ["persistence"] }
+egui_extras = { version = "0.31", default-features = false, features = ["svg"] }
+# Lecture audio (décodage via Symphonia : MP3, FLAC, OGG/Vorbis, WAV, AAC/M4A)
+rodio = { version = "0.20", default-features = false, features = ["symphonia-all"] }
+# Lecture des tags et des pochettes intégrées
+lofty = "0.22"
+# Pochettes et fond Mica
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif"] }
+# Contrôle depuis le bureau (MPRIS) : touches multimédia, widget lecteur de KDE / GNOME
+souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+# Boîtes de dialogue (portail XDG, sans GTK)
+rfd = "0.15"
+walkdir = "2"
+fastrand = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+# Le décodage audio et des images est lent sans optimisation, même en debug.
+[profile.dev.package."*"]
+opt-level = 2

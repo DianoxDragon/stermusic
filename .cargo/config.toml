@@ -1,0 +1,4 @@
+# La partition du projet est en NTFS : on compile sur le disque Linux
+# (les scripts de build plantent quand ils sont exécutés depuis NTFS).
+[build]
+target-dir = "/home/dianox/.cache/stermusic-target"

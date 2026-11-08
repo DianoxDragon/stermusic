@@ -1,0 +1,672 @@
+//! Habillage de la fenêtre : barre de titre intégrée, barre latérale, dialogues, notifications.
+
+use eframe::egui::viewport::ResizeDirection;
+use eframe::egui::{
+    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind,
+    ViewportCommand,
+};
+
+use super::{Action, Dialog, Page, Playlist, PlaylistId, SterMusic, View};
+use crate::anim::{self, Easing};
+use crate::icons::{self, Icon};
+use crate::{theme, widgets};
+
+pub const TITLE_HEIGHT: f32 = 40.0;
+const RESIZE_MARGIN: f32 = 5.0;
+const SIDEBAR_W: f32 = 264.0;
+const SIDEBAR_MIN: f32 = 60.0;
+
+/// Bord de fenêtre sous la souris (fenêtre sans bordure : on gère le redimensionnement).
+pub fn resize_direction(ctx: &egui::Context) -> Option<ResizeDirection> {
+    if ctx.input(|i| {
+        i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)
+    }) {
+        return None;
+    }
+    let pos = ctx.input(|i| i.pointer.hover_pos())?;
+    let r = ctx.screen_rect();
+    let (left, right) = (
+        pos.x < r.left() + RESIZE_MARGIN,
+        pos.x > r.right() - RESIZE_MARGIN,
+    );
+    let (top, bottom) = (
+        pos.y < r.top() + RESIZE_MARGIN,
+        pos.y > r.bottom() - RESIZE_MARGIN,
+    );
+    Some(match (left, right, top, bottom) {
+        (true, _, true, _) => ResizeDirection::NorthWest,
+        (_, true, true, _) => ResizeDirection::NorthEast,
+        (true, _, _, true) => ResizeDirection::SouthWest,
+        (_, true, _, true) => ResizeDirection::SouthEast,
+        (true, ..) => ResizeDirection::West,
+        (_, true, ..) => ResizeDirection::East,
+        (_, _, true, _) => ResizeDirection::North,
+        (_, _, _, true) => ResizeDirection::South,
+        _ => return None,
+    })
+}
+
+pub fn apply_resize(ctx: &egui::Context, direction: Option<ResizeDirection>) {
+    let Some(direction) = direction else { return };
+    let cursor = match direction {
+        ResizeDirection::North | ResizeDirection::South => egui::CursorIcon::ResizeVertical,
+        ResizeDirection::East | ResizeDirection::West => egui::CursorIcon::ResizeHorizontal,
+        ResizeDirection::NorthWest | ResizeDirection::SouthEast => egui::CursorIcon::ResizeNwSe,
+        ResizeDirection::NorthEast | ResizeDirection::SouthWest => egui::CursorIcon::ResizeNeSw,
+    };
+    ctx.set_cursor_icon(cursor);
+    if ctx.input(|i| i.pointer.primary_pressed()) {
+        ctx.send_viewport_cmd(ViewportCommand::BeginResize(direction));
+    }
+}
+
+/// Zone qui déplace la fenêtre (glisser) et l'agrandit (double-clic).
+pub fn drag_area(ui: &mut egui::Ui, rect: Rect, id: &str) {
+    let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
+    if response.drag_started_by(egui::PointerButton::Primary) {
+        ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+    }
+    if response.double_clicked() {
+        let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+        ui.ctx()
+            .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Bouton de fenêtre (réduire, agrandir, fermer), à la Windows 11 ; fermer rougit au survol.
+fn window_button(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    icon: Icon,
+    close: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let response = ui.interact(rect, ui.id().with(("winbtn", icon as u8)), Sense::click());
+    let t = widgets::hover_t(ui, response.id, response.hovered());
+    if t > 0.0 {
+        let fill = if close {
+            theme::DANGER
+        } else {
+            theme::white(0x14)
+        };
+        ui.painter().rect_filled(rect, 0.0, fill.gamma_multiply(t));
+    }
+    let color = if close {
+        theme::mix(theme::TEXT_2, Color32::WHITE, t)
+    } else {
+        theme::mix(theme::TEXT_2, theme::TEXT, t)
+    };
+    let size = if icon == Icon::WinMaximize || icon == Icon::WinRestore {
+        12.0
+    } else {
+        15.0
+    };
+    icons::paint_centered(ui.painter(), icon, rect.center(), size, color);
+    response.on_hover_text(tooltip)
+}
+
+impl SterMusic {
+    pub(super) fn title_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::top("title")
+            .exact_height(TITLE_HEIGHT)
+            .frame(egui::Frame::NONE)
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
+                drag_area(ui, rect, "titlebar");
+
+                let mut x = rect.left() + 8.0;
+                let can_back = !self.history.is_empty() || !matches!(self.view, View::Page(_));
+                let t = anim::toggle(
+                    ui.ctx(),
+                    egui::Id::new("back_visible"),
+                    can_back,
+                    anim::NORMAL,
+                );
+                if t > 0.01 {
+                    let r =
+                        Rect::from_center_size(pos2(x + 16.0, rect.center().y), vec2(32.0, 32.0));
+                    let resp = ui.put(r, |ui: &mut egui::Ui| {
+                        ui.set_opacity(t);
+                        widgets::icon_button(ui, Icon::ArrowLeft, "Retour (Échap)", 32.0, 16.0)
+                    });
+                    if resp.clicked() && can_back {
+                        self.actions.push(Action::Back);
+                    }
+                    x += 40.0 * t;
+                }
+
+                // Logo : note de musique sur le dégradé de marque.
+                let logo =
+                    Rect::from_center_size(pos2(x + 12.0, rect.center().y), vec2(20.0, 20.0));
+                theme::brand_fill(ui.painter(), logo, 5, 1.0);
+                icons::paint_centered(
+                    ui.painter(),
+                    Icon::Music,
+                    logo.center(),
+                    13.0,
+                    Color32::WHITE,
+                );
+                ui.painter().text(
+                    pos2(logo.right() + 10.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    "SterMusic",
+                    FontId::proportional(12.5),
+                    theme::TEXT_2,
+                );
+
+                // Boutons de fenêtre.
+                let bw = 46.0;
+                let close = Rect::from_min_size(
+                    pos2(rect.right() - bw, rect.top()),
+                    vec2(bw, TITLE_HEIGHT),
+                );
+                let max = close.translate(vec2(-bw, 0.0));
+                let min = max.translate(vec2(-bw, 0.0));
+                if window_button(ui, close, Icon::Close, true, "Fermer").clicked() {
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                }
+                let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                let (icon, tip) = if maximized {
+                    (Icon::WinRestore, "Restaurer")
+                } else {
+                    (Icon::WinMaximize, "Agrandir")
+                };
+                if window_button(ui, max, icon, false, tip).clicked() {
+                    ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+                }
+                if window_button(ui, min, Icon::WinMinimize, false, "Réduire").clicked() {
+                    ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                }
+                let mini = min.translate(vec2(-bw, 0.0));
+                if window_button(ui, mini, Icon::MiniPlayer, false, "Mini lecteur (Ctrl+M)")
+                    .clicked()
+                {
+                    self.actions.push(Action::ToggleMini);
+                }
+            });
+    }
+
+    pub(super) fn sidebar(&mut self, ctx: &egui::Context) {
+        let collapsed = self.settings.sidebar_collapsed;
+        let w = anim::value(
+            ctx,
+            egui::Id::new("sidebar_w"),
+            if collapsed { SIDEBAR_MIN } else { SIDEBAR_W },
+            anim::NORMAL,
+            Easing::OutExpo,
+        );
+        egui::SidePanel::left("sidebar")
+            .exact_width(w)
+            .resizable(false)
+            .frame(egui::Frame::NONE)
+            .show_separator_line(false)
+            .show(ctx, |ui| {
+                let rect = ui.max_rect();
+                let expanded = w > SIDEBAR_W * 0.75;
+                let mut y = rect.top() + 4.0;
+                let left = rect.left() + 6.0;
+                let inner_w = w - 12.0;
+
+                // Menu « hamburger ».
+                let r = Rect::from_min_size(pos2(left, y), vec2(48.0, 36.0));
+                if ui
+                    .put(r, |ui: &mut egui::Ui| {
+                        widgets::icon_button(ui, Icon::Menu, "", 40.0, 18.0)
+                    })
+                    .clicked()
+                {
+                    self.actions.push(Action::ToggleSidebar);
+                }
+                y += 42.0;
+
+                // Recherche.
+                if expanded {
+                    let r = Rect::from_min_size(pos2(left + 6.0, y), vec2(inner_w - 12.0, 34.0));
+                    self.search_box(ui, r);
+                } else {
+                    let r = Rect::from_min_size(pos2(left, y), vec2(48.0, 34.0));
+                    if ui
+                        .put(r, |ui: &mut egui::Ui| {
+                            widgets::icon_button(
+                                ui,
+                                Icon::Search,
+                                "Rechercher (Ctrl+F)",
+                                40.0,
+                                17.0,
+                            )
+                        })
+                        .clicked()
+                    {
+                        self.actions.push(Action::FocusSearch);
+                    }
+                }
+                y += 46.0;
+
+                // Navigation principale.
+                let queue_badge = self.queue.len();
+                let items = [
+                    (Page::Home, Icon::Home, "Accueil"),
+                    (Page::Library, Icon::Music, "Bibliothèque musicale"),
+                    (Page::Queue, Icon::ListMusic, "File d'attente"),
+                    (Page::Playlists, Icon::Library, "Playlists"),
+                ];
+                let active_page = match &self.view {
+                    View::Page(p) => Some(*p),
+                    View::Album(_) | View::Artist(_) => Some(Page::Library),
+                    View::Playlist(_) => Some(Page::Playlists),
+                    _ => None,
+                };
+                let mut pill_target = None;
+                for (page, icon, label) in items {
+                    let r = Rect::from_min_size(pos2(left, y), vec2(inner_w, 40.0));
+                    let badge =
+                        (page == Page::Queue && queue_badge > 0).then(|| queue_badge.to_string());
+                    let selected = active_page == Some(page);
+                    if nav_item(ui, r, icon, label, selected, expanded, badge.as_deref()).clicked()
+                    {
+                        self.actions.push(Action::Go(View::Page(page)));
+                    }
+                    if selected {
+                        pill_target = Some(r.center().y);
+                    }
+                    y += 42.0;
+                }
+
+                // Playlists, en accès rapide.
+                let bottom_reserved = 52.0;
+                if expanded {
+                    y += 6.0;
+                    ui.painter().hline(
+                        left + 12.0..=left + inner_w - 12.0,
+                        y,
+                        Stroke::new(1.0_f32, theme::stroke()),
+                    );
+                    y += 10.0;
+                    let list_rect = Rect::from_min_max(
+                        pos2(left, y),
+                        pos2(left + inner_w, rect.bottom() - bottom_reserved),
+                    );
+                    let mut entries: Vec<(PlaylistId, String)> =
+                        vec![(PlaylistId::Favorites, "Favoris".into())];
+                    entries.extend(
+                        self.settings
+                            .playlists
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| (PlaylistId::User(i), p.name.clone())),
+                    );
+                    let current_pl = if let View::Playlist(id) = self.view {
+                        Some(id)
+                    } else {
+                        None
+                    };
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("side_playlists")
+                            .auto_shrink(false)
+                            .show(ui, |ui| {
+                                for (id, name) in entries {
+                                    let (r, _) =
+                                        ui.allocate_exact_size(vec2(inner_w, 34.0), Sense::hover());
+                                    let icon = if id == PlaylistId::Favorites {
+                                        Icon::Heart
+                                    } else {
+                                        Icon::ListMusic
+                                    };
+                                    if sub_item(ui, r, icon, &name, current_pl == Some(id))
+                                        .clicked()
+                                    {
+                                        self.actions.push(Action::Go(View::Playlist(id)));
+                                    }
+                                }
+                            });
+                    });
+                }
+
+                // Paramètres, en bas.
+                let r = Rect::from_min_size(pos2(left, rect.bottom() - 48.0), vec2(inner_w, 40.0));
+                let selected = active_page == Some(Page::Settings);
+                if nav_item(
+                    ui,
+                    r,
+                    Icon::Settings,
+                    "Paramètres",
+                    selected,
+                    expanded,
+                    None,
+                )
+                .clicked()
+                {
+                    self.actions.push(Action::Go(View::Page(Page::Settings)));
+                }
+                if selected {
+                    pill_target = Some(r.center().y);
+                }
+
+                // Indicateur de sélection : une pilule qui glisse d'un élément à l'autre (Fluent).
+                if let Some(target) = pill_target {
+                    let cy = anim::value(
+                        ui.ctx(),
+                        egui::Id::new("nav_pill"),
+                        target,
+                        anim::NORMAL,
+                        Easing::OutBack,
+                    );
+                    let pill = Rect::from_center_size(pos2(left + 3.0, cy), vec2(3.0, 18.0));
+                    theme::brand_fill(ui.painter(), pill, 2, 1.0);
+                }
+            });
+    }
+
+    fn search_box(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let bg = ui.painter().add(egui::Shape::Noop);
+        let id = egui::Id::new("search_box");
+        let response = ui.put(
+            rect,
+            egui::TextEdit::singleline(&mut self.search)
+                .id(id)
+                .hint_text("Rechercher")
+                .frame(false)
+                .margin(vec2(34.0, 8.0))
+                .vertical_align(egui::Align::Center),
+        );
+        if std::mem::take(&mut self.focus_search) {
+            response.request_focus();
+        }
+        let focused = response.has_focus();
+        let t = anim::toggle(ui.ctx(), id.with("focus"), focused, anim::FAST);
+        ui.painter().set(
+            bg,
+            egui::epaint::RectShape::new(
+                rect,
+                CornerRadius::same(6),
+                theme::mix(theme::white(0x0F), theme::white(0x06), t),
+                Stroke::new(1.0_f32, theme::stroke()),
+                StrokeKind::Inside,
+            ),
+        );
+        // Soulignement à l'accent quand la recherche a le focus (Fluent).
+        if t > 0.0 {
+            let line = Rect::from_min_max(
+                pos2(rect.left() + 1.0, rect.bottom() - 2.0),
+                pos2(rect.right() - 1.0, rect.bottom()),
+            );
+            theme::brand_fill(ui.painter(), line, 1, t);
+        }
+        icons::paint_centered(
+            ui.painter(),
+            Icon::Search,
+            pos2(rect.left() + 17.0, rect.center().y),
+            15.0,
+            theme::TEXT_3,
+        );
+
+        if response.changed() {
+            self.refresh_search();
+            if self.search.trim().is_empty() {
+                if self.view == View::Search {
+                    self.actions.push(Action::Back);
+                }
+            } else if self.view != View::Search {
+                self.actions.push(Action::Go(View::Search));
+            }
+        }
+        if focused && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.search.clear();
+            if self.view == View::Search {
+                self.actions.push(Action::Back);
+            }
+            response.surrender_focus();
+        }
+    }
+
+    pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.dialog else {
+            return;
+        };
+        let mut close = false;
+        let mut confirm = false;
+        let title = match dialog {
+            Dialog::NewPlaylist { .. } => "Nouvelle playlist",
+            Dialog::Rename { .. } => "Renommer la playlist",
+            Dialog::ConfirmDelete(_) => "Supprimer la playlist ?",
+        };
+        let modal = egui::Modal::new(egui::Id::new("dialog"))
+            .frame(egui::Frame::popup(&ctx.style()).inner_margin(24.0).corner_radius(12))
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                ui.label(egui::RichText::new(title).font(theme::semibold(20.0)));
+                ui.add_space(12.0);
+                match dialog {
+                    Dialog::NewPlaylist { name, .. } | Dialog::Rename { name, .. } => {
+                        let r = ui.add(
+                            egui::TextEdit::singleline(name)
+                                .desired_width(f32::INFINITY)
+                                .margin(vec2(10.0, 8.0))
+                                .hint_text("Nom de la playlist"),
+                        );
+                        if !r.has_focus() && ui.memory(|m| m.focused().is_none()) {
+                            r.request_focus();
+                        }
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            confirm = true;
+                        }
+                    }
+                    Dialog::ConfirmDelete(i) => {
+                        let name = self.settings.playlists.get(*i).map(|p| p.name.as_str()).unwrap_or("");
+                        ui.label(
+                            egui::RichText::new(format!("« {name} » sera supprimée. Les morceaux restent dans la bibliothèque."))
+                                .color(theme::TEXT_2),
+                        );
+                    }
+                }
+                ui.add_space(20.0);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let label = match dialog {
+                            Dialog::NewPlaylist { .. } => "Créer",
+                            Dialog::Rename { .. } => "Renommer",
+                            Dialog::ConfirmDelete(_) => "Supprimer",
+                        };
+                        if widgets::primary_button(ui, None, label).clicked() {
+                            confirm = true;
+                        }
+                        if widgets::secondary_button(ui, None, "Annuler").clicked() {
+                            close = true;
+                        }
+                    });
+                });
+            });
+        if modal.should_close() {
+            close = true;
+        }
+        if confirm {
+            match self.dialog.take() {
+                Some(Dialog::NewPlaylist { name, tracks }) => {
+                    let name = if name.trim().is_empty() {
+                        "Sans titre".to_owned()
+                    } else {
+                        name.trim().to_owned()
+                    };
+                    let paths = self.paths(&tracks);
+                    self.settings.playlists.push(Playlist {
+                        name: name.clone(),
+                        tracks: paths,
+                    });
+                    self.toast(format!("Playlist « {name} » créée"));
+                }
+                Some(Dialog::Rename { index, name }) => {
+                    if let Some(p) = self.settings.playlists.get_mut(index) {
+                        if !name.trim().is_empty() {
+                            p.name = name.trim().to_owned();
+                        }
+                    }
+                }
+                Some(Dialog::ConfirmDelete(i)) if i < self.settings.playlists.len() => {
+                    self.settings.playlists.remove(i);
+                    if matches!(self.view, View::Playlist(PlaylistId::User(_))) {
+                        self.view = View::Page(Page::Playlists);
+                        self.history.clear();
+                    }
+                }
+                _ => {}
+            }
+        } else if close {
+            self.dialog = None;
+        }
+    }
+
+    pub(super) fn toast_ui(&mut self, ctx: &egui::Context) {
+        let Some((text, start)) = &mut self.toast else {
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        if *start < 0.0 {
+            *start = now;
+        }
+        let age = (now - *start) as f32;
+        const LIFE: f32 = 3.5;
+        if age > LIFE {
+            self.toast = None;
+            return;
+        }
+        let fade = (age / 0.2).min(1.0).min((LIFE - age) / 0.4).clamp(0.0, 1.0);
+        let screen = ctx.screen_rect();
+        let text = text.clone();
+        egui::Area::new(egui::Id::new("toast"))
+            .order(egui::Order::Foreground)
+            .anchor(
+                Align2::RIGHT_BOTTOM,
+                vec2(-20.0, -120.0 + 8.0 * (1.0 - fade)),
+            )
+            .interactable(false)
+            .show(ctx, |ui| {
+                ui.set_opacity(fade);
+                egui::Frame::popup(ui.style())
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::symmetric(16, 12))
+                    .show(ui, |ui| {
+                        ui.set_max_width((screen.width() * 0.5).min(420.0));
+                        ui.horizontal(|ui| {
+                            let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                            icons::paint_centered(
+                                ui.painter(),
+                                Icon::Info,
+                                r.center(),
+                                16.0,
+                                theme::accent_light(),
+                            );
+                            ui.label(egui::RichText::new(text).color(theme::TEXT));
+                        });
+                    });
+            });
+        ctx.request_repaint_after(std::time::Duration::from_millis(30));
+    }
+}
+
+/// Élément de navigation : icône, libellé, fond au survol et à la sélection.
+fn nav_item(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+    expanded: bool,
+    badge: Option<&str>,
+) -> egui::Response {
+    let response = ui.interact(rect, ui.id().with(("nav", label)), Sense::click());
+    let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::FAST);
+    let painter = ui.painter();
+    if s > 0.0 {
+        painter.rect_filled(
+            rect,
+            CornerRadius::same(6),
+            theme::white(0x10).gamma_multiply(s),
+        );
+    }
+    widgets::paint_interaction(ui, rect, 6, &response);
+    let color = theme::mix(
+        theme::TEXT_2,
+        theme::TEXT,
+        s.max(widgets::hover_t(ui, response.id, response.hovered())),
+    );
+    icons::paint_centered(
+        ui.painter(),
+        icon,
+        pos2(rect.left() + 24.0, rect.center().y),
+        18.0,
+        color,
+    );
+    if expanded {
+        ui.painter().text(
+            pos2(rect.left() + 52.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(14.0),
+            color,
+        );
+        if let Some(b) = badge {
+            let galley = ui
+                .fonts(|f| f.layout_no_wrap(b.to_owned(), FontId::proportional(11.0), theme::TEXT));
+            let w = (galley.size().x + 12.0).max(22.0);
+            let r = Rect::from_center_size(
+                pos2(rect.right() - 12.0 - w / 2.0, rect.center().y),
+                vec2(w, 18.0),
+            );
+            ui.painter()
+                .rect_filled(r, CornerRadius::same(9), theme::accent_soft());
+            ui.painter()
+                .galley(r.center() - galley.size() / 2.0, galley, theme::TEXT);
+        }
+    }
+    if expanded {
+        response
+    } else {
+        response.on_hover_text(label)
+    }
+}
+
+fn sub_item(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    icon: Icon,
+    label: &str,
+    selected: bool,
+) -> egui::Response {
+    let response = ui.interact(
+        rect,
+        ui.id().with(("sub", label, rect.top() as i32)),
+        Sense::click(),
+    );
+    if selected {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), theme::white(0x10));
+    }
+    widgets::paint_interaction(ui, rect, 6, &response);
+    let color = if selected { theme::TEXT } else { theme::TEXT_2 };
+    icons::paint_centered(
+        ui.painter(),
+        icon,
+        pos2(rect.left() + 24.0, rect.center().y),
+        15.0,
+        if selected {
+            theme::accent_light()
+        } else {
+            theme::TEXT_3
+        },
+    );
+    let g = widgets::galley(
+        ui,
+        label,
+        FontId::proportional(13.5),
+        color,
+        rect.width() - 64.0,
+    );
+    ui.painter().galley(
+        pos2(rect.left() + 52.0, rect.center().y - g.size().y / 2.0),
+        g,
+        color,
+    );
+    response
+}
