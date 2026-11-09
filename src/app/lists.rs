@@ -3,8 +3,10 @@
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Ui};
 
 use super::{Action, Ctx, PlaylistId, View};
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::library::{fmt_duration, plural};
+use crate::trf;
 use crate::{anim, theme, widgets};
 
 pub const ROW_H: f32 = 48.0;
@@ -88,14 +90,14 @@ pub fn header(ui: &mut Ui, opts: &ListOpts) {
     p.text(
         pos2(c.title.0, y),
         Align2::LEFT_CENTER,
-        "Titre",
+        tr("Titre"),
         font.clone(),
         theme::TEXT_3,
     );
     p.text(
         pos2(c.artist.0, y),
         Align2::LEFT_CENTER,
-        "Artiste",
+        tr("Artiste"),
         font.clone(),
         theme::TEXT_3,
     );
@@ -103,7 +105,7 @@ pub fn header(ui: &mut Ui, opts: &ListOpts) {
         p.text(
             pos2(a.0, y),
             Align2::LEFT_CENTER,
-            "Album",
+            tr("Album"),
             font.clone(),
             theme::TEXT_3,
         );
@@ -112,7 +114,7 @@ pub fn header(ui: &mut Ui, opts: &ListOpts) {
         p.text(
             pos2(a.0, y),
             Align2::LEFT_CENTER,
-            "Année",
+            tr("Année"),
             font.clone(),
             theme::TEXT_3,
         );
@@ -313,7 +315,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         }
         drag_started |= h.drag_started();
         h.on_hover_cursor(egui::CursorIcon::Grab)
-            .on_hover_text("Glisser pour déplacer");
+            .on_hover_text(tr("Glisser pour déplacer"));
     } else {
         let h = ui.interact(heart, ui.id().with(("heart", i, idx)), Sense::click());
         let pop = widgets::pop(ui.ctx(), h.id, fav);
@@ -335,9 +337,9 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
             );
         }
         if h.on_hover_text(if fav {
-            "Retirer des favoris"
+            tr("Retirer des favoris")
         } else {
-            "Ajouter aux favoris"
+            tr("Ajouter aux favoris")
         })
         .clicked()
         {
@@ -378,7 +380,7 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         return;
     }
     let t = &c.lib.tracks[idx];
-    if widgets::menu_item(ui, Some(Icon::PlayOutline), "Lire").clicked() {
+    if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
         c.actions.push(match opts.queue_pos {
             Some(_) => Action::QueueJump(i),
             None => Action::Play {
@@ -388,10 +390,10 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         });
     }
     if opts.queue_pos.is_none() {
-        if widgets::menu_item(ui, Some(Icon::ListStart), "Lire ensuite").clicked() {
+        if widgets::menu_item(ui, Some(Icon::ListStart), tr("Lire ensuite")).clicked() {
             c.actions.push(Action::PlayNext(vec![idx]));
         }
-        if widgets::menu_item(ui, Some(Icon::ListEnd), "Ajouter à la file d'attente").clicked() {
+        if widgets::menu_item(ui, Some(Icon::ListEnd), tr("Ajouter à la file d'attente")).clicked() {
             c.actions.push(Action::Enqueue(vec![idx]));
         }
     }
@@ -402,9 +404,9 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         ui,
         Some(if fav { Icon::HeartFilled } else { Icon::Heart }),
         if fav {
-            "Retirer des favoris"
+            tr("Retirer des favoris")
         } else {
-            "Ajouter aux favoris"
+            tr("Ajouter aux favoris")
         },
     )
     .clicked()
@@ -412,34 +414,40 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         c.actions.push(Action::ToggleFavorite(idx));
     }
     let album = c.lib.track_album[idx];
-    if widgets::menu_item(ui, Some(Icon::Disc), "Afficher l'album").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Disc), tr("Afficher l'album")).clicked() {
         c.go(View::Album(album));
     }
-    if widgets::menu_item(ui, Some(Icon::Mic), "Afficher l'artiste").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Mic), tr("Afficher l'artiste")).clicked() {
         c.go(View::Artist(c.lib.album_artist[album]));
     }
-    if widgets::menu_item(ui, Some(Icon::FolderOpen), "Ouvrir le dossier").clicked() {
+    if widgets::menu_item(ui, Some(Icon::FolderOpen), tr("Ouvrir le dossier")).clicked() {
         if let Some(dir) = t.path.parent() {
             c.actions.push(Action::OpenFolder(dir.to_path_buf()));
         }
     }
     ui.separator();
-    if widgets::menu_item(ui, Some(Icon::Tag), "Modifier les infos…").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Tag), tr("Modifier les infos…")).clicked() {
         c.actions.push(Action::EditTags(vec![t.path.clone()]));
     }
-    if widgets::menu_item(ui, Some(Icon::Disc), "Modifier les infos de l'album…").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Disc), tr("Modifier les infos de l'album…")).clicked() {
         c.actions
             .push(Action::EditTags(paths(c, &c.lib.albums[album].tracks)));
     }
+    if widgets::menu_item(ui, Some(Icon::Volume2), tr("ReplayGain de l'album…")).clicked() {
+        c.actions.push(Action::ReplayGain(
+            paths(c, &c.lib.albums[album].tracks),
+            c.lib.albums[album].title.clone(),
+        ));
+    }
     if let Some(pl) = opts.playlist {
         ui.separator();
-        if widgets::menu_item(ui, Some(Icon::Trash), "Retirer de la playlist").clicked() {
+        if widgets::menu_item(ui, Some(Icon::Trash), tr("Retirer de la playlist")).clicked() {
             c.actions.push(Action::RemoveFromPlaylist(pl, i));
         }
     }
     if opts.queue_pos.is_some() {
         ui.separator();
-        if widgets::menu_item(ui, Some(Icon::Close), "Retirer de la file d'attente").clicked() {
+        if widgets::menu_item(ui, Some(Icon::Close), tr("Retirer de la file d'attente")).clicked() {
             c.actions.push(Action::QueueRemove(i));
         }
     }
@@ -452,16 +460,16 @@ fn paths(c: &Ctx, tracks: &[usize]) -> Vec<std::path::PathBuf> {
 /// Menu d'une sélection de plusieurs morceaux.
 fn selection_menu(ui: &mut Ui, c: &mut Ctx, targets: Vec<usize>) {
     let n = targets.len();
-    if widgets::menu_item(ui, Some(Icon::PlayOutline), &format!("Lire les {n} morceaux")).clicked() {
+    if widgets::menu_item(ui, Some(Icon::PlayOutline), &trf!("Lire les {n} morceaux", n)).clicked() {
         c.actions.push(Action::Play {
             tracks: targets.clone(),
             start: 0,
         });
     }
-    if widgets::menu_item(ui, Some(Icon::ListStart), "Lire ensuite").clicked() {
+    if widgets::menu_item(ui, Some(Icon::ListStart), tr("Lire ensuite")).clicked() {
         c.actions.push(Action::PlayNext(targets.clone()));
     }
-    if widgets::menu_item(ui, Some(Icon::ListEnd), "Ajouter à la file d'attente").clicked() {
+    if widgets::menu_item(ui, Some(Icon::ListEnd), tr("Ajouter à la file d'attente")).clicked() {
         c.actions.push(Action::Enqueue(targets.clone()));
     }
     add_to_menu(ui, c, targets.clone());
@@ -469,21 +477,25 @@ fn selection_menu(ui: &mut Ui, c: &mut Ctx, targets: Vec<usize>) {
     if widgets::menu_item(
         ui,
         Some(Icon::Tag),
-        &format!("Modifier les infos des {n} morceaux…"),
+        &trf!("Modifier les infos des {n} morceaux…", n),
     )
     .clicked()
     {
         c.actions.push(Action::EditTags(paths(c, &targets)));
     }
-    if widgets::menu_item(ui, Some(Icon::Close), "Désélectionner").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Volume2), tr("ReplayGain de la sélection…")).clicked() {
+        c.actions
+            .push(Action::ReplayGain(paths(c, &targets), tr("La sélection").into()));
+    }
+    if widgets::menu_item(ui, Some(Icon::Close), tr("Désélectionner")).clicked() {
         c.selected.clear();
     }
 }
 
 /// Sous-menu « Ajouter à » : nouvelle playlist, file d'attente, playlists existantes.
 pub fn add_to_menu(ui: &mut Ui, c: &mut Ctx, tracks: Vec<usize>) {
-    ui.menu_button("       Ajouter à une playlist", |ui| {
-        if widgets::menu_item(ui, Some(Icon::Plus), "Nouvelle playlist…").clicked() {
+    ui.menu_button(tr("       Ajouter à une playlist"), |ui| {
+        if widgets::menu_item(ui, Some(Icon::Plus), tr("Nouvelle playlist…")).clicked() {
             c.actions.push(Action::NewPlaylist(tracks.clone()));
         }
         if !c.settings.playlists.is_empty() {
@@ -641,7 +653,7 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
             15.0,
             Color32::WHITE.gamma_multiply(h),
         );
-        if pr.on_hover_text("Lire l'album").clicked() {
+        if pr.on_hover_text(tr("Lire l'album")).clicked() {
             play_clicked = true;
             c.actions.push(Action::Play {
                 tracks: album.tracks.clone(),
@@ -675,34 +687,40 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
 
 pub fn album_menu(ui: &mut Ui, c: &mut Ctx, a: usize) {
     let tracks = c.lib.albums[a].tracks.clone();
-    if widgets::menu_item(ui, Some(Icon::PlayOutline), "Lire").clicked() {
+    if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
         c.actions.push(Action::Play {
             tracks: tracks.clone(),
             start: 0,
         });
     }
-    if widgets::menu_item(ui, Some(Icon::Shuffle), "Lecture aléatoire").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Shuffle), tr("Lecture aléatoire")).clicked() {
         c.actions.push(Action::PlayShuffled(tracks.clone()));
     }
-    if widgets::menu_item(ui, Some(Icon::ListStart), "Lire ensuite").clicked() {
+    if widgets::menu_item(ui, Some(Icon::ListStart), tr("Lire ensuite")).clicked() {
         c.actions.push(Action::PlayNext(tracks.clone()));
     }
-    if widgets::menu_item(ui, Some(Icon::ListEnd), "Ajouter à la file d'attente").clicked() {
+    if widgets::menu_item(ui, Some(Icon::ListEnd), tr("Ajouter à la file d'attente")).clicked() {
         c.actions.push(Action::Enqueue(tracks.clone()));
     }
     add_to_menu(ui, c, tracks.clone());
     ui.separator();
-    if widgets::menu_item(ui, Some(Icon::Mic), "Afficher l'artiste").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Mic), tr("Afficher l'artiste")).clicked() {
         c.go(View::Artist(c.lib.album_artist[a]));
     }
-    if widgets::menu_item(ui, Some(Icon::FolderOpen), "Ouvrir le dossier").clicked() {
+    if widgets::menu_item(ui, Some(Icon::FolderOpen), tr("Ouvrir le dossier")).clicked() {
         if let Some(dir) = c.lib.tracks[tracks[0]].path.parent() {
             c.actions.push(Action::OpenFolder(dir.to_path_buf()));
         }
     }
     ui.separator();
-    if widgets::menu_item(ui, Some(Icon::Tag), "Modifier les infos de l'album…").clicked() {
+    if widgets::menu_item(ui, Some(Icon::Tag), tr("Modifier les infos de l'album…")).clicked() {
         c.actions.push(Action::EditTags(paths(c, &tracks)));
+    }
+    if widgets::menu_item(ui, Some(Icon::Volume2), tr("ReplayGain de l'album…")).clicked() {
+        c.actions.push(Action::ReplayGain(
+            paths(c, &tracks),
+            c.lib.albums[a].title.clone(),
+        ));
     }
 }
 
@@ -750,21 +768,27 @@ pub fn artist_card(ui: &mut Ui, c: &mut Ctx, ar: usize, w: f32) {
     }
     let tracks = artist.tracks.clone();
     resp.context_menu(|ui| {
-        if widgets::menu_item(ui, Some(Icon::PlayOutline), "Lire").clicked() {
+        if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
             c.actions.push(Action::Play {
                 tracks: tracks.clone(),
                 start: 0,
             });
         }
-        if widgets::menu_item(ui, Some(Icon::Shuffle), "Lecture aléatoire").clicked() {
+        if widgets::menu_item(ui, Some(Icon::Shuffle), tr("Lecture aléatoire")).clicked() {
             c.actions.push(Action::PlayShuffled(tracks.clone()));
         }
-        if widgets::menu_item(ui, Some(Icon::ListEnd), "Ajouter à la file d'attente").clicked() {
+        if widgets::menu_item(ui, Some(Icon::ListEnd), tr("Ajouter à la file d'attente")).clicked() {
             c.actions.push(Action::Enqueue(tracks.clone()));
         }
         add_to_menu(ui, c, tracks.clone());
         ui.separator();
-        if widgets::menu_item(ui, Some(Icon::Tag), "Modifier les infos de tous ses morceaux…").clicked() {
+        if widgets::menu_item(
+            ui,
+            Some(Icon::Tag),
+            tr("Modifier les infos de tous ses morceaux…"),
+        )
+        .clicked()
+        {
             c.actions.push(Action::EditTags(paths(c, &tracks)));
         }
     });

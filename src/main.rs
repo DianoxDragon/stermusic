@@ -4,10 +4,15 @@ mod backdrop;
 mod covers;
 mod dnd;
 mod dsp;
+mod i18n;
+mod i18n_en;
+#[cfg(test)]
+mod i18n_keys;
 mod icons;
 mod ipc;
 mod kwin;
 mod library;
+mod loudness;
 mod mpris;
 mod musicbrainz;
 mod player;
@@ -23,22 +28,33 @@ use std::path::PathBuf;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
-    // `stermusic ~/Musique` ajoute ce dossier à la bibliothèque ;
-    // `stermusic --tags fichiers…` ouvre l'éditeur de tags (dans la fenêtre déjà ouverte s'il y en a une).
+    // `stermusic ~/Musique` ajoute ce dossier à la bibliothèque ; `stermusic morceau.mp3…` joue
+    // ces morceaux (double-clic dans Dolphin) ; `stermusic --tags fichiers…` ouvre l'éditeur de
+    // tags. S'il y a déjà une fenêtre SterMusic, c'est elle qui s'en charge.
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
-    let (cli_dir, tag_files) = match args.first().and_then(|a| a.to_str()) {
-        Some("--tags") => {
-            let files: Vec<PathBuf> = args[1..]
-                .iter()
-                .map(|p| std::path::absolute(p).unwrap_or_else(|_| p.clone()))
-                .collect();
-            if ipc::send_to_running(&files) {
-                return Ok(());
-            }
-            (None, files)
+    let absolute = |p: &PathBuf| std::path::absolute(p).unwrap_or_else(|_| p.clone());
+    let mut launch = app::Launch::default();
+    if args.first().and_then(|a| a.to_str()) == Some("--tags") {
+        launch.tag_files = args[1..].iter().map(absolute).collect();
+        if ipc::send_tags(&launch.tag_files) {
+            return Ok(());
         }
-        _ => (args.first().cloned(), Vec::new()),
-    };
+    } else {
+        for p in args.iter().map(absolute) {
+            if p.is_dir() {
+                launch.music_dir.get_or_insert(p);
+            } else if library::is_audio_file(&p) {
+                launch.play_files.push(p);
+            }
+        }
+        if !launch.play_files.is_empty() && ipc::send_play(&launch.play_files) {
+            return Ok(());
+        }
+        // Relancé depuis le menu alors qu'il tourne déjà : on montre la fenêtre ouverte.
+        if args.is_empty() && ipc::send_show() {
+            return Ok(());
+        }
+    }
 
     // Le son passe par le greffon ALSA de PipeWire, qui ne nomme pas le flux et n'indique pas le
     // processus : Plasma mettait alors plusieurs secondes à relier le son à la fenêtre (icône de
@@ -75,6 +91,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "SterMusic",
         options,
-        Box::new(move |cc| Ok(Box::new(app::SterMusic::new(cc, cli_dir, tag_files)))),
+        Box::new(move |cc| Ok(Box::new(app::SterMusic::new(cc, launch)))),
     )
 }

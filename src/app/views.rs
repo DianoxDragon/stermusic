@@ -8,8 +8,10 @@ use eframe::egui::{
 
 use super::lists::{self, ListOpts};
 use super::{Action, BackdropKind, LibTab, Page, PlaylistId, SongSort, SterMusic, View};
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::library::{fmt_duration, fmt_long, plural};
+use crate::trf;
 use crate::{anim, theme, widgets};
 
 const PAD_X: f32 = 32.0;
@@ -96,12 +98,12 @@ impl SterMusic {
                 changed = true;
             }
             ui.label(
-                RichText::new("Égaliseur")
+                RichText::new(tr("Égaliseur"))
                     .font(theme::semibold(15.0))
                     .color(theme::TEXT),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if widgets::icon_button(ui, Icon::Refresh, "Tout remettre à 0", 30.0, 15.0).clicked() {
+                if widgets::icon_button(ui, Icon::Refresh, tr("Tout remettre à 0"), 30.0, 15.0).clicked() {
                     self.settings.eq_gains = [0.0; 10];
                     self.settings.eq_preamp = 0.0;
                     self.settings.eq_preset = "Plat".into();
@@ -115,7 +117,7 @@ impl SterMusic {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
             for (name, gains) in crate::dsp::PRESETS {
-                if segment(ui, name, self.settings.eq_preset == name).clicked() {
+                if segment(ui, tr(name), self.settings.eq_preset == name).clicked() {
                     self.settings.eq_preset = name.into();
                     self.settings.eq_gains = gains;
                     self.settings.eq_on = true;
@@ -154,7 +156,7 @@ impl SterMusic {
                     .inner
                 };
                 let mut pre = self.settings.eq_preamp;
-                if column(ui, 99, &mut pre, "Préampli") {
+                if column(ui, 99, &mut pre, tr("Préampli")) {
                     self.settings.eq_preamp = pre;
                     changed = true;
                 }
@@ -190,9 +192,9 @@ impl SterMusic {
         let here = loaded && self.current().is_some_and(|c| tracks.contains(&c));
         let playing = self.is_playing();
         let (icon, label) = match (here, playing) {
-            (true, true) => (Icon::Pause, "Pause"),
-            (true, false) => (Icon::Play, "Reprendre"),
-            _ => (Icon::Play, "Tout lire"),
+            (true, true) => (Icon::Pause, tr("Pause")),
+            (true, false) => (Icon::Play, tr("Reprendre")),
+            _ => (Icon::Play, tr("Tout lire")),
         };
         if widgets::primary_button(ui, Some(icon), label).clicked() {
             self.actions.push(if here {
@@ -235,14 +237,14 @@ impl SterMusic {
 
     fn no_match(ui: &mut egui::Ui) {
         ui.add_space(12.0);
-        ui.label(RichText::new("Rien ne correspond à la recherche.").color(theme::TEXT_3));
+        ui.label(RichText::new(tr("Rien ne correspond à la recherche.")).color(theme::TEXT_3));
     }
 
     fn matches_filter(&self, t: usize) -> bool {
         let q = crate::library::fold(self.detail_filter.trim());
         q.is_empty() || {
-            let tr = &self.lib.tracks[t];
-            let text = crate::library::fold(&format!("{} {}", tr.title, tr.artist));
+            let track = &self.lib.tracks[t];
+            let text = crate::library::fold(&format!("{} {}", track.title, track.artist));
             q.split_whitespace().all(|w| text.contains(w))
         }
     }
@@ -297,8 +299,8 @@ impl SterMusic {
                 ui.add_space(8.0);
                 meta(
                     ui,
-                    &format!(
-                        "Analyse de la bibliothèque… {}",
+                    &trf!(
+                        "Analyse de la bibliothèque… {0}",
                         plural(self.scan_count, "morceau", "morceaux")
                     ),
                 );
@@ -308,15 +310,15 @@ impl SterMusic {
         widgets::empty_state(
             ui,
             Icon::Music,
-            "Bienvenue dans SterMusic",
-            "Ajoute un dossier de musique pour construire ta bibliothèque.",
+            tr("Bienvenue dans SterMusic"),
+            tr("Ajoute un dossier de musique pour construire ta bibliothèque."),
         );
         ui.vertical_centered(|ui| {
             let default = crate::library::default_music_dir();
             ui.horizontal(|ui| {
                 let w = 190.0 + if default.is_some() { 230.0 } else { 0.0 };
                 ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
-                if widgets::primary_button(ui, Some(Icon::FolderPlus), "Ajouter un dossier").clicked() {
+                if widgets::primary_button(ui, Some(Icon::FolderPlus), tr("Ajouter un dossier")).clicked() {
                     self.actions.push(Action::AddFolder);
                 }
                 if let Some(dir) = default {
@@ -324,7 +326,7 @@ impl SterMusic {
                         .file_name()
                         .map(|n| n.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    if widgets::secondary_button(ui, Some(Icon::Music), &format!("Utiliser « {name} »"))
+                    if widgets::secondary_button(ui, Some(Icon::Music), &trf!("Utiliser « {name} »", name))
                         .clicked()
                     {
                         self.actions.push(Action::UseFolder(dir));
@@ -333,7 +335,7 @@ impl SterMusic {
             });
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Astuce : tu peux aussi glisser un dossier dans la fenêtre.")
+                RichText::new(tr("Astuce : tu peux aussi glisser un dossier dans la fenêtre."))
                     .small()
                     .color(theme::TEXT_3),
             );
@@ -343,7 +345,7 @@ impl SterMusic {
     // ---------- Accueil ----------
 
     fn home(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Accueil");
+        heading(ui, tr("Accueil"));
         ui.add_space(16.0);
         if self.lib.is_empty() {
             self.welcome(ui);
@@ -385,13 +387,13 @@ impl SterMusic {
                 ui.add_space(28.0);
                 let mut c = self.view_ctx();
                 if !recent_albums.is_empty() {
-                    lists::section(ui, "Écoutés récemment", None);
+                    lists::section(ui, tr("Écoutés récemment"), None);
                     lists::grid(ui, "recent", recent_albums.len(), Some(1), |ui, k, w| {
                         lists::album_card(ui, &mut c, recent_albums[k], w)
                     });
                     ui.add_space(20.0);
                 }
-                if lists::section(ui, "Ajoutés récemment", Some("Tous les albums")) {
+                if lists::section(ui, tr("Ajoutés récemment"), Some(tr("Tous les albums"))) {
                     c.actions.push(Action::Go(View::Page(Page::Library)));
                 }
                 lists::grid(ui, "added", added.len(), Some(1), |ui, k, w| {
@@ -399,7 +401,7 @@ impl SterMusic {
                 });
                 if !top.is_empty() {
                     ui.add_space(20.0);
-                    lists::section(ui, "Les plus écoutés", None);
+                    lists::section(ui, tr("Les plus écoutés"), None);
                     lists::track_list_inline(
                         ui,
                         &mut c,
@@ -496,9 +498,9 @@ impl SterMusic {
                 );
                 widgets::cover(painter, cover, tex.as_ref(), 10, &t.album);
                 let eyebrow = if self.is_playing() {
-                    "EN COURS DE LECTURE"
+                    tr("EN COURS DE LECTURE")
                 } else {
-                    "REPRENDRE LA LECTURE"
+                    tr("REPRENDRE LA LECTURE")
                 };
                 (
                     eyebrow,
@@ -510,9 +512,9 @@ impl SterMusic {
                 painter.rect_filled(cover, CornerRadius::same(10), theme::white(0x10));
                 icons::paint_centered(painter, Icon::Sparkles, cover.center(), 44.0, theme::white(0xC0));
                 (
-                    "TA BIBLIOTHÈQUE",
-                    format!(
-                        "{} à écouter",
+                    tr("TA BIBLIOTHÈQUE"),
+                    trf!(
+                        "{0} à écouter",
                         plural(self.lib.tracks.len(), "morceau", "morceaux")
                     ),
                     format!(
@@ -548,16 +550,19 @@ impl SterMusic {
                     if widgets::primary_button(
                         ui,
                         Some(if playing { Icon::Pause } else { Icon::Play }),
-                        if playing { "Pause" } else { "Reprendre" },
+                        if playing { tr("Pause") } else { tr("Reprendre") },
                     )
                     .clicked()
                     {
                         self.actions.push(Action::TogglePlay);
                     }
-                    if widgets::secondary_button(ui, Some(Icon::Maximize), "En cours de lecture").clicked() {
+                    if widgets::secondary_button(ui, Some(Icon::Maximize), tr("En cours de lecture"))
+                        .clicked()
+                    {
                         self.actions.push(Action::Go(View::NowPlaying));
                     }
-                } else if widgets::primary_button(ui, Some(Icon::Shuffle), "Tout lire en aléatoire").clicked()
+                } else if widgets::primary_button(ui, Some(Icon::Shuffle), tr("Tout lire en aléatoire"))
+                    .clicked()
                 {
                     self.actions
                         .push(Action::PlayShuffled((0..self.lib.tracks.len()).collect()));
@@ -570,11 +575,12 @@ impl SterMusic {
 
     fn library_page(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            heading(ui, "Bibliothèque musicale");
+            heading(ui, tr("Bibliothèque musicale"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
                 if !self.lib.is_empty()
-                    && widgets::secondary_button(ui, Some(Icon::Shuffle), "Tout lire en aléatoire").clicked()
+                    && widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Tout lire en aléatoire"))
+                        .clicked()
                 {
                     self.actions
                         .push(Action::PlayShuffled((0..self.lib.tracks.len()).collect()));
@@ -582,7 +588,7 @@ impl SterMusic {
                 if self.scan_rx.is_some() {
                     ui.spinner();
                     ui.label(
-                        RichText::new(format!("Analyse… {}", self.scan_count))
+                        RichText::new(trf!("Analyse… {0}", self.scan_count))
                             .small()
                             .color(theme::TEXT_3),
                     );
@@ -597,9 +603,9 @@ impl SterMusic {
 
         // Onglets, avec un soulignement qui glisse de l'un à l'autre.
         let tabs = [
-            (LibTab::Songs, "Morceaux"),
-            (LibTab::Albums, "Albums"),
-            (LibTab::Artists, "Artistes"),
+            (LibTab::Songs, tr("Morceaux")),
+            (LibTab::Albums, tr("Albums")),
+            (LibTab::Artists, tr("Artistes")),
         ];
         let mut target = None;
         let tabs_rect = ui
@@ -626,10 +632,10 @@ impl SterMusic {
                     ui.add_space(12.0);
                     if self.settings.lib_tab == LibTab::Songs {
                         let sorts = [
-                            (SongSort::Title, "Titre"),
-                            (SongSort::Artist, "Artiste"),
-                            (SongSort::Album, "Album"),
-                            (SongSort::Added, "Date d'ajout"),
+                            (SongSort::Title, tr("Titre")),
+                            (SongSort::Artist, tr("Artiste")),
+                            (SongSort::Album, tr("Album")),
+                            (SongSort::Added, tr("Date d'ajout")),
                         ];
                         let current = sorts
                             .iter()
@@ -644,13 +650,13 @@ impl SterMusic {
                                     ui.selectable_value(&mut self.settings.song_sort, s, l);
                                 }
                             });
-                        ui.label(RichText::new("Trier par").color(theme::TEXT_3));
+                        ui.label(RichText::new(tr("Trier par")).color(theme::TEXT_3));
                         ui.add_space(12.0);
                     }
                     let hint = match self.settings.lib_tab {
-                        LibTab::Songs => "Filtrer les morceaux",
-                        LibTab::Albums => "Filtrer les albums",
-                        LibTab::Artists => "Filtrer les artistes",
+                        LibTab::Songs => tr("Filtrer les morceaux"),
+                        LibTab::Albums => tr("Filtrer les albums"),
+                        LibTab::Artists => tr("Filtrer les artistes"),
                     };
                     let w = (ui.available_width() - 8.0).clamp(140.0, 260.0);
                     widgets::search_field(ui, egui::Id::new("lib_filter"), &mut self.lib_filter, hint, w);
@@ -819,17 +825,17 @@ impl SterMusic {
                         widgets::cover(ui.painter(), r, tex.as_ref(), 10, &album.title);
                     },
                     Header {
-                        kind: "ALBUM",
+                        kind: tr("ALBUM"),
                         title: &album.title,
                         subtitle: &album.artist,
                         info: &info.join(" · "),
                     },
                     |s, ui| {
                         s.play_all_button(ui, &tracks);
-                        if widgets::secondary_button(ui, Some(Icon::Shuffle), "Aléatoire").clicked() {
+                        if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
                             s.actions.push(Action::PlayShuffled(tracks.clone()));
                         }
-                        let resp = widgets::secondary_button(ui, Some(Icon::Plus), "Ajouter à");
+                        let resp = widgets::secondary_button(ui, Some(Icon::Plus), tr("Ajouter à"));
                         let popup_id = ui.make_persistent_id("album_add_to");
                         if resp.clicked() {
                             ui.memory_mut(|m| m.toggle_popup(popup_id));
@@ -842,10 +848,12 @@ impl SterMusic {
                             egui::PopupCloseBehavior::CloseOnClick,
                             |ui| {
                                 ui.set_min_width(230.0);
-                                if widgets::menu_item(ui, Some(Icon::ListEnd), "File d'attente").clicked() {
+                                if widgets::menu_item(ui, Some(Icon::ListEnd), tr("File d'attente")).clicked()
+                                {
                                     c.actions.push(Action::Enqueue(tracks.clone()));
                                 }
-                                if widgets::menu_item(ui, Some(Icon::Plus), "Nouvelle playlist…").clicked()
+                                if widgets::menu_item(ui, Some(Icon::Plus), tr("Nouvelle playlist…"))
+                                    .clicked()
                                 {
                                     c.actions.push(Action::NewPlaylist(tracks.clone()));
                                 }
@@ -857,17 +865,23 @@ impl SterMusic {
                             },
                         );
                         let artist = s.lib.album_artist[a];
-                        if widgets::secondary_button(ui, Some(Icon::Mic), "Artiste").clicked() {
+                        if widgets::secondary_button(ui, Some(Icon::Mic), tr("Artiste")).clicked() {
                             s.actions.push(Action::Go(View::Artist(artist)));
                         }
-                        if widgets::icon_button(ui, Icon::Tag, "Modifier les infos de l'album", 34.0, 16.0)
-                            .clicked()
+                        if widgets::icon_button(
+                            ui,
+                            Icon::Tag,
+                            tr("Modifier les infos de l'album"),
+                            34.0,
+                            16.0,
+                        )
+                        .clicked()
                         {
                             let paths = tracks.iter().map(|&t| s.lib.tracks[t].path.clone()).collect();
                             s.actions.push(Action::EditTags(paths));
                         }
                         if tracks.len() >= 8 {
-                            s.detail_search_field(ui, "Rechercher un titre");
+                            s.detail_search_field(ui, tr("Rechercher un titre"));
                         }
                     },
                 );
@@ -919,21 +933,22 @@ impl SterMusic {
                         widgets::circle_cover(ui, r.center(), r.width() / 2.0, tex.as_ref(), &artist.name);
                     },
                     Header {
-                        kind: "ARTISTE",
+                        kind: tr("ARTISTE"),
                         title: &artist.name,
                         subtitle: "",
                         info: &info,
                     },
                     |s, ui| {
                         s.play_all_button(ui, &tracks);
-                        if widgets::secondary_button(ui, Some(Icon::Shuffle), "Aléatoire").clicked() {
+                        if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
                             s.actions.push(Action::PlayShuffled(tracks.clone()));
                         }
-                        if widgets::secondary_button(ui, Some(Icon::ListEnd), "Ajouter à la file").clicked()
+                        if widgets::secondary_button(ui, Some(Icon::ListEnd), tr("Ajouter à la file"))
+                            .clicked()
                         {
                             s.actions.push(Action::Enqueue(tracks.clone()));
                         }
-                        s.detail_search_field(ui, "Rechercher chez cet artiste");
+                        s.detail_search_field(ui, tr("Rechercher chez cet artiste"));
                     },
                 );
                 // La recherche garde les albums dont le titre correspond, ou qui contiennent un titre trouvé.
@@ -951,13 +966,13 @@ impl SterMusic {
                     .collect();
                 let mut c = self.view_ctx();
                 if !albums.is_empty() {
-                    lists::section(ui, "Albums", None);
+                    lists::section(ui, tr("Albums"), None);
                     lists::grid(ui, "artist_albums", albums.len(), None, |ui, k, w| {
                         lists::album_card(ui, &mut c, albums[k], w)
                     });
                     ui.add_space(12.0);
                 }
-                lists::section(ui, "Morceaux", None);
+                lists::section(ui, tr("Morceaux"), None);
                 if shown.is_empty() {
                     Self::no_match(ui);
                 }
@@ -981,14 +996,14 @@ impl SterMusic {
     fn queue_page(&mut self, ui: &mut egui::Ui) {
         let total: std::time::Duration = self.queue.iter().map(|&t| self.lib.tracks[t].duration()).sum();
         ui.horizontal(|ui| {
-            heading(ui, "File d'attente");
+            heading(ui, tr("File d'attente"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
                 if !self.queue.is_empty() {
-                    if widgets::secondary_button(ui, Some(Icon::Trash), "Effacer").clicked() {
+                    if widgets::secondary_button(ui, Some(Icon::Trash), tr("Effacer")).clicked() {
                         self.actions.push(Action::QueueClear);
                     }
-                    if widgets::secondary_button(ui, Some(Icon::ListPlus), "Enregistrer comme playlist")
+                    if widgets::secondary_button(ui, Some(Icon::ListPlus), tr("Enregistrer comme playlist"))
                         .clicked()
                     {
                         self.actions.push(Action::SaveQueueAsPlaylist);
@@ -998,7 +1013,7 @@ impl SterMusic {
                         ui,
                         egui::Id::new("queue_search"),
                         &mut self.queue_filter,
-                        "Rechercher dans la file",
+                        tr("Rechercher dans la file"),
                         w,
                     );
                 }
@@ -1008,8 +1023,8 @@ impl SterMusic {
             widgets::empty_state(
                 ui,
                 Icon::ListMusic,
-                "La file d'attente est vide",
-                "Lance un album, un artiste ou un morceau pour la remplir.",
+                tr("La file d'attente est vide"),
+                tr("Lance un album, un artiste ou un morceau pour la remplir."),
             );
             return;
         }
@@ -1031,8 +1046,8 @@ impl SterMusic {
         if filtered {
             meta(
                 ui,
-                &format!(
-                    "{} sur {} · effacez la recherche pour réorganiser",
+                &trf!(
+                    "{0} sur {1} · effacez la recherche pour réorganiser",
                     plural(positions.len(), "résultat", "résultats"),
                     self.queue.len()
                 ),
@@ -1040,8 +1055,8 @@ impl SterMusic {
         } else {
             meta(
                 ui,
-                &format!(
-                    "{} · {} · glisser une ligne pour la déplacer",
+                &trf!(
+                    "{0} · {1} · glisser une ligne pour la déplacer",
                     plural(self.queue.len(), "morceau", "morceaux"),
                     fmt_long(total)
                 ),
@@ -1263,13 +1278,13 @@ impl SterMusic {
 
     fn playlists_page(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            heading(ui, "Playlists");
+            heading(ui, tr("Playlists"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
-                if widgets::secondary_button(ui, Some(Icon::Download), "Importer (M3U)").clicked() {
+                if widgets::secondary_button(ui, Some(Icon::Download), tr("Importer (M3U)")).clicked() {
                     self.actions.push(Action::ImportPlaylist);
                 }
-                if widgets::primary_button(ui, Some(Icon::Plus), "Nouvelle playlist").clicked() {
+                if widgets::primary_button(ui, Some(Icon::Plus), tr("Nouvelle playlist")).clicked() {
                     self.actions.push(Action::NewPlaylist(Vec::new()));
                 }
             });
@@ -1332,24 +1347,24 @@ impl SterMusic {
             self.actions.push(Action::Go(View::Playlist(id)));
         }
         resp.context_menu(|ui| {
-            if widgets::menu_item(ui, Some(Icon::PlayOutline), "Lire").clicked() {
+            if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
                 self.actions.push(Action::Play {
                     tracks: tracks.clone(),
                     start: 0,
                 });
             }
-            if widgets::menu_item(ui, Some(Icon::Shuffle), "Lecture aléatoire").clicked() {
+            if widgets::menu_item(ui, Some(Icon::Shuffle), tr("Lecture aléatoire")).clicked() {
                 self.actions.push(Action::PlayShuffled(tracks.clone()));
             }
-            if widgets::menu_item(ui, Some(Icon::Upload), "Exporter (M3U)").clicked() {
+            if widgets::menu_item(ui, Some(Icon::Upload), tr("Exporter (M3U)")).clicked() {
                 self.actions.push(Action::ExportPlaylist(id));
             }
             if let PlaylistId::User(i) = id {
                 ui.separator();
-                if widgets::menu_item(ui, Some(Icon::Pencil), "Renommer").clicked() {
+                if widgets::menu_item(ui, Some(Icon::Pencil), tr("Renommer")).clicked() {
                     self.actions.push(Action::RenamePlaylist(i));
                 }
-                if widgets::menu_item(ui, Some(Icon::Trash), "Supprimer").clicked() {
+                if widgets::menu_item(ui, Some(Icon::Trash), tr("Supprimer")).clicked() {
                     self.actions.push(Action::DeletePlaylist(i));
                 }
             }
@@ -1375,7 +1390,7 @@ impl SterMusic {
             ui,
             |s, ui, r| s.mosaic(ui, r, &t2, id == PlaylistId::Favorites, 10),
             Header {
-                kind: "PLAYLIST",
+                kind: tr("PLAYLIST"),
                 title: &name,
                 subtitle: "",
                 info: &info,
@@ -1383,20 +1398,22 @@ impl SterMusic {
             |s, ui| {
                 ui.add_enabled_ui(!tracks.is_empty(), |ui| {
                     s.play_all_button(ui, &tracks);
-                    if widgets::secondary_button(ui, Some(Icon::Shuffle), "Aléatoire").clicked() {
+                    if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
                         s.actions.push(Action::PlayShuffled(tracks.clone()));
                     }
                 });
                 if let PlaylistId::User(i) = id {
-                    if widgets::icon_button(ui, Icon::Pencil, "Renommer", 34.0, 16.0).clicked() {
+                    if widgets::icon_button(ui, Icon::Pencil, tr("Renommer"), 34.0, 16.0).clicked() {
                         s.actions.push(Action::RenamePlaylist(i));
                     }
                 }
-                if widgets::icon_button(ui, Icon::Upload, "Exporter (M3U)", 34.0, 16.0).clicked() {
+                if widgets::icon_button(ui, Icon::Upload, tr("Exporter (M3U)"), 34.0, 16.0).clicked() {
                     s.actions.push(Action::ExportPlaylist(id));
                 }
                 if let PlaylistId::User(i) = id {
-                    if widgets::icon_button(ui, Icon::Trash, "Supprimer la playlist", 34.0, 16.0).clicked() {
+                    if widgets::icon_button(ui, Icon::Trash, tr("Supprimer la playlist"), 34.0, 16.0)
+                        .clicked()
+                    {
                         s.actions.push(Action::DeletePlaylist(i));
                     }
                 }
@@ -1405,13 +1422,13 @@ impl SterMusic {
         if tracks.is_empty() {
             let (title, sub) = if id == PlaylistId::Favorites {
                 (
-                    "Aucun favori pour l'instant",
-                    "Clique sur le cœur d'un morceau pour l'ajouter ici.",
+                    tr("Aucun favori pour l'instant"),
+                    tr("Clique sur le cœur d'un morceau pour l'ajouter ici."),
                 )
             } else {
                 (
-                    "Cette playlist est vide",
-                    "Clic droit sur un morceau ou un album → « Ajouter à une playlist ».",
+                    tr("Cette playlist est vide"),
+                    tr("Clic droit sur un morceau ou un album → « Ajouter à une playlist »."),
                 )
             };
             widgets::empty_state(
@@ -1440,15 +1457,15 @@ impl SterMusic {
     // ---------- Recherche ----------
 
     fn search_page(&mut self, ui: &mut egui::Ui) {
-        heading(ui, &format!("Résultats pour « {} »", self.search.trim()));
+        heading(ui, &trf!("Résultats pour « {0} »", self.search.trim()));
         ui.add_space(12.0);
         let (tracks, albums, artists) = self.search_results.clone();
         if tracks.is_empty() && albums.is_empty() && artists.is_empty() {
             widgets::empty_state(
                 ui,
                 Icon::Search,
-                "Aucun résultat",
-                "Essaie avec un autre titre, artiste ou album.",
+                tr("Aucun résultat"),
+                tr("Essaie avec un autre titre, artiste ou album."),
             );
             return;
         }
@@ -1459,21 +1476,21 @@ impl SterMusic {
                 ui.set_width(ui.available_width() - 16.0);
                 let mut c = self.view_ctx();
                 if !artists.is_empty() {
-                    lists::section(ui, "Artistes", None);
+                    lists::section(ui, tr("Artistes"), None);
                     lists::grid(ui, "found_artists", artists.len(), Some(1), |ui, k, w| {
                         lists::artist_card(ui, &mut c, artists[k], w)
                     });
                     ui.add_space(12.0);
                 }
                 if !albums.is_empty() {
-                    lists::section(ui, "Albums", None);
+                    lists::section(ui, tr("Albums"), None);
                     lists::grid(ui, "found_albums", albums.len(), Some(2), |ui, k, w| {
                         lists::album_card(ui, &mut c, albums[k], w)
                     });
                     ui.add_space(12.0);
                 }
                 if !tracks.is_empty() {
-                    lists::section(ui, &format!("Morceaux ({})", tracks.len()), None);
+                    lists::section(ui, &trf!("Morceaux ({0})", tracks.len()), None);
                     let shown: Vec<usize> = tracks.iter().copied().take(200).collect();
                     lists::track_list_inline(
                         ui,
@@ -1497,8 +1514,8 @@ impl SterMusic {
             widgets::empty_state(
                 ui,
                 Icon::Music,
-                "Rien en lecture",
-                "Choisis un morceau dans ta bibliothèque.",
+                tr("Rien en lecture"),
+                tr("Choisis un morceau dans ta bibliothèque."),
             );
             return;
         };
@@ -1574,9 +1591,9 @@ impl SterMusic {
                     let age = (now - since) as f32;
                     let a = (age / 0.3).min(1.0).min((3.0 - age) / 0.6).clamp(0.0, 1.0);
                     if a > 0.0 {
-                        let name = crate::shader::STYLES[s].0;
+                        let name = tr(crate::shader::STYLES[s].0);
                         let text = if setting == crate::shader::AUTO {
-                            format!("{name} · automatique")
+                            trf!("{name} · automatique", name)
                         } else {
                             name.to_owned()
                         };
@@ -1593,11 +1610,11 @@ impl SterMusic {
 
                 // Changer de visualiseur d'un clic (comme le clic droit du lecteur Windows Media).
                 let current = if setting == crate::shader::AUTO {
-                    "Automatique".to_owned()
+                    tr("Automatique").to_owned()
                 } else {
-                    crate::shader::STYLES[style].0.to_owned()
+                    tr(crate::shader::STYLES[style].0).to_owned()
                 };
-                let tip = format!("Visualiseur : {current} (clic : suivant)");
+                let tip = trf!("Visualiseur : {current} (clic : suivant)", current);
                 if ui
                     .put(r, |ui: &mut egui::Ui| {
                         widgets::icon_button(ui, Icon::Sparkles, &tip, 36.0, 18.0)
@@ -1606,7 +1623,7 @@ impl SterMusic {
                 {
                     self.settings.viz_style = (setting + 1) % (crate::shader::AUTO + 1);
                     if self.settings.viz_style == crate::shader::AUTO {
-                        self.toast("Visualiseur automatique : il change à chaque morceau");
+                        self.toast(tr("Visualiseur automatique : il change à chaque morceau"));
                     }
                 }
             } else {
@@ -1639,9 +1656,9 @@ impl SterMusic {
             pos2(x + 22.0, y),
             Align2::LEFT_TOP,
             if playing {
-                "EN COURS DE LECTURE"
+                tr("EN COURS DE LECTURE")
             } else {
-                "EN PAUSE"
+                tr("EN PAUSE")
             },
             FontId::proportional(12.0),
             theme::accent_light(),
@@ -1713,7 +1730,7 @@ impl SterMusic {
             ui.painter().text(
                 pos2(x, y),
                 Align2::LEFT_TOP,
-                "À SUIVRE",
+                tr("À SUIVRE"),
                 FontId::proportional(12.0),
                 theme::TEXT_3,
             );
@@ -1759,18 +1776,29 @@ impl SterMusic {
     // ---------- Paramètres ----------
 
     fn settings_page(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Paramètres");
+        heading(ui, tr("Paramètres"));
         ui.add_space(16.0);
         egui::ScrollArea::vertical().id_salt("settings").auto_shrink(false).show(ui, |ui| {
             ui.set_width((ui.available_width() - 16.0).min(900.0));
 
-            subtitle(ui, "Bibliothèque");
+            subtitle(ui, tr("Langue"));
             card(ui, |ui| {
-                card_row(ui, Icon::FolderOpen, "Dossiers de musique", "SterMusic parcourt ces dossiers et leurs sous-dossiers.", |s, ui| {
-                    if widgets::secondary_button(ui, Some(Icon::Refresh), "Rescanner").clicked() {
+                card_row(ui, Icon::Globe, tr("Langue de l'interface"), tr("Par défaut, celle de ton bureau."), |s, ui| {
+                    for lang in crate::i18n::Lang::ALL.into_iter().rev() {
+                        if segment(ui, lang.native_name(), crate::i18n::lang() == lang).clicked() {
+                            s.actions.push(Action::SetLang(lang));
+                        }
+                    }
+                }, self);
+            });
+
+            subtitle(ui, tr("Bibliothèque"));
+            card(ui, |ui| {
+                card_row(ui, Icon::FolderOpen, tr("Dossiers de musique"), tr("SterMusic parcourt ces dossiers et leurs sous-dossiers."), |s, ui| {
+                    if widgets::secondary_button(ui, Some(Icon::Refresh), tr("Rescanner")).clicked() {
                         s.actions.push(Action::Rescan);
                     }
-                    if widgets::secondary_button(ui, Some(Icon::FolderPlus), "Ajouter un dossier").clicked() {
+                    if widgets::secondary_button(ui, Some(Icon::FolderPlus), tr("Ajouter un dossier")).clicked() {
                         s.actions.push(Action::AddFolder);
                     }
                 }, self);
@@ -1784,7 +1812,7 @@ impl SterMusic {
                         let g = widgets::galley(ui, &dir.display().to_string(), FontId::proportional(14.0), theme::TEXT_2, max);
                         ui.label(g).on_hover_text(dir.display().to_string());
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if widgets::icon_button(ui, Icon::Close, "Retirer ce dossier", 28.0, 14.0).clicked() {
+                            if widgets::icon_button(ui, Icon::Close, tr("Retirer ce dossier"), 28.0, 14.0).clicked() {
                                 self.actions.push(Action::RemoveFolder(i));
                             }
                         });
@@ -1793,14 +1821,14 @@ impl SterMusic {
                 if self.settings.music_dirs.is_empty() {
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
-                        ui.label(RichText::new("Aucun dossier pour l'instant.").color(theme::TEXT_3));
+                        ui.label(RichText::new(tr("Aucun dossier pour l'instant.")).color(theme::TEXT_3));
                     });
                 }
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.add_space(52.0);
                     let status = if self.scan_rx.is_some() {
-                        format!("Analyse en cours… {}", plural(self.scan_count, "morceau", "morceaux"))
+                        trf!("Analyse en cours… {0}", plural(self.scan_count, "morceau", "morceaux"))
                     } else {
                         format!(
                             "{} · {} · {}",
@@ -1813,10 +1841,10 @@ impl SterMusic {
                 });
             });
 
-            subtitle(ui, "Apparence");
+            subtitle(ui, tr("Apparence"));
             card(ui, |ui| {
                 let mut breeze = self.settings.breeze;
-                card_row(ui, Icon::Sparkles, "Style Breeze (Kubuntu)", "Police Noto Sans, icônes Breeze du système, boutons de fenêtre et sélection de KDE.", |_, ui| {
+                card_row(ui, Icon::Sparkles, tr("Style Breeze (Kubuntu)"), tr("Police Noto Sans, icônes Breeze du système, boutons de fenêtre et sélection de KDE."), |_, ui| {
                     widgets::switch(ui, &mut breeze);
                 }, self);
                 if breeze != self.settings.breeze {
@@ -1824,15 +1852,15 @@ impl SterMusic {
                 }
                 separator(ui);
                 let mut rounded = self.settings.rounded;
-                card_row(ui, Icon::WinMaximize, "Coins arrondis", "Arrondit les coins de la fenêtre (sauf quand elle est agrandie).", |_, ui| {
+                card_row(ui, Icon::WinMaximize, tr("Coins arrondis"), tr("Arrondit les coins de la fenêtre (sauf quand elle est agrandie)."), |_, ui| {
                     widgets::switch(ui, &mut rounded);
                 }, self);
                 self.settings.rounded = rounded;
                 separator(ui);
 
                 // Fond de la fenêtre : trois choix, en boutons segmentés.
-                card_row(ui, Icon::Palette, "Fond de la fenêtre", "Mica : ton fond d'écran flouté et teinté. Transparent : le flou de KWin.", |s, ui| {
-                    let options = [(BackdropKind::Transparent, "Transparent"), (BackdropKind::Mica, "Mica"), (BackdropKind::Solid, "Uni")];
+                card_row(ui, Icon::Palette, tr("Fond de la fenêtre"), tr("Mica : ton fond d'écran flouté et teinté. Transparent : le flou de KWin."), |s, ui| {
+                    let options = [(BackdropKind::Transparent, tr("Transparent")), (BackdropKind::Mica, tr("Mica")), (BackdropKind::Solid, tr("Uni"))];
                     for (kind, label) in options {
                         if segment(ui, label, s.settings.backdrop == kind).clicked() {
                             s.settings.backdrop = kind;
@@ -1843,13 +1871,13 @@ impl SterMusic {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
-                        let label = if self.settings.backdrop == BackdropKind::Mica { "Intensité" } else { "Opacité" };
+                        let label = if self.settings.backdrop == BackdropKind::Mica { tr("Intensité") } else { tr("Opacité") };
                         ui.add_sized([80.0, 20.0], egui::Label::new(RichText::new(label).color(theme::TEXT_2)));
                         let seek = widgets::seek_bar(ui, "mica_strength", self.settings.mica_strength, 220.0, true);
                         if let Some(v) = seek.preview.or(seek.commit) {
                             self.settings.mica_strength = v;
                         }
-                        ui.label(RichText::new(format!("{:.0} %", self.settings.mica_strength * 100.0)).small().color(theme::TEXT_3));
+                        ui.label(RichText::new(crate::i18n::percent(self.settings.mica_strength * 100.0)).small().color(theme::TEXT_3));
                     });
                 }
                 if self.settings.backdrop == BackdropKind::Mica {
@@ -1857,9 +1885,9 @@ impl SterMusic {
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
                         let (text, color) = if self.kwin.active() {
-                            ("Le Mica suit la fenêtre et le fond d'écran de chaque écran (script KWin actif).", theme::accent_light())
+                            (tr("Le Mica suit la fenêtre et le fond d'écran de chaque écran (script KWin actif)."), theme::accent_light())
                         } else {
-                            ("Le Mica ne suit pas la position de la fenêtre (KWin indisponible) : fond d'écran de l'écran principal.", theme::TEXT_3)
+                            (tr("Le Mica ne suit pas la position de la fenêtre (KWin indisponible) : fond d'écran de l'écran principal."), theme::TEXT_3)
                         };
                         ui.label(RichText::new(text).small().color(color));
                     });
@@ -1870,12 +1898,12 @@ impl SterMusic {
                         ui.add_space(52.0);
                         ui.vertical(|ui| {
                             ui.label(
-                                RichText::new("Pour flouter l'arrière-plan, KWin doit connaître SterMusic : avec l'effet Better Blur (forceblur), ce bouton ajoute « stermusic » à sa liste de fenêtres.")
+                                RichText::new(tr("Pour flouter l'arrière-plan, KWin doit connaître SterMusic : avec l'effet Better Blur (forceblur), ce bouton ajoute « stermusic » à sa liste de fenêtres."))
                                     .small()
                                     .color(theme::TEXT_3),
                             );
                             ui.add_space(4.0);
-                            if widgets::secondary_button(ui, Some(Icon::Sparkles), "Activer le flou de KWin pour SterMusic").clicked() {
+                            if widgets::secondary_button(ui, Some(Icon::Sparkles), tr("Activer le flou de KWin pour SterMusic")).clicked() {
                                 self.actions.push(Action::EnableKwinBlur);
                             }
                         });
@@ -1883,35 +1911,52 @@ impl SterMusic {
                 }
             });
 
-            subtitle(ui, "Couleurs");
+            subtitle(ui, tr("Couleurs"));
             card(ui, |ui| {
-                let desc = if theme::kde_theme().is_some() { "« KDE » reprend les couleurs et l'accent de ton bureau ; les autres sont ceux de SterCode." } else { "Les seize thèmes de SterCode." };
-                card_row(ui, Icon::Palette, "Thème", desc, |_, _| {}, self);
-                ui.add_space(6.0);
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(52.0);
-                    ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-                    for t in theme::kde_theme().into_iter().chain(theme::THEMES.iter()) {
-                        let selected = self.settings.theme == t.id;
-                        let (r, resp) = ui.allocate_exact_size(vec2(84.0, 64.0), Sense::click());
-                        widgets::paint_interaction(ui, r, 8, &resp);
-                        let sw = Rect::from_center_size(pos2(r.center().x, r.top() + 22.0), vec2(56.0, 30.0));
-                        ui.painter().rect_filled(sw, CornerRadius::same(8), t.bg);
-                        let dot = |k: f32, col: Color32| ui.painter().circle_filled(pos2(sw.left() + 18.0 + k * 20.0, sw.center().y), 8.0, col);
-                        dot(0.0, t.accent);
-                        dot(1.0, t.accent_2);
-                        let stroke = if selected { Stroke::new(2.0_f32, t.accent_light) } else { Stroke::new(1.0_f32, theme::stroke_strong()) };
-                        ui.painter().rect_stroke(sw, CornerRadius::same(8), stroke, StrokeKind::Outside);
-                        let name = if t.id == theme::KDE_ID { "KDE" } else { t.name };
-                        ui.painter().text(pos2(r.center().x, r.bottom() - 10.0), Align2::CENTER_CENTER, name, FontId::proportional(12.0), if selected { theme::TEXT } else { theme::TEXT_2 });
-                        if resp.clicked() {
-                            self.actions.push(Action::SetTheme(t.id));
-                        }
+                let system = theme::system_theme();
+                let desc = match system {
+                    Some(_) => tr("« Système » reprend les couleurs et l'accent de ton bureau. Enregistre-les en favori pour les garder même si tu changes celles du bureau."),
+                    None => tr("Les seize thèmes de SterCode, et tes favoris."),
+                };
+                card_row(ui, Icon::Palette, tr("Thème"), desc, |s, ui| {
+                    // Un favori ou un thème intégré est déjà figé : seul le thème du système vaut d'être copié.
+                    if s.settings.theme == theme::KDE_ID
+                        && widgets::secondary_button(ui, Some(Icon::Heart), tr("Enregistrer en favori"))
+                            .on_hover_text(tr("Garde une copie des couleurs actuelles du bureau"))
+                            .clicked()
+                    {
+                        s.actions.push(Action::SaveTheme);
                     }
-                });
+                }, self);
+                ui.add_space(6.0);
+                let favorites = theme::saved();
+                let groups: [(&str, Vec<&'static theme::Theme>); 3] = [
+                    ("", system.into_iter().collect()),
+                    (tr("Favoris"), favorites),
+                    (tr("SterCode"), theme::THEMES.iter().collect()),
+                ];
+                for (label, themes) in groups {
+                    if themes.is_empty() {
+                        continue;
+                    }
+                    if !label.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.add_space(52.0);
+                            ui.label(RichText::new(label).small().color(theme::TEXT_3));
+                        });
+                    }
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(52.0);
+                        ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+                        for t in themes {
+                            self.theme_swatch(ui, t);
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
             });
 
-            subtitle(ui, "Son");
+            subtitle(ui, tr("Son"));
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
@@ -1919,14 +1964,14 @@ impl SterMusic {
                 });
                 separator(ui);
                 let mut crossfade = self.settings.crossfade;
-                card_row(ui, Icon::Shuffle, "Fondu enchaîné", "Le morceau suivant commence en fondu pendant que le précédent s'efface.", |_, ui| {
+                card_row(ui, Icon::Shuffle, tr("Fondu enchaîné"), tr("Le morceau suivant commence en fondu pendant que le précédent s'efface."), |_, ui| {
                     widgets::switch(ui, &mut crossfade);
                 }, self);
                 self.settings.crossfade = crossfade;
                 if crossfade {
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
-                        ui.add_sized([80.0, 20.0], egui::Label::new(RichText::new("Durée").color(theme::TEXT_2)));
+                        ui.add_sized([80.0, 20.0], egui::Label::new(RichText::new(tr("Durée")).color(theme::TEXT_2)));
                         let value = (self.settings.crossfade_secs - 1.0) / 11.0;
                         let seek = widgets::seek_bar(ui, "crossfade_secs", value, 220.0, true);
                         if let Some(v) = seek.preview.or(seek.commit) {
@@ -1937,7 +1982,7 @@ impl SterMusic {
                 }
                 separator(ui);
                 let mut visualizer = self.settings.visualizer;
-                card_row(ui, Icon::AudioLines, "Visualiseur", "Lumières qui suivent la musique, aux couleurs de la pochette (En cours de lecture, accueil).", |_, ui| {
+                card_row(ui, Icon::AudioLines, tr("Visualiseur"), tr("Lumières qui suivent la musique, aux couleurs de la pochette (En cours de lecture, accueil)."), |_, ui| {
                     widgets::switch(ui, &mut visualizer);
                 }, self);
                 self.settings.visualizer = visualizer;
@@ -1945,14 +1990,14 @@ impl SterMusic {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
-                        ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new("Mode automatique").color(theme::TEXT_2)))
-                            .on_hover_text("Les visualiseurs parmi lesquels le mode automatique choisit au hasard.");
+                        ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new(tr("Mode automatique")).color(theme::TEXT_2)))
+                            .on_hover_text(tr("Les visualiseurs parmi lesquels le mode automatique choisit au hasard."));
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
                             let allowed = self.auto_allowed();
                             for (i, (name, _)) in crate::shader::STYLES.iter().enumerate() {
                                 let on = allowed.contains(&i);
-                                if segment(ui, name, on).clicked() {
+                                if segment(ui, tr(name), on).clicked() {
                                     let excluded = &mut self.settings.auto_excluded;
                                     if on {
                                         // Au moins un visualiseur reste dans le tirage.
@@ -1966,17 +2011,17 @@ impl SterMusic {
                             }
                         });
                     });
-                    for (label, banner) in [("En cours de lecture", false), ("Bandeau de l'accueil", true)] {
+                    for (label, banner) in [(tr("En cours de lecture"), false), (tr("Bandeau de l'accueil"), true)] {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             ui.add_space(52.0);
                             ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new(label).color(theme::TEXT_2)));
                             ui.horizontal_wrapped(|ui| {
                                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                                let names = crate::shader::STYLES.iter().map(|(n, _)| *n).chain(["Automatique"]);
+                                let names = crate::shader::STYLES.iter().map(|(n, _)| *n).chain([tr("Automatique")]);
                                 for (i, name) in names.enumerate() {
                                     let current = if banner { self.settings.banner_style } else { self.settings.viz_style };
-                                    if segment(ui, name, current == i).clicked() {
+                                    if segment(ui, tr(name), current == i).clicked() {
                                         if banner {
                                             self.settings.banner_style = i;
                                         } else {
@@ -1990,7 +2035,7 @@ impl SterMusic {
                 }
                 separator(ui);
                 let mut leveling = self.settings.leveling;
-                card_row(ui, Icon::Volume2, "Nivellement du volume", "Joue les morceaux à un volume semblable : gain ReplayGain du fichier s'il existe, sinon réglage automatique.", |_, ui| {
+                card_row(ui, Icon::Volume2, tr("Nivellement du volume"), tr("Joue les morceaux à un volume semblable : gain ReplayGain du fichier s'il existe, sinon réglage automatique."), |_, ui| {
                     widgets::switch(ui, &mut leveling);
                 }, self);
                 if leveling != self.settings.leveling {
@@ -1999,33 +2044,41 @@ impl SterMusic {
                 }
             });
 
-            subtitle(ui, "Lecture");
+            subtitle(ui, tr("Lecture"));
             card(ui, |ui| {
                 let mut resume = self.settings.resume;
-                card_row(ui, Icon::Clock, "Reprendre là où je me suis arrêté", "Au lancement, la file d'attente et la position sont restaurées (en pause).", |_, ui| {
+                card_row(ui, Icon::Clock, tr("Reprendre là où je me suis arrêté"), tr("Au lancement, la file d'attente et la position sont restaurées (en pause)."), |_, ui| {
                     widgets::switch(ui, &mut resume);
                 }, self);
                 self.settings.resume = resume;
                 separator(ui);
                 let (state, desc) = if self.mpris.available() {
-                    ("Actif", "Touches multimédia du clavier, widget lecteur du bureau et écran de verrouillage (MPRIS).")
+                    (tr("Actif"), tr("Touches multimédia du clavier, widget lecteur du bureau et écran de verrouillage (MPRIS)."))
                 } else {
-                    ("Indisponible", "Le bus de session D-Bus n'a pas répondu : les touches multimédia ne piloteront pas SterMusic.")
+                    (tr("Indisponible"), tr("Le bus de session D-Bus n'a pas répondu : les touches multimédia ne piloteront pas SterMusic."))
                 };
-                card_row(ui, Icon::AudioLines, "Intégration au bureau", desc, |_, ui| {
-                    ui.label(RichText::new(state).color(if state == "Actif" { theme::accent_light() } else { theme::TEXT_3 }));
+                card_row(ui, Icon::AudioLines, tr("Intégration au bureau"), desc, |_, ui| {
+                    ui.label(RichText::new(state).color(if state == tr("Actif") { theme::accent_light() } else { theme::TEXT_3 }));
                 }, self);
             });
 
-            subtitle(ui, "Éditeur de tags");
+            subtitle(ui, tr("Éditeur de tags"));
             card(ui, |ui| {
-                card_row(ui, Icon::Tag, "Modifier des fichiers", "Page « Tags » de la barre latérale, ou clic droit sur un morceau, un album, une sélection ; même hors bibliothèque.", |s, ui| {
-                    if widgets::secondary_button(ui, Some(Icon::FolderOpen), "Choisir des fichiers…").clicked() {
+                card_row(ui, Icon::Tag, tr("Modifier des fichiers"), tr("Page « Tags » de la barre latérale, ou clic droit sur un morceau, un album, une sélection ; même hors bibliothèque."), |s, ui| {
+                    if widgets::secondary_button(ui, Some(Icon::FolderOpen), tr("Choisir des fichiers…")).clicked() {
                         s.actions.push(Action::PickTagFiles);
                     }
                 }, self);
                 separator(ui);
-                card_row(ui, Icon::Music, "Version des tags MP3", "ID3v2.4 : la plus récente. ID3v2.3 : pour les vieux autoradios et l'Explorateur de Windows.", |s, ui| {
+                card_row(ui, Icon::Library, tr("Entretien de la bibliothèque"), tr("Pochettes manquantes à compléter, volume ReplayGain à mesurer, morceaux en double à repérer."), |s, ui| {
+                    for tool in super::lib_tools::LibTool::ALL.into_iter().rev() {
+                        if widgets::secondary_button(ui, Some(tool.icon()), tool.label()).on_hover_text(tool.hint()).clicked() {
+                            s.actions.push(Action::LibTool(tool));
+                        }
+                    }
+                }, self);
+                separator(ui);
+                card_row(ui, Icon::Music, tr("Version des tags MP3"), tr("ID3v2.4 : la plus récente. ID3v2.3 : pour les vieux autoradios et l'Explorateur de Windows."), |s, ui| {
                     for (v23, label) in [(true, "ID3v2.3"), (false, "ID3v2.4")] {
                         if segment(ui, label, s.settings.tag_id3v23 == v23).clicked() {
                             s.settings.tag_id3v23 = v23;
@@ -2034,26 +2087,26 @@ impl SterMusic {
                 }, self);
                 separator(ui);
                 let mut keep = self.settings.tag_keep_mtime;
-                card_row(ui, Icon::Clock, "Conserver la date de modification", "Un album retouché ne remonte pas dans « Ajoutés récemment ».", |_, ui| {
+                card_row(ui, Icon::Clock, tr("Conserver la date de modification"), tr("Un album retouché ne remonte pas dans « Ajoutés récemment »."), |_, ui| {
                     widgets::switch(ui, &mut keep);
                 }, self);
                 self.settings.tag_keep_mtime = keep;
             });
 
-            subtitle(ui, "Raccourcis clavier");
+            subtitle(ui, tr("Raccourcis clavier"));
             card(ui, |ui| {
                 for (keys, what) in [
-                    ("Espace", "Lecture / pause"),
-                    ("Ctrl + → / ←", "Morceau suivant / précédent"),
-                    ("→ / ←", "Avancer / reculer de 5 secondes"),
-                    ("Ctrl + ↑ / ↓", "Monter / baisser le volume"),
-                    ("Ctrl + F", "Rechercher"),
-                    ("Ctrl + M", "Mini lecteur"),
-                    ("Échap", "Retour"),
-                    ("Ctrl / Maj + clic", "Sélectionner plusieurs morceaux"),
-                    ("Ctrl + S", "Enregistrer les tags (éditeur)"),
-                    ("Ctrl + Maj + S", "Enregistrer les tags de la sélection"),
-                    ("Suppr", "Retirer la sélection de la liste (éditeur)"),
+                    (tr("Espace"), tr("Lecture / pause")),
+                    (tr("Ctrl + → / ←"), tr("Morceau suivant / précédent")),
+                    ("→ / ←", tr("Avancer / reculer de 5 secondes")),
+                    (tr("Ctrl + ↑ / ↓"), tr("Monter / baisser le volume")),
+                    (tr("Ctrl + F"), tr("Rechercher")),
+                    (tr("Ctrl + M"), tr("Mini lecteur")),
+                    (tr("Échap"), tr("Retour")),
+                    (tr("Ctrl / Maj + clic"), tr("Sélectionner plusieurs morceaux")),
+                    (tr("Ctrl + S"), tr("Enregistrer les tags (éditeur)")),
+                    (tr("Ctrl + Maj + S"), tr("Enregistrer les tags de la sélection")),
+                    (tr("Suppr"), tr("Retirer la sélection de la liste (éditeur)")),
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
@@ -2063,12 +2116,12 @@ impl SterMusic {
                 }
             });
 
-            subtitle(ui, "À propos");
+            subtitle(ui, tr("À propos"));
             card(ui, |ui| {
-                card_row(ui, Icon::Info, &format!("SterMusic {}", env!("CARGO_PKG_VERSION")), "Lecteur de musique pour Linux, écrit en Rust (egui, rodio, Symphonia, lofty). Icônes Lucide (ISC).", |_, _| {}, self);
+                card_row(ui, Icon::Info, &format!("SterMusic {}", env!("CARGO_PKG_VERSION")), tr("Lecteur de musique pour Linux, écrit en Rust (egui, rodio, Symphonia, lofty). Icônes Lucide (ISC)."), |_, _| {}, self);
                 ui.horizontal(|ui| {
                     ui.add_space(52.0);
-                    ui.label(RichText::new(format!("Données : {}", crate::library::data_dir().display())).small().color(theme::TEXT_3));
+                    ui.label(RichText::new(trf!("Données : {0}", crate::library::data_dir().display())).small().color(theme::TEXT_3));
                 });
             });
             ui.add_space(32.0);
@@ -2117,12 +2170,17 @@ fn card_row(
         let (r, _) = ui.allocate_exact_size(vec2(36.0, 40.0), Sense::hover());
         icons::paint_centered(ui.painter(), icon, r.center(), 20.0, theme::TEXT_2);
         ui.add_space(8.0);
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(RichText::new(title).color(theme::TEXT));
-            ui.label(RichText::new(desc).small().color(theme::TEXT_2));
+        // Les contrôles d'abord, à droite : le texte prend la place qui reste et passe à la ligne
+        // au lieu de filer sous les boutons.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            right(app, ui);
+            ui.add_space(12.0);
+            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add(egui::Label::new(RichText::new(title).color(theme::TEXT)).wrap());
+                ui.add(egui::Label::new(RichText::new(desc).small().color(theme::TEXT_2)).wrap());
+            });
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| right(app, ui));
     });
 }
 
@@ -2139,6 +2197,65 @@ fn theme_glow(painter: &egui::Painter, rect: Rect) {
         rect.height() * 1.1,
         theme::alpha(theme::accent_2(), 0x40),
     );
+}
+
+impl SterMusic {
+    /// Vignette d'un thème : son fond et ses deux couleurs, son nom ; clic droit sur un favori
+    /// pour le renommer ou le supprimer.
+    fn theme_swatch(&mut self, ui: &mut egui::Ui, t: &'static theme::Theme) {
+        let selected = self.settings.theme == t.id;
+        let favorite = t.id.starts_with("fav-");
+        let (r, resp) = ui.allocate_exact_size(vec2(96.0, 64.0), Sense::click());
+        widgets::paint_interaction(ui, r, 8, &resp);
+        let sw = Rect::from_center_size(pos2(r.center().x, r.top() + 22.0), vec2(56.0, 30.0));
+        ui.painter().rect_filled(sw, CornerRadius::same(8), t.bg);
+        let dot = |k: f32, col: Color32| {
+            ui.painter()
+                .circle_filled(pos2(sw.left() + 18.0 + k * 20.0, sw.center().y), 8.0, col)
+        };
+        dot(0.0, t.accent);
+        dot(1.0, t.accent_2);
+        let stroke = if selected {
+            Stroke::new(2.0_f32, t.accent_light)
+        } else {
+            Stroke::new(1.0_f32, theme::stroke_strong())
+        };
+        ui.painter()
+            .rect_stroke(sw, CornerRadius::same(8), stroke, StrokeKind::Outside);
+        let name = if t.id == theme::KDE_ID {
+            theme::system_label()
+        } else {
+            tr(t.name)
+        };
+        let color = if selected { theme::TEXT } else { theme::TEXT_2 };
+        let g = widgets::galley(ui, name, FontId::proportional(12.0), color, r.width() - 6.0);
+        ui.painter().galley(
+            pos2(
+                r.center().x - g.size().x / 2.0,
+                r.bottom() - 10.0 - g.size().y / 2.0,
+            ),
+            g,
+            color,
+        );
+        let resp = if favorite {
+            resp.on_hover_text(trf!("{name} (clic droit : renommer, supprimer)", name))
+        } else {
+            resp.on_hover_text(name)
+        };
+        if resp.clicked() {
+            self.actions.push(Action::SetTheme(t.id));
+        }
+        if favorite {
+            resp.context_menu(|ui| {
+                if widgets::menu_item(ui, Some(Icon::Pencil), tr("Renommer…")).clicked() {
+                    self.actions.push(Action::RenameTheme(t.id.to_owned()));
+                }
+                if widgets::menu_item(ui, Some(Icon::Trash), tr("Supprimer")).clicked() {
+                    self.actions.push(Action::DeleteTheme(t.id.to_owned()));
+                }
+            });
+        }
+    }
 }
 
 /// Bouton segmenté (choix exclusif), sélection à l'accent.

@@ -226,8 +226,24 @@ fn embedded(track: &Path) -> Option<DynamicImage> {
     image::load_from_memory(pic.data()).ok()
 }
 
+/// Vrai si le morceau a une pochette à montrer : intégrée à ses tags, ou image de son dossier.
+pub fn has_cover(track: &Path) -> bool {
+    let embedded = Probe::open(track)
+        .ok()
+        .and_then(|p| p.read().ok())
+        .is_some_and(|tagged| tagged.tags().iter().any(|t| !t.pictures().is_empty()));
+    embedded || !folder_candidates(track).is_empty()
+}
+
 /// cover.jpg, folder.png, front.jpg… dans le dossier du morceau.
 fn folder_image(track: &Path) -> Option<DynamicImage> {
+    folder_candidates(track)
+        .into_iter()
+        .find_map(|p| image::open(p).ok())
+}
+
+/// Images du dossier qui peuvent servir de pochette, les noms les plus courants d'abord.
+fn folder_candidates(track: &Path) -> Vec<PathBuf> {
     const NAMES: &[&str] = &[
         "cover",
         "folder",
@@ -237,9 +253,10 @@ fn folder_image(track: &Path) -> Option<DynamicImage> {
         "artwork",
         "albumartsmall",
     ];
-    let dir = track.parent()?;
-    let mut candidates: Vec<(usize, PathBuf)> = std::fs::read_dir(dir)
-        .ok()?
+    let Some(entries) = track.parent().and_then(|dir| std::fs::read_dir(dir).ok()) else {
+        return Vec::new();
+    };
+    let mut candidates: Vec<(usize, PathBuf)> = entries
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter_map(|p| {
@@ -255,7 +272,7 @@ fn folder_image(track: &Path) -> Option<DynamicImage> {
         })
         .collect();
     candidates.sort();
-    candidates.into_iter().find_map(|(_, p)| image::open(p).ok())
+    candidates.into_iter().map(|(_, p)| p).collect()
 }
 
 /// Recadrage carré au centre, puis mise à la taille voulue.

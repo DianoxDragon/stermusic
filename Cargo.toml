@@ -29,11 +29,13 @@ serde_json = "1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 # Rechercher-remplacer et motifs de noms de fichiers de l'éditeur de tags
 regex = "1"
-# Glisser-déposer de fichiers sous Wayland (winit 0.30 ne le gère que sous X11) : on écoute
-# nous-mêmes le protocole, sur la connexion de la fenêtre.
-raw-window-handle = "0.6"
-wayland-client = "0.31"
-wayland-backend = { version = "0.3", features = ["client_system"] }
+# Glisser-déposer de fichiers sous Wayland (winit 0.30 ne le gère que sous X11) : voir `[patch]`.
+smithay-clipboard = "0.7"
+
+# Presse-papiers Wayland d'egui, modifié pour accepter les fichiers glissés sur la fenêtre (voir
+# vendor/smithay-clipboard/README.md).
+[patch.crates-io]
+smithay-clipboard = { path = "vendor/smithay-clipboard" }
 
 [profile.release]
 opt-level = 3

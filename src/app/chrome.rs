@@ -7,7 +7,9 @@ use eframe::egui::{
 
 use super::{Action, Dialog, Page, Playlist, PlaylistId, SterMusic, View};
 use crate::anim::{self, Easing};
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
+use crate::trf;
 use crate::{theme, widgets};
 
 pub const TITLE_HEIGHT: f32 = 40.0;
@@ -193,7 +195,7 @@ impl SterMusic {
                     let r = Rect::from_center_size(pos2(x + 16.0, rect.center().y), vec2(32.0, 32.0));
                     let resp = ui.put(r, |ui: &mut egui::Ui| {
                         ui.set_opacity(t);
-                        widgets::icon_button(ui, Icon::ArrowLeft, "Retour (Échap)", 32.0, 16.0)
+                        widgets::icon_button(ui, Icon::ArrowLeft, tr("Retour (Échap)"), 32.0, 16.0)
                     });
                     if resp.clicked() && can_back {
                         self.actions.push(Action::Back);
@@ -219,19 +221,19 @@ impl SterMusic {
                 let close = Rect::from_min_size(pos2(right - bw, rect.top()), vec2(bw, TITLE_HEIGHT));
                 let max = close.translate(vec2(-bw, 0.0));
                 let min = max.translate(vec2(-bw, 0.0));
-                if window_button(ui, close, WinBtn::Close, "Fermer").clicked() {
+                if window_button(ui, close, WinBtn::Close, tr("Fermer")).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
                 let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
                 let (kind, tip) = if maximized {
-                    (WinBtn::Restore, "Restaurer")
+                    (WinBtn::Restore, tr("Restaurer"))
                 } else {
-                    (WinBtn::Maximize, "Agrandir")
+                    (WinBtn::Maximize, tr("Agrandir"))
                 };
                 if window_button(ui, max, kind, tip).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
                 }
-                if window_button(ui, min, WinBtn::Minimize, "Réduire").clicked() {
+                if window_button(ui, min, WinBtn::Minimize, tr("Réduire")).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                 }
                 let mini = Rect::from_min_size(
@@ -242,13 +244,19 @@ impl SterMusic {
                     let r = Rect::from_center_size(mini.center(), vec2(32.0, 32.0));
                     if ui
                         .put(r, |ui: &mut egui::Ui| {
-                            widgets::icon_button(ui, Icon::MiniPlayer, "Mini lecteur (Ctrl+M)", 32.0, 16.0)
+                            widgets::icon_button(
+                                ui,
+                                Icon::MiniPlayer,
+                                tr("Mini lecteur (Ctrl+M)"),
+                                32.0,
+                                16.0,
+                            )
                         })
                         .clicked()
                     {
                         self.actions.push(Action::ToggleMini);
                     }
-                } else if window_button(ui, mini, WinBtn::Mini, "Mini lecteur (Ctrl+M)").clicked() {
+                } else if window_button(ui, mini, WinBtn::Mini, tr("Mini lecteur (Ctrl+M)")).clicked() {
                     self.actions.push(Action::ToggleMini);
                 }
 
@@ -323,7 +331,7 @@ impl SterMusic {
                     let r = Rect::from_min_size(pos2(left, y), vec2(48.0, 34.0));
                     if ui
                         .put(r, |ui: &mut egui::Ui| {
-                            widgets::icon_button(ui, Icon::Search, "Rechercher (Ctrl+F)", 40.0, 17.0)
+                            widgets::icon_button(ui, Icon::Search, tr("Rechercher (Ctrl+F)"), 40.0, 17.0)
                         })
                         .clicked()
                     {
@@ -335,10 +343,10 @@ impl SterMusic {
                 // Navigation principale.
                 let queue_badge = self.queue.len();
                 let items = [
-                    (Page::Home, Icon::Home, "Accueil"),
-                    (Page::Library, Icon::Music, "Bibliothèque musicale"),
-                    (Page::Queue, Icon::ListMusic, "File d'attente"),
-                    (Page::Playlists, Icon::Library, "Playlists"),
+                    (Page::Home, Icon::Home, tr("Accueil")),
+                    (Page::Library, Icon::Music, tr("Bibliothèque musicale")),
+                    (Page::Queue, Icon::ListMusic, tr("File d'attente")),
+                    (Page::Playlists, Icon::Library, tr("Playlists")),
                 ];
                 let active_page = match &self.view {
                     View::Page(p) => Some(*p),
@@ -375,7 +383,7 @@ impl SterMusic {
                         pos2(left + inner_w, rect.bottom() - bottom_reserved),
                     );
                     let mut entries: Vec<(PlaylistId, String)> =
-                        vec![(PlaylistId::Favorites, "Favoris".into())];
+                        vec![(PlaylistId::Favorites, tr("Favoris").into())];
                     entries.extend(
                         self.settings
                             .playlists
@@ -413,12 +421,12 @@ impl SterMusic {
                 let selected = active_page == Some(Page::Tags);
                 let pending = self.tag_editor.dirty_count();
                 let badge = (pending > 0).then(|| pending.to_string());
-                let busy = self.tag_editor.busy();
+                let busy = self.tag_editor.busy() || self.lib_tools.busy();
                 let nav = nav_item(
                     ui,
                     r,
                     Icon::Tag,
-                    "Éditeur de tags",
+                    tr("Éditeur de tags"),
                     selected,
                     expanded,
                     badge.as_deref().filter(|_| !busy),
@@ -436,9 +444,11 @@ impl SterMusic {
                         .paint_at(ui, Rect::from_center_size(center, vec2(side, side)));
                 }
                 let tip = if self.tag_editor.saving() {
-                    "Enregistrement des tags en cours…"
+                    tr("Enregistrement des tags en cours…")
+                } else if self.tag_editor.loading() {
+                    tr("Lecture des tags en cours…")
                 } else {
-                    "Lecture des tags en cours…"
+                    self.lib_tools.status().unwrap_or_default()
                 };
                 let nav = if busy { nav.on_hover_text(tip) } else { nav };
                 if nav.clicked() {
@@ -451,7 +461,7 @@ impl SterMusic {
                 // Paramètres, en bas.
                 let r = Rect::from_min_size(pos2(left, rect.bottom() - 48.0), vec2(inner_w, 40.0));
                 let selected = active_page == Some(Page::Settings);
-                if nav_item(ui, r, Icon::Settings, "Paramètres", selected, expanded, None).clicked() {
+                if nav_item(ui, r, Icon::Settings, tr("Paramètres"), selected, expanded, None).clicked() {
                     self.actions.push(Action::Go(View::Page(Page::Settings)));
                 }
                 if selected {
@@ -480,7 +490,7 @@ impl SterMusic {
             rect,
             egui::TextEdit::singleline(&mut self.search)
                 .id(id)
-                .hint_text("Rechercher")
+                .hint_text(tr("Rechercher"))
                 .frame(false)
                 .margin(vec2(34.0, 8.0))
                 .vertical_align(egui::Align::Center),
@@ -542,9 +552,12 @@ impl SterMusic {
         let mut close = false;
         let mut confirm = false;
         let title = match dialog {
-            Dialog::NewPlaylist { .. } => "Nouvelle playlist",
-            Dialog::Rename { .. } => "Renommer la playlist",
-            Dialog::ConfirmDelete(_) => "Supprimer la playlist ?",
+            Dialog::ThemeName { id: None, .. } => tr("Enregistrer le thème"),
+            Dialog::ThemeName { .. } => tr("Renommer le thème"),
+            Dialog::DeleteTheme(_) => tr("Supprimer le thème ?"),
+            Dialog::NewPlaylist { .. } => tr("Nouvelle playlist"),
+            Dialog::Rename { .. } => tr("Renommer la playlist"),
+            Dialog::ConfirmDelete(_) => tr("Supprimer la playlist ?"),
         };
         let modal = egui::Modal::new(egui::Id::new("dialog"))
             .frame(
@@ -557,12 +570,44 @@ impl SterMusic {
                 ui.label(egui::RichText::new(title).font(theme::semibold(20.0)));
                 ui.add_space(12.0);
                 match dialog {
-                    Dialog::NewPlaylist { name, .. } | Dialog::Rename { name, .. } => {
+                    Dialog::ThemeName { id: None, .. } => {
+                        ui.label(
+                            egui::RichText::new(
+                                tr("Ses couleurs sont gardées telles quelles, même si celles du bureau changent."),
+                            )
+                            .color(theme::TEXT_2),
+                        );
+                        ui.add_space(10.0);
+                    }
+                    Dialog::DeleteTheme(id) => {
+                        let name = self
+                            .settings
+                            .saved_themes
+                            .iter()
+                            .find(|t| &t.id == id)
+                            .map(|t| t.name.as_str())
+                            .unwrap_or("");
+                        ui.label(
+                            egui::RichText::new(trf!("Le thème « {name} » sera retiré de tes favoris.", name))
+                                .color(theme::TEXT_2),
+                        );
+                    }
+                    _ => {}
+                }
+                let hint = if matches!(dialog, Dialog::ThemeName { .. }) {
+                    tr("Nom du thème")
+                } else {
+                    tr("Nom de la playlist")
+                };
+                match dialog {
+                    Dialog::NewPlaylist { name, .. }
+                    | Dialog::Rename { name, .. }
+                    | Dialog::ThemeName { name, .. } => {
                         let r = ui.add(
                             egui::TextEdit::singleline(name)
                                 .desired_width(f32::INFINITY)
                                 .margin(vec2(10.0, 8.0))
-                                .hint_text("Nom de la playlist"),
+                                .hint_text(hint),
                         );
                         if !r.has_focus() && ui.memory(|m| m.focused().is_none()) {
                             r.request_focus();
@@ -571,6 +616,7 @@ impl SterMusic {
                             confirm = true;
                         }
                     }
+                    Dialog::DeleteTheme(_) => {}
                     Dialog::ConfirmDelete(i) => {
                         let name = self
                             .settings
@@ -579,9 +625,7 @@ impl SterMusic {
                             .map(|p| p.name.as_str())
                             .unwrap_or("");
                         ui.label(
-                            egui::RichText::new(format!(
-                                "« {name} » sera supprimée. Les morceaux restent dans la bibliothèque."
-                            ))
+                            egui::RichText::new(trf!("« {name} » sera supprimée. Les morceaux restent dans la bibliothèque.", name))
                             .color(theme::TEXT_2),
                         );
                     }
@@ -590,14 +634,17 @@ impl SterMusic {
                 ui.horizontal(|ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let label = match dialog {
-                            Dialog::NewPlaylist { .. } => "Créer",
-                            Dialog::Rename { .. } => "Renommer",
-                            Dialog::ConfirmDelete(_) => "Supprimer",
+                            Dialog::ThemeName { id: None, .. } => tr("Enregistrer"),
+                            Dialog::ThemeName { .. } => tr("Renommer"),
+                            Dialog::DeleteTheme(_) => tr("Supprimer"),
+                            Dialog::NewPlaylist { .. } => tr("Créer"),
+                            Dialog::Rename { .. } => tr("Renommer"),
+                            Dialog::ConfirmDelete(_) => tr("Supprimer"),
                         };
                         if widgets::primary_button(ui, None, label).clicked() {
                             confirm = true;
                         }
-                        if widgets::secondary_button(ui, None, "Annuler").clicked() {
+                        if widgets::secondary_button(ui, None, tr("Annuler")).clicked() {
                             close = true;
                         }
                     });
@@ -608,9 +655,46 @@ impl SterMusic {
         }
         if confirm {
             match self.dialog.take() {
+                Some(Dialog::ThemeName { id, name }) => {
+                    let name = match name.trim() {
+                        "" => theme::suggested_name(),
+                        n => n.to_owned(),
+                    };
+                    match id {
+                        None => {
+                            let saved = theme::SavedTheme::from_current(name.clone());
+                            let id = saved.id.clone();
+                            self.settings.saved_themes.push(saved);
+                            theme::set_saved(&self.settings.saved_themes);
+                            self.settings.theme = id.clone();
+                            theme::set(ctx, &id);
+                            self.toast(trf!("Thème « {name} » ajouté à tes favoris", name));
+                        }
+                        Some(id) => {
+                            if let Some(t) = self.settings.saved_themes.iter_mut().find(|t| t.id == id) {
+                                t.name = name;
+                            }
+                            theme::set_saved(&self.settings.saved_themes);
+                            theme::set(ctx, &self.settings.theme);
+                        }
+                    }
+                }
+                Some(Dialog::DeleteTheme(id)) => {
+                    self.settings.saved_themes.retain(|t| t.id != id);
+                    theme::set_saved(&self.settings.saved_themes);
+                    // Le thème supprimé était en cours : on revient à celui du bureau, sinon au premier.
+                    if self.settings.theme == id {
+                        self.settings.theme = if theme::system_theme().is_some() {
+                            theme::KDE_ID.to_owned()
+                        } else {
+                            theme::THEMES[0].id.to_owned()
+                        };
+                    }
+                    theme::set(ctx, &self.settings.theme);
+                }
                 Some(Dialog::NewPlaylist { name, tracks }) => {
                     let name = if name.trim().is_empty() {
-                        "Sans titre".to_owned()
+                        tr("Sans titre").to_owned()
                     } else {
                         name.trim().to_owned()
                     };
@@ -619,7 +703,7 @@ impl SterMusic {
                         name: name.clone(),
                         tracks: paths,
                     });
-                    self.toast(format!("Playlist « {name} » créée"));
+                    self.toast(trf!("Playlist « {name} » créée", name));
                 }
                 Some(Dialog::Rename { index, name }) => {
                     if let Some(p) = self.settings.playlists.get_mut(index) {

@@ -1,9 +1,13 @@
 //! SterMusic : état de l'application, file d'attente, actions.
 
 mod chrome;
+mod cover_tool;
+mod dup_tool;
+mod lib_tools;
 mod lists;
 mod mb_import;
 mod nowbar;
+mod rg_tool;
 mod tag_editor;
 mod tag_tools;
 mod views;
@@ -18,10 +22,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::backdrop::{self, Backdrop};
 use crate::covers::Covers;
+use crate::i18n::tr;
 use crate::library::{self, Library, ScanMsg};
 use crate::mpris::{self, Mpris, Remote};
 use crate::player::Player;
 use crate::theme;
+use crate::trf;
 
 // ---------- Réglages enregistrés ----------
 
@@ -146,6 +152,10 @@ pub struct Settings {
     pub tag_keep_mtime: bool,
     /// Éditeur de tags : largeur des colonnes, derniers motifs de renommage.
     pub tag_prefs: tag_editor::Prefs,
+    /// Thèmes enregistrés en favori (couleurs figées).
+    pub saved_themes: Vec<theme::SavedTheme>,
+    /// Langue de l'interface (par défaut, celle du bureau).
+    pub lang: crate::i18n::Lang,
     pub sidebar_collapsed: bool,
     pub resume: bool,
     pub page: Page,
@@ -189,6 +199,8 @@ impl Default for Settings {
             tag_id3v23: false,
             tag_keep_mtime: true,
             tag_prefs: Default::default(),
+            saved_themes: Vec::new(),
+            lang: crate::i18n::Lang::from_env(),
             sidebar_collapsed: false,
             resume: true,
             page: Page::Home,
@@ -247,14 +259,25 @@ pub enum Action {
     ToggleMini,
     ToggleSidebar,
     SetTheme(&'static str),
+    SetLang(crate::i18n::Lang),
+    /// Enregistre le thème en cours en favori (demande son nom).
+    SaveTheme,
+    RenameTheme(String),
+    DeleteTheme(String),
     SetBreeze(bool),
     /// Ajoute SterMusic aux fenêtres floutées par l'effet Better Blur de KWin.
     EnableKwinBlur,
     FocusSearch,
     /// Ouvre l'éditeur de tags sur ces fichiers (de la bibliothèque ou non).
     EditTags(Vec<PathBuf>),
+    /// Joue ces fichiers, même hors bibliothèque (double-clic dans Dolphin).
+    PlayFiles(Vec<PathBuf>),
     /// Choisit des fichiers à éditer, hors bibliothèque compris.
     PickTagFiles,
+    /// Ouvre un outil d'entretien de la bibliothèque (pochettes manquantes, ReplayGain, doublons).
+    LibTool(lib_tools::LibTool),
+    /// Ouvre le calcul du ReplayGain sur ces morceaux (le libellé dit ce que c'est).
+    ReplayGain(Vec<PathBuf>, String),
 }
 
 /// Morceaux sélectionnés dans une liste (Ctrl+clic, Maj+clic).
@@ -319,8 +342,21 @@ impl Selection {
 }
 
 pub enum Dialog {
-    NewPlaylist { name: String, tracks: Vec<usize> },
-    Rename { index: usize, name: String },
+    /// Enregistrer le thème en cours en favori (`id: None`), ou renommer un favori.
+    ThemeName {
+        id: Option<String>,
+        name: String,
+    },
+    /// Supprimer un thème favori.
+    DeleteTheme(String),
+    NewPlaylist {
+        name: String,
+        tracks: Vec<usize>,
+    },
+    Rename {
+        index: usize,
+        name: String,
+    },
     ConfirmDelete(usize),
 }
 
@@ -382,6 +418,14 @@ pub struct SterMusic {
     ipc: crate::ipc::Ipc,
     /// Fichiers glissés sur la fenêtre sous Wayland.
     dnd: crate::dnd::Dnd,
+    /// Morceaux ouverts hors des dossiers de la bibliothèque (double-clic dans Dolphin) : ils
+    /// restent dans la bibliothèque jusqu'à la fermeture, rescans compris.
+    external: Vec<library::Track>,
+    /// Outils d'entretien de la bibliothèque.
+    lib_tools: lib_tools::LibTools,
+    /// Fichier que le lecteur a ouvert, connu des threads qui écrivent des tags : celui-là est
+    /// écrit via une copie (une écriture sur place décalerait le son sous le décodeur).
+    now_loaded: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
     toast: Option<(String, f64)>,
     queue_drag: Option<usize>,
 
@@ -405,6 +449,17 @@ pub struct SterMusic {
     viz_label: Option<(usize, f64)>,
 }
 
+/// Ce qui est demandé au lancement, en ligne de commande.
+#[derive(Default)]
+pub struct Launch {
+    /// Dossier à ajouter à la bibliothèque.
+    pub music_dir: Option<PathBuf>,
+    /// Morceaux à jouer (double-clic dans le gestionnaire de fichiers).
+    pub play_files: Vec<PathBuf>,
+    /// Fichiers à ouvrir dans l'éditeur de tags.
+    pub tag_files: Vec<PathBuf>,
+}
+
 /// Taille du mini lecteur.
 const MINI_SIZE: egui::Vec2 = egui::vec2(380.0, 116.0);
 
@@ -421,7 +476,12 @@ fn perceptual(v: f32) -> f32 {
 }
 
 impl SterMusic {
-    pub fn new(cc: &eframe::CreationContext<'_>, cli_dir: Option<PathBuf>, tag_files: Vec<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
+        let Launch {
+            music_dir: cli_dir,
+            play_files,
+            tag_files,
+        } = launch;
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let mut settings: Settings = cc
             .storage
@@ -449,6 +509,17 @@ impl SterMusic {
             settings.breeze = theme::is_kde_desktop() || theme::kde_theme().is_some();
             if settings.breeze && theme::kde_theme().is_some() {
                 settings.theme = theme::KDE_ID.into();
+            }
+        }
+        crate::i18n::set(settings.lang);
+        theme::set_saved(&settings.saved_themes);
+        // Visualiseurs v3 : dix de plus. « Automatique » venait juste après les dix-huit premiers.
+        if settings.style_version < 3 {
+            settings.style_version = 3;
+            for style in [&mut settings.viz_style, &mut settings.banner_style] {
+                if *style >= 18 {
+                    *style = crate::shader::AUTO;
+                }
             }
         }
         theme::install(&cc.egui_ctx, &settings.theme, settings.breeze);
@@ -500,6 +571,9 @@ impl SterMusic {
             tag_editor: tag_editor::TagEditor::new(settings.tag_prefs.clone().sanitized()),
             ipc: crate::ipc::Ipc::new(&cc.egui_ctx),
             dnd: crate::dnd::Dnd::new(cc),
+            external: Vec::new(),
+            lib_tools: Default::default(),
+            now_loaded: Default::default(),
             toast,
             queue_drag: None,
             mini: false,
@@ -521,6 +595,9 @@ impl SterMusic {
         app.start_scan();
         if !tag_files.is_empty() {
             app.open_tag_editor(&cc.egui_ctx, tag_files);
+        }
+        if !play_files.is_empty() {
+            app.play_files(play_files);
         }
         app
     }
@@ -572,15 +649,25 @@ impl SterMusic {
         if !self.restored {
             self.restore_queue();
         }
-        self.toast(format!(
-            "Bibliothèque à jour : {}",
+        self.toast(trf!(
+            "Bibliothèque à jour : {0}",
             library::plural(count, "morceau", "morceaux")
         ));
     }
 
     /// Remplace la bibliothèque en gardant la file d'attente, le morceau en cours et la page
     /// ouverte (un album dont on vient de changer le titre reste affiché sous son nouveau nom).
-    fn set_library(&mut self, tracks: Vec<library::Track>) {
+    fn set_library(&mut self, mut tracks: Vec<library::Track>) {
+        // Les morceaux ouverts hors bibliothèque restent jouables après un rescan.
+        if !self.external.is_empty() {
+            let present: HashSet<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
+            tracks.extend(
+                self.external
+                    .iter()
+                    .filter(|t| !present.contains(&t.path))
+                    .cloned(),
+            );
+        }
         let paths = |lib: &Library, v: &[usize]| -> Vec<PathBuf> {
             v.iter().map(|&i| lib.tracks[i].path.clone()).collect()
         };
@@ -701,6 +788,28 @@ impl SterMusic {
     }
 
     // ---------- Lecture ----------
+
+    /// Joue des fichiers donnés par leur chemin ; ceux qui ne sont pas dans la bibliothèque y
+    /// sont ajoutés pour la session.
+    fn play_files(&mut self, paths: Vec<PathBuf>) {
+        let paths = crate::tags::expand_until(paths, &std::sync::atomic::AtomicBool::new(false));
+        let new: Vec<library::Track> = paths
+            .iter()
+            .filter(|p| self.lib.find(p).is_none())
+            .map(|p| library::read_track(p))
+            .collect();
+        if !new.is_empty() {
+            self.external.extend(new);
+            let tracks = self.lib.tracks.clone();
+            self.set_library(tracks);
+        }
+        let tracks: Vec<usize> = paths.iter().filter_map(|p| self.lib.find(p)).collect();
+        if tracks.is_empty() {
+            self.toast(tr("Aucun fichier audio à lire"));
+            return;
+        }
+        self.play_list(tracks, 0);
+    }
 
     pub fn current(&self) -> Option<usize> {
         self.queue_pos.and_then(|p| self.queue.get(p).copied())
@@ -931,6 +1040,18 @@ impl SterMusic {
         }
     }
 
+    /// Tient `now_loaded` à jour (voir ce champ).
+    fn sync_now_loaded(&mut self) {
+        let loaded = self
+            .current()
+            .filter(|_| self.player.as_ref().is_some_and(Player::has_track))
+            .map(|i| &self.lib.tracks[i].path);
+        let mut shared = self.now_loaded.lock().unwrap();
+        if shared.as_ref() != loaded {
+            *shared = loaded.cloned();
+        }
+    }
+
     fn toast(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), -1.0));
     }
@@ -991,7 +1112,7 @@ impl SterMusic {
 
     pub fn playlist_name(&self, id: PlaylistId) -> String {
         match id {
-            PlaylistId::Favorites => "Favoris".into(),
+            PlaylistId::Favorites => tr("Favoris").into(),
             PlaylistId::User(i) => self
                 .settings
                 .playlists
@@ -1026,10 +1147,10 @@ impl SterMusic {
                             self.queue.insert(pos + 1 + k, t);
                         }
                         self.unshuffled = None;
-                        self.toast(format!(
-                            "{} lu{} ensuite",
-                            library::plural(n, "morceau sera", "morceaux seront"),
-                            if n > 1 { "s" } else { "" }
+                        self.toast(library::plural(
+                            n,
+                            "morceau sera lu ensuite",
+                            "morceaux seront lus ensuite",
                         ));
                     }
                     None => self.play_list(tracks, 0),
@@ -1045,10 +1166,10 @@ impl SterMusic {
                     self.queue.extend(tracks);
                     self.unshuffled = None;
                 }
-                self.toast(format!(
-                    "{} ajouté{} à la file d'attente",
-                    library::plural(n, "morceau", "morceaux"),
-                    if n > 1 { "s" } else { "" }
+                self.toast(library::plural(
+                    n,
+                    "morceau ajouté à la file d'attente",
+                    "morceaux ajoutés à la file d'attente",
                 ));
             }
             Action::Go(view) => {
@@ -1070,12 +1191,12 @@ impl SterMusic {
                 let paths = self.paths(&tracks);
                 if let Some(p) = self.settings.playlists.get_mut(pl) {
                     p.tracks.extend(paths);
-                    let msg = format!("Ajouté à « {} »", p.name);
+                    let msg = trf!("Ajouté à « {0} »", p.name);
                     self.toast(msg);
                 }
             }
             Action::NewPlaylist(tracks) => {
-                let name = format!("Playlist {}", self.settings.playlists.len() + 1);
+                let name = trf!("Playlist {0}", self.settings.playlists.len() + 1);
                 self.dialog = Some(Dialog::NewPlaylist { name, tracks });
             }
             Action::RemoveFromPlaylist(id, pos) => match id {
@@ -1180,10 +1301,13 @@ impl SterMusic {
                 }
             }
             Action::EditTags(paths) => self.open_tag_editor(ctx, paths),
+            Action::PlayFiles(paths) => self.play_files(paths),
+            Action::LibTool(tool) => self.open_lib_tool(tool, ctx),
+            Action::ReplayGain(paths, label) => self.open_replaygain_for(paths, label),
             Action::PickTagFiles => {
                 if let Some(files) = rfd::FileDialog::new()
-                    .set_title("Fichiers dont modifier les tags")
-                    .add_filter("Musique", crate::library::AUDIO_EXTENSIONS)
+                    .set_title(tr("Fichiers dont modifier les tags"))
+                    .add_filter(tr("Musique"), crate::library::AUDIO_EXTENSIONS)
                     .pick_files()
                 {
                     self.open_tag_editor(ctx, files);
@@ -1191,7 +1315,7 @@ impl SterMusic {
             }
             Action::AddFolder => {
                 if let Some(dir) = rfd::FileDialog::new()
-                    .set_title("Ajouter un dossier de musique")
+                    .set_title(tr("Ajouter un dossier de musique"))
                     .pick_folder()
                 {
                     self.apply(ctx, Action::UseFolder(dir));
@@ -1267,6 +1391,30 @@ impl SterMusic {
                 self.settings.theme = id.to_owned();
                 theme::set(ctx, id);
             }
+            Action::SetLang(lang) => {
+                if lang != crate::i18n::lang() {
+                    self.settings.lang = lang;
+                    crate::i18n::set(lang);
+                    // « Artiste inconnu », « Album inconnu » : la bibliothèque prend les nouveaux noms.
+                    let tracks = self.lib.tracks.clone();
+                    self.set_library(tracks);
+                }
+            }
+            Action::SaveTheme => {
+                self.dialog = Some(Dialog::ThemeName {
+                    id: None,
+                    name: theme::suggested_name(),
+                });
+            }
+            Action::RenameTheme(id) => {
+                if let Some(t) = self.settings.saved_themes.iter().find(|t| t.id == id) {
+                    self.dialog = Some(Dialog::ThemeName {
+                        name: t.name.clone(),
+                        id: Some(id),
+                    });
+                }
+            }
+            Action::DeleteTheme(id) => self.dialog = Some(Dialog::DeleteTheme(id)),
             Action::FocusSearch => {
                 self.settings.sidebar_collapsed = false;
                 self.focus_search = true;
@@ -1323,9 +1471,9 @@ impl SterMusic {
     fn export_playlist(&mut self, id: PlaylistId) {
         let name = self.playlist_name(id);
         let Some(file) = rfd::FileDialog::new()
-            .set_title("Exporter la playlist")
+            .set_title(tr("Exporter la playlist"))
             .set_file_name(format!("{name}.m3u"))
-            .add_filter("Playlist M3U", &["m3u", "m3u8"])
+            .add_filter(tr("Playlist M3U"), &["m3u", "m3u8"])
             .save_file()
         else {
             return;
@@ -1342,21 +1490,21 @@ impl SterMusic {
             ));
         }
         match std::fs::write(&file, out) {
-            Ok(()) => self.toast(format!("Playlist exportée : {}", file.display())),
-            Err(e) => self.toast(format!("Export impossible : {e}")),
+            Ok(()) => self.toast(trf!("Playlist exportée : {0}", file.display())),
+            Err(e) => self.toast(trf!("Export impossible : {e}", e)),
         }
     }
 
     fn import_playlist(&mut self) {
         let Some(file) = rfd::FileDialog::new()
-            .set_title("Importer une playlist")
-            .add_filter("Playlist M3U", &["m3u", "m3u8"])
+            .set_title(tr("Importer une playlist"))
+            .add_filter(tr("Playlist M3U"), &["m3u", "m3u8"])
             .pick_file()
         else {
             return;
         };
         let Ok(text) = std::fs::read_to_string(&file) else {
-            self.toast("Lecture du fichier impossible");
+            self.toast(tr("Lecture du fichier impossible"));
             return;
         };
         let base = file.parent().map(PathBuf::from).unwrap_or_default();
@@ -1377,13 +1525,15 @@ impl SterMusic {
         let name = file
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "Playlist".into());
+            .unwrap_or_else(|| tr("Playlist").into());
         self.settings.playlists.push(Playlist {
             name: name.clone(),
             tracks,
         });
-        self.toast(format!(
-            "« {name} » importée ({found} morceaux trouvés dans la bibliothèque)"
+        self.toast(trf!(
+            "« {name} » importée ({found} morceaux trouvés dans la bibliothèque)",
+            name,
+            found
         ));
     }
 
@@ -1446,7 +1596,11 @@ impl SterMusic {
         if ctx.input_mut(|i| i.consume_key(cmd, Key::M)) {
             self.actions.push(Action::ToggleMini);
         }
-        if ctx.wants_keyboard_input() || self.dialog.is_some() || self.tag_editor.modal_open() {
+        if ctx.wants_keyboard_input()
+            || self.dialog.is_some()
+            || self.tag_editor.modal_open()
+            || self.lib_tools.open.is_some()
+        {
             return;
         }
         let keys = [
@@ -1532,9 +1686,16 @@ impl eframe::App for SterMusic {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_scan();
         self.poll_tag_editor(ctx);
-        if let Some(files) = self.ipc.poll() {
+        self.poll_lib_tools(ctx);
+        self.sync_now_loaded();
+        for request in self.ipc.poll() {
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(ViewportCommand::Focus);
-            self.actions.push(Action::EditTags(files));
+            match request {
+                crate::ipc::Request::EditTags(files) => self.actions.push(Action::EditTags(files)),
+                crate::ipc::Request::Play(files) => self.actions.push(Action::PlayFiles(files)),
+                crate::ipc::Request::Show => {}
+            }
         }
         self.covers.poll(ctx);
         self.kwin.poll();
@@ -1586,6 +1747,7 @@ impl eframe::App for SterMusic {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| self.content(ui));
             self.dialogs(ctx);
+            self.lib_tool_dialogs(ctx);
             self.toast_ui(ctx);
             chrome::apply_resize(ctx, resize);
         }
@@ -1609,7 +1771,7 @@ impl eframe::App for SterMusic {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.kwin.stop();
-        self.dnd.stop();
+        self.lib_tools.stop();
     }
 
     /// Fenêtre transparente : seul le fond arrondi peint par SterMusic est opaque.
@@ -1689,7 +1851,9 @@ impl SterMusic {
             ])
             .output();
         let Ok(out) = read else {
-            self.toast("kreadconfig6 introuvable : l'effet Better Blur n'est pas réglable automatiquement");
+            self.toast(tr(
+                "kreadconfig6 introuvable : l'effet Better Blur n'est pas réglable automatiquement",
+            ));
             return;
         };
         let current = String::from_utf8_lossy(&out.stdout).trim().to_owned();
@@ -1715,7 +1879,7 @@ impl SterMusic {
                 .status()
                 .is_ok_and(|s| s.success());
             if !ok {
-                self.toast("Impossible de modifier la configuration de KWin");
+                self.toast(tr("Impossible de modifier la configuration de KWin"));
                 return;
             }
         }
@@ -1723,6 +1887,8 @@ impl SterMusic {
             .args(["org.kde.KWin", "/KWin", "reconfigure"])
             .status();
         self.settings.backdrop = BackdropKind::Transparent;
-        self.toast("SterMusic ajouté à Better Blur : KWin floute maintenant l'arrière-plan");
+        self.toast(tr(
+            "SterMusic ajouté à Better Blur : KWin floute maintenant l'arrière-plan",
+        ));
     }
 }

@@ -5,8 +5,10 @@ use std::time::Duration;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, UiBuilder};
 
 use super::{Action, Repeat, SterMusic, View};
+use crate::i18n::tr;
 use crate::icons::Icon;
 use crate::library::fmt_duration;
+use crate::trf;
 use crate::{anim, theme, widgets};
 
 pub const NOWBAR_HEIGHT: f32 = 96.0;
@@ -158,9 +160,9 @@ impl SterMusic {
                         let resp = resp
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .on_hover_text(if full {
-                                "Quitter « En cours de lecture »"
+                                tr("Quitter « En cours de lecture »")
                             } else {
-                                "En cours de lecture"
+                                tr("En cours de lecture")
                             });
                         let _ = resp;
 
@@ -204,7 +206,7 @@ impl SterMusic {
                         }
                         if ar
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .on_hover_text("Voir l'artiste")
+                            .on_hover_text(tr("Voir l'artiste"))
                             .clicked()
                         {
                             let album = self.lib.track_album[i];
@@ -217,7 +219,7 @@ impl SterMusic {
                         ui.painter().text(
                             pos2(cover_rect.right() + 12.0, cy),
                             Align2::LEFT_CENTER,
-                            "Rien en lecture",
+                            tr("Rien en lecture"),
                             FontId::proportional(13.0),
                             theme::TEXT_3,
                         );
@@ -252,7 +254,7 @@ impl SterMusic {
                             ui,
                             self.settings.eq_on,
                             Icon::Equalizer,
-                            "Égaliseur",
+                            tr("Égaliseur"),
                             36.0,
                             17.0,
                         );
@@ -279,9 +281,9 @@ impl SterMusic {
                         if let Some(i) = st.track {
                             let fav = self.settings.favorites.contains(&self.lib.tracks[i].path);
                             let (icon, tip) = if fav {
-                                (Icon::HeartFilled, "Retirer des favoris")
+                                (Icon::HeartFilled, tr("Retirer des favoris"))
                             } else {
-                                (Icon::Heart, "Ajouter aux favoris")
+                                (Icon::Heart, tr("Ajouter aux favoris"))
                             };
                             if widgets::toggle_icon(ui, fav, icon, tip, 36.0, 17.0).clicked() {
                                 self.actions.push(Action::ToggleFavorite(i));
@@ -299,9 +301,9 @@ impl SterMusic {
             self.settings.shuffle,
             Icon::Shuffle,
             if self.settings.shuffle {
-                "Aléatoire : activé"
+                tr("Aléatoire : activé")
             } else {
-                "Aléatoire : désactivé"
+                tr("Aléatoire : désactivé")
             },
             size,
             17.0,
@@ -310,19 +312,19 @@ impl SterMusic {
         {
             self.actions.push(Action::ToggleShuffle);
         }
-        if widgets::icon_button(ui, Icon::SkipBack, "Précédent (Ctrl+←)", size, 19.0).clicked() {
+        if widgets::icon_button(ui, Icon::SkipBack, tr("Précédent (Ctrl+←)"), size, 19.0).clicked() {
             self.actions.push(Action::Previous);
         }
         if widgets::play_button(ui, playing, play_size).clicked() {
             self.actions.push(Action::TogglePlay);
         }
-        if widgets::icon_button(ui, Icon::SkipForward, "Suivant (Ctrl+→)", size, 19.0).clicked() {
+        if widgets::icon_button(ui, Icon::SkipForward, tr("Suivant (Ctrl+→)"), size, 19.0).clicked() {
             self.actions.push(Action::Next);
         }
         let (icon, tip) = match self.settings.repeat {
-            Repeat::Off => (Icon::Repeat, "Répétition : désactivée"),
-            Repeat::All => (Icon::Repeat, "Répétition : toute la file"),
-            Repeat::One => (Icon::Repeat1, "Répétition : ce morceau"),
+            Repeat::Off => (Icon::Repeat, tr("Répétition : désactivée")),
+            Repeat::All => (Icon::Repeat, tr("Répétition : toute la file")),
+            Repeat::One => (Icon::Repeat1, tr("Répétition : ce morceau")),
         };
         if widgets::toggle_icon(ui, self.settings.repeat != Repeat::Off, icon, tip, size, 17.0).clicked() {
             self.actions.push(Action::CycleRepeat);
@@ -348,7 +350,10 @@ impl SterMusic {
             v if v < 0.67 => Icon::Volume1,
             _ => Icon::Volume2,
         };
-        let tip = format!("Volume : {:.0} % (clic : couper le son)", vol * 100.0);
+        let tip = trf!(
+            "Volume : {0} % (clic : couper le son)",
+            format!("{:.0}", vol * 100.0)
+        );
         if widgets::icon_button(ui, icon, &tip, 34.0, 17.0).clicked() {
             self.actions.push(Action::ToggleMute);
         }
@@ -393,7 +398,7 @@ impl SterMusic {
                         self.lib.tracks[i].title.clone(),
                         self.lib.tracks[i].artist_or_unknown().to_owned(),
                     ),
-                    None => ("Rien en lecture".into(), String::new()),
+                    None => (tr("Rien en lecture").into(), String::new()),
                 };
                 let g = widgets::galley(ui, &title, theme::semibold(14.0), theme::TEXT, text_w);
                 ui.painter().galley(pos2(x, cover.top() + 2.0), g, theme::TEXT);
@@ -404,7 +409,7 @@ impl SterMusic {
                 let back = Rect::from_min_size(pos2(right - 30.0, cover.top() - 4.0), vec2(30.0, 30.0));
                 if ui
                     .put(back, |ui: &mut egui::Ui| {
-                        widgets::icon_button(ui, Icon::Maximize, "Agrandir (Ctrl+M)", 30.0, 15.0)
+                        widgets::icon_button(ui, Icon::Maximize, tr("Agrandir (Ctrl+M)"), 30.0, 15.0)
                     })
                     .clicked()
                 {
@@ -423,13 +428,13 @@ impl SterMusic {
                         .layout(egui::Layout::left_to_right(egui::Align::Center)),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        if widgets::icon_button(ui, Icon::SkipBack, "Précédent", 30.0, 15.0).clicked() {
+                        if widgets::icon_button(ui, Icon::SkipBack, tr("Précédent"), 30.0, 15.0).clicked() {
                             self.actions.push(Action::Previous);
                         }
                         if widgets::play_button(ui, st.playing, 36.0).clicked() {
                             self.actions.push(Action::TogglePlay);
                         }
-                        if widgets::icon_button(ui, Icon::SkipForward, "Suivant", 30.0, 15.0).clicked() {
+                        if widgets::icon_button(ui, Icon::SkipForward, tr("Suivant"), 30.0, 15.0).clicked() {
                             self.actions.push(Action::Next);
                         }
                     },

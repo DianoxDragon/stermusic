@@ -22,9 +22,11 @@ use super::mb_import::MbImport;
 use super::tag_tools::{Tool, ToolKind};
 use super::{Page, SterMusic, View};
 use crate::covers::Covers;
+use crate::i18n::{n_, tr};
 use crate::icons::{self, Icon};
 use crate::library::{self, fold, plural, Track};
 use crate::tags::{self, Cover, CoverChange, Field, FileTags, Values, FIELDS};
+use crate::trf;
 use crate::{theme, widgets};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -40,14 +42,14 @@ enum Column {
 }
 
 const COLUMNS: [(Column, &str, f32); 8] = [
-    (Column::File, "Fichier", 0.21),
-    (Column::Tag, "Tag", 0.08),
-    (Column::Title, "Titre", 0.20),
-    (Column::Artist, "Artiste", 0.14),
-    (Column::Album, "Album", 0.16),
-    (Column::Track, "Piste", 0.065),
-    (Column::Year, "Année", 0.065),
-    (Column::Genre, "Genre", 0.08),
+    (Column::File, n_("Fichier"), 0.21),
+    (Column::Tag, n_("Tag"), 0.08),
+    (Column::Title, n_("Titre"), 0.20),
+    (Column::Artist, n_("Artiste"), 0.14),
+    (Column::Album, n_("Album"), 0.16),
+    (Column::Track, n_("Piste"), 0.065),
+    (Column::Year, n_("Année"), 0.065),
+    (Column::Genre, n_("Genre"), 0.08),
 ];
 
 /// Largeur minimale d'une colonne (part de la largeur du tableau).
@@ -145,7 +147,7 @@ enum SaveMsg {
 }
 
 /// Un fichier à écrire : ses champs modifiés et sa nouvelle pochette.
-type Job = (PathBuf, Vec<(Field, String)>, Option<CoverChange>);
+pub(super) type Job = (PathBuf, Vec<(Field, String)>, Option<CoverChange>);
 
 impl TagEditor {
     pub fn new(prefs: Prefs) -> Self {
@@ -309,7 +311,7 @@ impl TagEditor {
     pub fn set_cover(&mut self, cover: CoverChange) {
         let scope = self.scope();
         if scope.is_empty() {
-            self.notice = Some("Sélectionne d'abord des fichiers".into());
+            self.notice = Some(tr("Sélectionne d'abord des fichiers").into());
             return;
         }
         for k in scope {
@@ -355,6 +357,16 @@ impl TagEditor {
         keep(&mut self.selected, &drop);
         self.anchor = None;
         self.resort();
+    }
+
+    /// Retire de la liste les fichiers qui n'existent plus (mis à la corbeille depuis les doublons).
+    pub(super) fn remove_paths(&mut self, gone: &HashSet<PathBuf>) {
+        let ks: Vec<usize> = (0..self.files.len())
+            .filter(|&k| gone.contains(&self.files[k].path))
+            .collect();
+        if !ks.is_empty() {
+            self.remove(&ks);
+        }
     }
 
     fn cell(&self, k: usize, col: Column) -> String {
@@ -493,7 +505,7 @@ impl TagEditor {
 /// Pochette lue depuis une image : JPEG et PNG sont gardés tels quels (sauf s'ils sont très
 /// grands), les autres formats sont convertis en JPEG.
 pub fn cover_from_bytes(data: Vec<u8>) -> Result<Cover, String> {
-    let img = image::load_from_memory(&data).map_err(|_| "Image illisible".to_owned())?;
+    let img = image::load_from_memory(&data).map_err(|_| tr("Image illisible").to_owned())?;
     let known = matches!(
         data.get(..4),
         Some([0x89, b'P', b'N', b'G']) | Some([0xFF, 0xD8, ..])
@@ -533,12 +545,18 @@ pub(super) fn file_name(p: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Taille lisible : « 312 Ko », « 9,6 Mo ».
-fn size_text(bytes: u64) -> String {
+/// Taille lisible : « 312 Ko », « 9,6 Mo » (en anglais : « 312 KB », « 9.6 MB »).
+pub(super) fn size_text(bytes: u64) -> String {
+    let english = crate::i18n::lang() == crate::i18n::Lang::En;
     if bytes >= 1 << 20 {
-        format!("{:.1} Mo", bytes as f64 / (1u64 << 20) as f64).replace('.', ",")
+        let text = format!("{:.1}", bytes as f64 / (1u64 << 20) as f64);
+        if english {
+            format!("{text} MB")
+        } else {
+            format!("{} Mo", text.replace('.', ","))
+        }
     } else {
-        format!("{} Ko", bytes.div_ceil(1024))
+        format!("{} {}", bytes.div_ceil(1024), if english { "KB" } else { "Ko" })
     }
 }
 
@@ -588,11 +606,13 @@ impl SterMusic {
             return;
         }
         if self.tag_editor.saving.is_some() {
-            self.toast("Enregistrement en cours…");
+            self.toast(tr("Enregistrement en cours…"));
             return;
         }
         if self.tag_editor.dirty() {
-            self.toast("Ajoutés à la liste : les modifications en attente sont gardées");
+            self.toast(tr(
+                "Ajoutés à la liste : les modifications en attente sont gardées",
+            ));
         } else {
             self.tag_editor.clear();
         }
@@ -690,7 +710,7 @@ impl SterMusic {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         if nothing_found {
-            self.toast("Aucun nouveau fichier audio à ajouter");
+            self.toast(tr("Aucun nouveau fichier audio à ajouter"));
         }
         let ed = &mut self.tag_editor;
         let Some((refreshed, errors, tracks)) = finished else {
@@ -698,7 +718,7 @@ impl SterMusic {
         };
         ed.saving = None;
         // Les fichiers écrits sont relus : la liste montre ce qui est vraiment dans les tags.
-        let written: Vec<PathBuf> = refreshed.iter().map(|f| f.path.clone()).collect();
+        let written: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
         let index: HashMap<&Path, usize> = ed
             .files
             .iter()
@@ -734,31 +754,20 @@ impl SterMusic {
         self.covers.forget(&written);
         let ok = plural(written.len(), "fichier modifié", "fichiers modifiés");
         match errors.first() {
-            None => self.toast(format!("Tags enregistrés : {ok}")),
-            Some((path, e)) => self.toast(format!(
-                "{ok}, {} : {} ({e})",
+            None => self.toast(trf!("Tags enregistrés : {ok}", ok)),
+            Some((path, e)) => self.toast(trf!(
+                "{ok}, {0} : {1} ({e})",
+                ok,
                 plural(errors.len(), "échec", "échecs"),
-                file_name(path)
+                file_name(path),
+                e
             )),
         }
     }
 
     /// Écrit les modifications dans les fichiers : toutes, ou celles de la sélection seulement.
     pub(super) fn save_tags(&mut self, ctx: &egui::Context, only_selection: bool) {
-        // Le morceau chargé est écrit via une copie : son décodeur lit encore le fichier.
-        let loaded = self
-            .current()
-            .filter(|_| self.player.as_ref().is_some_and(|p| p.has_track()))
-            .map(|i| self.lib.tracks[i].path.clone());
-        let opts = tags::WriteOpts {
-            id3v23: self.settings.tag_id3v23,
-            keep_mtime: self.settings.tag_keep_mtime,
-            via_copy: false,
-        };
-        let ed = &mut self.tag_editor;
-        if ed.saving.is_some() {
-            return;
-        }
+        let ed = &self.tag_editor;
         let jobs: Vec<Job> = (0..ed.files.len())
             .filter(|&k| ed.files[k].error.is_none() && ed.file_dirty(k))
             .filter(|&k| !only_selection || ed.selected[k])
@@ -771,8 +780,33 @@ impl SterMusic {
                 (ed.files[k].path.clone(), fields, ed.covers[k].clone())
             })
             .collect();
-        if jobs.is_empty() {
-            return;
+        self.start_tag_jobs(ctx, jobs);
+    }
+
+    /// Options d'écriture des tags, d'après les réglages.
+    pub(super) fn write_opts(&self) -> tags::WriteOpts {
+        tags::WriteOpts {
+            id3v23: self.settings.tag_id3v23,
+            keep_mtime: self.settings.tag_keep_mtime,
+            via_copy: false,
+        }
+    }
+
+    /// Écrit des tags en arrière-plan (les modifications de l'éditeur, ou des pochettes trouvées
+    /// pour la bibliothèque) ; l'avancement s'affiche dans l'éditeur. Faux si rien n'est lancé.
+    pub(super) fn start_tag_jobs(&mut self, ctx: &egui::Context, jobs: Vec<Job>) -> bool {
+        if self.lib_tools.writing() {
+            self.toast(tr(
+                "Analyse ReplayGain en cours : réessaie quand elle sera terminée",
+            ));
+            return false;
+        }
+        let opts = self.write_opts();
+        // Le morceau chargé est écrit via une copie : son décodeur lit encore le fichier.
+        let loaded = self.now_loaded.clone();
+        let ed = &mut self.tag_editor;
+        if ed.saving.is_some() || jobs.is_empty() {
+            return false;
         }
         let (tx, rx) = channel();
         ed.saving = Some(Saving {
@@ -780,12 +814,14 @@ impl SterMusic {
             done: 0,
             total: jobs.len(),
         });
+        // Seuls les fichiers de la liste de l'éditeur sont relus en entier (pochette comprise).
+        let listed = ed.known.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             let (mut written, mut errors) = (Vec::new(), Vec::new());
             for (path, fields, cover) in jobs {
                 let o = tags::WriteOpts {
-                    via_copy: loaded.as_ref() == Some(&path),
+                    via_copy: loaded.lock().unwrap().as_ref() == Some(&path),
                     ..opts
                 };
                 match tags::write(&path, &fields, cover.as_ref(), o) {
@@ -795,7 +831,11 @@ impl SterMusic {
                 let _ = tx.send(SaveMsg::Progress);
                 ctx.request_repaint();
             }
-            let refreshed = written.iter().map(|p| tags::read(p)).collect();
+            let refreshed = written
+                .iter()
+                .filter(|p| listed.contains(*p))
+                .map(|p| tags::read(p))
+                .collect();
             let tracks = written.iter().map(|p| library::read_track(p)).collect();
             let _ = tx.send(SaveMsg::Done {
                 refreshed,
@@ -804,12 +844,13 @@ impl SterMusic {
             });
             ctx.request_repaint();
         });
+        true
     }
 
     fn pick_cover(&mut self) {
         if let Some(file) = rfd::FileDialog::new()
-            .set_title("Choisir une pochette")
-            .add_filter("Images", &["jpg", "jpeg", "png", "webp", "bmp", "gif"])
+            .set_title(tr("Choisir une pochette"))
+            .add_filter(tr("Images"), &["jpg", "jpeg", "png", "webp", "bmp", "gif"])
             .pick_file()
         {
             match cover_from_file(&file) {
@@ -821,7 +862,7 @@ impl SterMusic {
 
     fn add_tag_folder(&mut self, ctx: &egui::Context) {
         if let Some(dir) = rfd::FileDialog::new()
-            .set_title("Dossier dont modifier les tags")
+            .set_title(tr("Dossier dont modifier les tags"))
             .pick_folder()
         {
             let ed = &mut self.tag_editor;
@@ -832,8 +873,8 @@ impl SterMusic {
 
     fn add_tag_files(&mut self, ctx: &egui::Context) {
         if let Some(files) = rfd::FileDialog::new()
-            .set_title("Fichiers dont modifier les tags")
-            .add_filter("Musique", library::AUDIO_EXTENSIONS)
+            .set_title(tr("Fichiers dont modifier les tags"))
+            .add_filter(tr("Musique"), library::AUDIO_EXTENSIONS)
             .pick_files()
         {
             let ed = &mut self.tag_editor;
@@ -865,8 +906,9 @@ impl SterMusic {
 
         // En-tête : titre et actions (de droite à gauche).
         let mut action = None;
+        let mut lib_tool = None;
         ui.horizontal(|ui| {
-            super::views::heading(ui, "Éditeur de tags");
+            super::views::heading(ui, tr("Éditeur de tags"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
                 let ed = &self.tag_editor;
@@ -877,7 +919,7 @@ impl SterMusic {
                     ui.add(
                         egui::ProgressBar::new(s.done as f32 / s.total.max(1) as f32)
                             .desired_width(200.0)
-                            .text(format!("Enregistrement… {}/{}", s.done, s.total)),
+                            .text(trf!("Enregistrement… {0}/{1}", s.done, s.total)),
                     );
                 } else {
                     ui.scope(|ui| {
@@ -886,12 +928,12 @@ impl SterMusic {
                             ui.set_opacity(0.5);
                         }
                         let label = match (n, partial) {
-                            (0, _) => "Enregistrer".to_owned(),
-                            (_, true) => format!("Tout enregistrer ({n})"),
-                            (_, false) => format!("Enregistrer ({n})"),
+                            (0, _) => tr("Enregistrer").to_owned(),
+                            (_, true) => trf!("Tout enregistrer ({n})", n),
+                            (_, false) => trf!("Enregistrer ({n})", n),
                         };
                         if widgets::primary_button(ui, None, &label)
-                            .on_hover_text("Écrit toutes les modifications dans les fichiers (Ctrl+S)")
+                            .on_hover_text(tr("Écrit toutes les modifications dans les fichiers (Ctrl+S)"))
                             .clicked()
                         {
                             action = Some("save");
@@ -901,9 +943,9 @@ impl SterMusic {
                         && widgets::secondary_button(
                             ui,
                             Some(Icon::Save),
-                            &format!("Sélection ({in_selection})"),
+                            &trf!("Sélection ({in_selection})", in_selection),
                         )
-                        .on_hover_text("Enregistre seulement les fichiers sélectionnés (Ctrl+Maj+S)")
+                        .on_hover_text(tr("Enregistre seulement les fichiers sélectionnés (Ctrl+Maj+S)"))
                         .clicked()
                     {
                         action = Some("save_selection");
@@ -912,7 +954,7 @@ impl SterMusic {
                         && widgets::icon_button(
                             ui,
                             Icon::Undo,
-                            "Annuler toutes les modifications",
+                            tr("Annuler toutes les modifications"),
                             34.0,
                             16.0,
                         )
@@ -922,28 +964,49 @@ impl SterMusic {
                     }
                 }
                 if !ed.files.is_empty()
-                    && widgets::secondary_button(ui, Some(Icon::Globe), "MusicBrainz")
-                        .on_hover_text(
+                    && widgets::secondary_button(ui, Some(Icon::Globe), tr("MusicBrainz"))
+                        .on_hover_text(tr(
                             "Chercher l'album de la sélection en ligne : titres, numéros, pochette…",
-                        )
+                        ))
                         .clicked()
                 {
                     action = Some("mb");
                 }
-                if widgets::icon_button(ui, Icon::FolderPlus, "Ajouter un dossier", 34.0, 16.0).clicked() {
+                if widgets::icon_button(ui, Icon::FolderPlus, tr("Ajouter un dossier"), 34.0, 16.0).clicked()
+                {
                     action = Some("folder");
                 }
-                if widgets::icon_button(ui, Icon::Plus, "Ajouter des fichiers", 34.0, 16.0).clicked() {
+                if widgets::icon_button(ui, Icon::Plus, tr("Ajouter des fichiers"), 34.0, 16.0).clicked() {
                     action = Some("files");
                 }
                 if (!ed.files.is_empty() || ed.loading())
                     && ed.saving.is_none()
-                    && widgets::icon_button(ui, Icon::Trash, "Vider la liste", 34.0, 16.0).clicked()
+                    && widgets::icon_button(ui, Icon::Trash, tr("Vider la liste"), 34.0, 16.0).clicked()
                 {
                     action = Some("clear");
                 }
+                // Outils qui portent sur toute la bibliothèque.
+                let popup = ui.make_persistent_id("lib_tools_menu");
+                let button = widgets::icon_button(
+                    ui,
+                    Icon::Library,
+                    tr("Bibliothèque : pochettes manquantes, ReplayGain, doublons"),
+                    34.0,
+                    16.0,
+                );
+                if button.clicked() {
+                    ui.memory_mut(|m| m.toggle_popup(popup));
+                }
+                egui::popup_below_widget(ui, popup, &button, egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                    if let Some(tool) = super::lib_tools::menu(ui) {
+                        lib_tool = Some(tool);
+                    }
+                });
             });
         });
+        if let Some(tool) = lib_tool {
+            self.actions.push(super::Action::LibTool(tool));
+        }
         match action {
             Some("save") => self.save_tags(&ctx, false),
             Some("save_selection") => self.save_tags(&ctx, true),
@@ -974,8 +1037,8 @@ impl SterMusic {
         if loading_bar(ui, &self.tag_editor) {
             self.tag_editor.stop_loading();
             let n = self.tag_editor.files.len();
-            self.toast(format!(
-                "Import arrêté : {} dans la liste",
+            self.toast(trf!(
+                "Import arrêté : {0} dans la liste",
                 plural(n, "fichier", "fichiers")
             ));
         }
@@ -986,16 +1049,39 @@ impl SterMusic {
                 widgets::empty_state(
                     ui,
                     Icon::Tag,
-                    "Aucun fichier à modifier",
-                    "Clic droit sur un morceau ou un album → « Modifier les infos », ou glisse des fichiers ou un dossier ici.",
+                    tr("Aucun fichier à modifier"),
+                    tr("Clic droit sur un morceau ou un album → « Modifier les infos », ou glisse des fichiers ou un dossier ici."),
                 );
                 ui.horizontal(|ui| {
                     ui.add_space((ui.available_width() - 380.0).max(0.0) / 2.0);
-                    if widgets::secondary_button(ui, Some(Icon::Plus), "Ajouter des fichiers").clicked() {
+                    if widgets::secondary_button(ui, Some(Icon::Plus), tr("Ajouter des fichiers")).clicked() {
                         self.add_tag_files(&ctx);
                     }
-                    if widgets::secondary_button(ui, Some(Icon::FolderPlus), "Ajouter un dossier").clicked() {
+                    if widgets::secondary_button(ui, Some(Icon::FolderPlus), tr("Ajouter un dossier"))
+                        .clicked()
+                    {
                         self.add_tag_folder(&ctx);
+                    }
+                });
+                // Les outils de toute la bibliothèque, à portée de main quand la liste est vide.
+                ui.add_space(26.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(
+                        RichText::new(tr("Pour toute la bibliothèque"))
+                            .small()
+                            .color(theme::TEXT_3),
+                    );
+                });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.add_space((ui.available_width() - 470.0).max(0.0) / 2.0);
+                    for tool in super::lib_tools::LibTool::ALL {
+                        if widgets::secondary_button(ui, Some(tool.icon()), tool.label())
+                            .on_hover_text(tool.hint())
+                            .clicked()
+                        {
+                            self.actions.push(super::Action::LibTool(tool));
+                        }
                     }
                 });
             }
@@ -1053,21 +1139,18 @@ impl SterMusic {
             )
             .show(ctx, |ui| {
                 ui.set_width(400.0);
-                ui.label(RichText::new("Vider la liste ?").font(theme::semibold(20.0)));
+                ui.label(RichText::new(tr("Vider la liste ?")).font(theme::semibold(20.0)));
                 ui.add_space(12.0);
                 ui.label(
-                    RichText::new(format!(
-                        "{} non enregistrées : elles seront perdues. Les fichiers, eux, ne sont pas touchés.",
-                        plural(n, "fichier a des modifications", "fichiers ont des modifications"),
-                    ))
+                    RichText::new(trf!("{0} non enregistrées : elles seront perdues. Les fichiers, eux, ne sont pas touchés.", plural(n, "fichier a des modifications", "fichiers ont des modifications")))
                     .color(theme::TEXT_2),
                 );
                 ui.add_space(20.0);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if widgets::primary_button(ui, None, "Vider la liste").clicked() {
+                    if widgets::primary_button(ui, None, tr("Vider la liste")).clicked() {
                         confirm = true;
                     }
-                    if widgets::secondary_button(ui, None, "Annuler").clicked() {
+                    if widgets::secondary_button(ui, None, tr("Annuler")).clicked() {
                         close = true;
                     }
                 });
@@ -1114,7 +1197,10 @@ fn loading_bar(ui: &mut egui::Ui, ed: &TagEditor) -> bool {
             ui.add_space(4.0);
             match ed.load_progress() {
                 Some((done, total)) => {
-                    ui.label(RichText::new(format!("Lecture des tags… {done} / {total}")).color(theme::TEXT));
+                    ui.label(
+                        RichText::new(trf!("Lecture des tags… {done} / {total}", done, total))
+                            .color(theme::TEXT),
+                    );
                     ui.add_space(8.0);
                     ui.add(
                         egui::ProgressBar::new(done as f32 / total.max(1) as f32)
@@ -1123,12 +1209,14 @@ fn loading_bar(ui: &mut egui::Ui, ed: &TagEditor) -> bool {
                     );
                 }
                 None => {
-                    ui.label(RichText::new("Parcours des dossiers…").color(theme::TEXT));
+                    ui.label(RichText::new(tr("Parcours des dossiers…")).color(theme::TEXT));
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if widgets::secondary_button(ui, Some(Icon::Stop), "Arrêter")
-                    .on_hover_text("Arrête l'import ; les fichiers déjà lus restent dans la liste")
+                if widgets::secondary_button(ui, Some(Icon::Stop), tr("Arrêter"))
+                    .on_hover_text(tr(
+                        "Arrête l'import ; les fichiers déjà lus restent dans la liste",
+                    ))
                     .clicked()
                 {
                     stop = true;
@@ -1173,7 +1261,7 @@ fn drop_hint(ui: &egui::Ui, rect: Rect) {
     painter.text(
         center + vec2(0.0, 16.0),
         Align2::CENTER_CENTER,
-        "Lâche ici : morceaux et dossiers rejoignent la liste, une image devient la pochette",
+        tr("Lâche ici : morceaux et dossiers rejoignent la liste, une image devient la pochette"),
         FontId::proportional(14.0),
         theme::TEXT.gamma_multiply(t),
     );
@@ -1216,7 +1304,7 @@ fn field(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize], f: Field, width
                 theme::TEXT_2
             },
         );
-        if resp.on_hover_text("Annuler cette modification").clicked() {
+        if resp.on_hover_text(tr("Annuler cette modification")).clicked() {
             for &k in scope {
                 ed.values[k][i] = ed.files[k].values[i].clone();
             }
@@ -1227,8 +1315,8 @@ fn field(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize], f: Field, width
     let mut text = if same { first } else { String::new() };
     let hint = match (same, width < 160.0) {
         (true, _) => "",
-        (false, true) => "Multiples",
-        (false, false) => "Valeurs multiples (conservées)",
+        (false, true) => tr("Multiples"),
+        (false, false) => tr("Valeurs multiples (conservées)"),
     };
     let resp = widgets::text_field(ui, egui::Id::new(("tag_field", i)), &mut text, hint, width, rows);
     let resp = if same {
@@ -1250,7 +1338,7 @@ fn field(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize], f: Field, width
                 }
             }
             if seen.len() > 6 {
-                tip.push(format!("… et {} autres", seen.len() - 6));
+                tip.push(trf!("… et {0} autres", seen.len() - 6));
             }
             ui.label(tip.join("\n"));
         })
@@ -1284,19 +1372,19 @@ fn side_panel(ui: &mut egui::Ui, ed: &mut TagEditor, covers: &mut Covers) -> Opt
                     ui.set_width(w);
                     let scope = ed.scope();
                     let summary = match scope.len() {
-                        0 => "Aucune sélection".to_owned(),
+                        0 => tr("Aucune sélection").to_owned(),
                         1 => file_name(&ed.files[scope[0]].path),
-                        n => format!("{n} fichiers sélectionnés"),
+                        n => trf!("{n} fichiers sélectionnés", n),
                     };
                     let g = widgets::galley(ui, &summary, theme::semibold(14.0), theme::TEXT, w);
                     ui.label(g);
                     ui.add_space(10.0);
                     if scope.is_empty() {
                         ui.label(
-                            RichText::new(
+                            RichText::new(tr(
                                 "Choisis des fichiers dans la liste (clic, Ctrl+clic, Maj+clic, Ctrl+A) \
                                  pour modifier leurs tags.",
-                            )
+                            ))
                             .color(theme::TEXT_3),
                         );
                         return;
@@ -1351,7 +1439,7 @@ fn cover_section(
     w: f32,
 ) -> bool {
     ui.label(
-        RichText::new("Pochette")
+        RichText::new(tr("Pochette"))
             .font(theme::semibold(13.0))
             .color(theme::TEXT_2),
     );
@@ -1376,7 +1464,7 @@ fn cover_section(
                 mime.to_owned(),
                 format!("{}×{}", size[0], size[1]),
                 size_text(c.data.len() as u64),
-                "Pochette avant".to_owned(),
+                tr("Pochette avant").to_owned(),
             ]
         }
         (None, true) => {
@@ -1390,14 +1478,14 @@ fn cover_section(
             };
             widgets::cover(ui.painter(), rect, folder.as_ref(), 6, "");
             if folder.is_some() {
-                vec!["Image du dossier".into(), "non intégrée".into()]
+                vec![tr("Image du dossier").into(), tr("non intégrée").into()]
             } else {
-                vec!["Aucune pochette".into()]
+                vec![tr("Aucune pochette").into()]
             }
         }
         (_, false) => {
             widgets::cover(ui.painter(), rect, None, 6, "");
-            vec!["Pochettes".into(), "différentes".into()]
+            vec![tr("Pochettes").into(), tr("différentes").into()]
         }
     };
     let mut y = rect.top() + 2.0;
@@ -1415,7 +1503,7 @@ fn cover_section(
         ui.painter().text(
             pos2(rect.right() + 12.0, y + 6.0),
             Align2::LEFT_TOP,
-            "● modifiée",
+            tr("● modifiée"),
             FontId::proportional(12.0),
             theme::accent_light(),
         );
@@ -1432,16 +1520,16 @@ fn cover_section(
     let mut pick = false;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        if widgets::secondary_button(ui, Some(Icon::Image), "Remplacer…").clicked() {
+        if widgets::secondary_button(ui, Some(Icon::Image), tr("Remplacer…")).clicked() {
             pick = true;
         }
         cover_picker(ui, ed);
         let any = scope.iter().any(|&k| ed.effective_cover(k).is_some());
-        if any && widgets::icon_button(ui, Icon::Trash, "Retirer la pochette", 34.0, 16.0).clicked() {
+        if any && widgets::icon_button(ui, Icon::Trash, tr("Retirer la pochette"), 34.0, 16.0).clicked() {
             ed.set_cover(None);
         }
         if changed
-            && widgets::icon_button(ui, Icon::Undo, "Garder la pochette d'origine", 34.0, 16.0).clicked()
+            && widgets::icon_button(ui, Icon::Undo, tr("Garder la pochette d'origine"), 34.0, 16.0).clicked()
         {
             for &k in scope {
                 ed.covers[k] = None;
@@ -1456,9 +1544,9 @@ fn cover_section(
             .all(|&k| ed.effective_cover(k).map(|x| x.hash) == Some(c.hash));
         if !everywhere {
             ui.add_space(6.0);
-            if widgets::secondary_button(ui, Some(Icon::Images), "Appliquer à toute la liste")
-                .on_hover_text(format!(
-                    "Donne cette pochette aux {} de la liste",
+            if widgets::secondary_button(ui, Some(Icon::Images), tr("Appliquer à toute la liste"))
+                .on_hover_text(trf!(
+                    "Donne cette pochette aux {0} de la liste",
                     plural(ed.files.len(), "fichier", "fichiers")
                 ))
                 .clicked()
@@ -1471,7 +1559,7 @@ fn cover_section(
     let note = ed
         .notice
         .clone()
-        .unwrap_or_else(|| "ou glisse une image sur la fenêtre".to_owned());
+        .unwrap_or_else(|| tr("ou glisse une image sur la fenêtre").to_owned());
     ui.label(RichText::new(note).small().color(if ed.notice.is_some() {
         Color32::from_rgb(0xFF, 0x99, 0x99)
     } else {
@@ -1486,7 +1574,7 @@ fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
     let button = widgets::icon_button(
         ui,
         Icon::Images,
-        "Reprendre une pochette déjà présente dans la liste",
+        tr("Reprendre une pochette déjà présente dans la liste"),
         34.0,
         16.0,
     );
@@ -1505,12 +1593,14 @@ fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
             let found = ed.distinct_covers();
             ui.set_width(PER_ROW as f32 * (SIDE + 6.0) + 2.0);
             if found.is_empty() {
-                ui.label(RichText::new("Aucun fichier de la liste n'a de pochette.").color(theme::TEXT_2));
+                ui.label(
+                    RichText::new(tr("Aucun fichier de la liste n'a de pochette.")).color(theme::TEXT_2),
+                );
                 return;
             }
             ui.label(
-                RichText::new(format!(
-                    "{} dans la liste : clique pour la donner à la sélection",
+                RichText::new(trf!(
+                    "{0} dans la liste : clique pour la donner à la sélection",
                     plural(found.len(), "pochette", "pochettes")
                 ))
                 .small()
@@ -1555,10 +1645,7 @@ fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
                             }
                             let resp = resp
                                 .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(format!(
-                                    "Portée par {}",
-                                    plural(*count, "fichier", "fichiers")
-                                ));
+                                .on_hover_text(trf!("Portée par {0}", plural(*count, "fichier", "fichiers")));
                             if resp.clicked() {
                                 chosen = Some(cover.clone());
                             }
@@ -1578,7 +1665,7 @@ fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
 fn tools(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize]) -> Option<ToolKind> {
     let mut open = None;
     ui.label(
-        RichText::new("Outils")
+        RichText::new(tr("Outils"))
             .font(theme::semibold(13.0))
             .color(theme::TEXT_2),
     );
@@ -1586,16 +1673,16 @@ fn tools(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize]) -> Option<ToolK
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
         if scope.len() > 1
-            && widgets::secondary_button(ui, Some(Icon::ListMusic), "Numéroter")
-                .on_hover_text("Pistes 1, 2, 3… dans l'ordre de la liste, et le total")
+            && widgets::secondary_button(ui, Some(Icon::ListMusic), tr("Numéroter"))
+                .on_hover_text(tr("Pistes 1, 2, 3… dans l'ordre de la liste, et le total"))
                 .clicked()
         {
             let total = scope.len().to_string();
             ed.fill(Field::Track, |n, _| (n + 1).to_string());
             ed.fill(Field::TrackTotal, |_, _| total.clone());
         }
-        if widgets::secondary_button(ui, Some(Icon::Pencil), "Titre ← fichier")
-            .on_hover_text("« 03 - Artiste - Titre.mp3 » donne « Titre »")
+        if widgets::secondary_button(ui, Some(Icon::Pencil), tr("Titre ← fichier"))
+            .on_hover_text(tr("« 03 - Artiste - Titre.mp3 » donne « Titre »"))
             .clicked()
         {
             ed.fill(Field::Title, |_, p| tags::title_from_filename(p));
@@ -1604,20 +1691,20 @@ fn tools(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize]) -> Option<ToolK
             (
                 ToolKind::Replace,
                 Icon::Replace,
-                "Remplacer…",
-                "Rechercher et remplacer dans les tags, expressions régulières comprises",
+                tr("Remplacer…"),
+                tr("Rechercher et remplacer dans les tags, expressions régulières comprises"),
             ),
             (
                 ToolKind::FromName,
                 Icon::Tag,
-                "Tags ← nom…",
-                "Lire les tags dans le nom des fichiers, d'après un motif (« %track% - %title% »)",
+                tr("Tags ← nom…"),
+                tr("Lire les tags dans le nom des fichiers, d'après un motif (« %track% - %title% »)"),
             ),
             (
                 ToolKind::Rename,
                 Icon::FilePen,
-                "Renommer…",
-                "Renommer les fichiers d'après leurs tags (« 03 - Titre.mp3 »)",
+                tr("Renommer…"),
+                tr("Renommer les fichiers d'après leurs tags (« 03 - Titre.mp3 »)"),
             ),
         ] {
             if widgets::secondary_button(ui, Some(icon), label)
@@ -1628,8 +1715,8 @@ fn tools(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize]) -> Option<ToolK
             }
         }
         if scope.iter().any(|&k| ed.file_dirty(k))
-            && widgets::secondary_button(ui, Some(Icon::Undo), "Rétablir")
-                .on_hover_text("Annuler les modifications de la sélection")
+            && widgets::secondary_button(ui, Some(Icon::Undo), tr("Rétablir"))
+                .on_hover_text(tr("Annuler les modifications de la sélection"))
                 .clicked()
         {
             ed.revert(scope);
@@ -1665,6 +1752,7 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
     // En-tête : un clic trie, un deuxième inverse, un troisième revient à l'ordre d'arrivée.
     let head = Rect::from_min_size(rect.min, vec2(rect.width(), 32.0));
     for (c, (col, label, _)) in COLUMNS.iter().enumerate() {
+        let label = tr(label);
         let (x, w) = col_x(c);
         let r = Rect::from_min_max(pos2(x - 6.0, head.top()), pos2(x + w - 2.0, head.bottom()));
         let resp = ui.interact(r, ui.id().with(("col", c)), Sense::click());
@@ -1809,28 +1897,28 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
                         let dirty = targets.iter().filter(|&&t| ed.file_dirty(t)).count();
                         if dirty > 0 && ed.saving.is_none() {
                             let label = if n > 1 {
-                                format!("Enregistrer ces {}", plural(dirty, "fichier", "fichiers"))
+                                trf!("Enregistrer ces {0}", plural(dirty, "fichier", "fichiers"))
                             } else {
-                                "Enregistrer ce fichier".to_owned()
+                                tr("Enregistrer ce fichier").to_owned()
                             };
                             if widgets::menu_item(ui, Some(Icon::Save), &label).clicked() {
                                 action = Some(TableAction::SaveSelection);
                             }
                         }
                         if dirty > 0
-                            && widgets::menu_item(ui, Some(Icon::Undo), "Rétablir les tags d'origine")
+                            && widgets::menu_item(ui, Some(Icon::Undo), tr("Rétablir les tags d'origine"))
                                 .clicked()
                         {
                             ed.revert(&targets);
                         }
-                        if widgets::menu_item(ui, Some(Icon::FolderOpen), "Ouvrir le dossier").clicked() {
+                        if widgets::menu_item(ui, Some(Icon::FolderOpen), tr("Ouvrir le dossier")).clicked() {
                             menu_open = ed.files[k].path.parent().map(Path::to_path_buf);
                         }
                         ui.separator();
                         let label = if n > 1 {
-                            format!("Retirer {n} fichiers de la liste")
+                            trf!("Retirer {n} fichiers de la liste", n)
                         } else {
-                            "Retirer de la liste".to_owned()
+                            tr("Retirer de la liste").to_owned()
                         };
                         if widgets::menu_item(ui, Some(Icon::Close), &label).clicked() {
                             menu_remove = Some(targets);
@@ -1857,7 +1945,7 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
                 ui,
                 egui::Id::new("tag_filter"),
                 &mut ed.filter,
-                "Filtrer la liste",
+                tr("Filtrer la liste"),
                 260.0,
             );
             ui.add_space(12.0);
@@ -1874,7 +1962,7 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
             }
             let dirty = ed.dirty_count();
             if dirty > 0 {
-                parts.push(format!("{dirty} à enregistrer"));
+                parts.push(trf!("{dirty} à enregistrer", dirty));
             }
             let text = parts.join(" · ");
             let g = widgets::galley(

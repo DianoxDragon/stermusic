@@ -14,8 +14,17 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
     "mp3", "flac", "ogg", "oga", "wav", "m4a", "aac", "opus", "aiff", "aif",
 ];
 
-pub const UNKNOWN_ARTIST: &str = "Artiste inconnu";
-pub const UNKNOWN_ALBUM: &str = "Album inconnu";
+pub const UNKNOWN_ARTIST: &str = crate::i18n::n_("Artiste inconnu");
+pub const UNKNOWN_ALBUM: &str = crate::i18n::n_("Album inconnu");
+
+/// « Artiste inconnu » dans la langue de l'interface (la bibliothèque est reconstruite quand elle change).
+pub fn unknown_artist() -> &'static str {
+    crate::i18n::tr(UNKNOWN_ARTIST)
+}
+
+pub fn unknown_album() -> &'static str {
+    crate::i18n::tr(UNKNOWN_ALBUM)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
@@ -42,7 +51,7 @@ impl Track {
 
     pub fn artist_or_unknown(&self) -> &str {
         if self.artist.is_empty() {
-            UNKNOWN_ARTIST
+            unknown_artist()
         } else {
             &self.artist
         }
@@ -50,7 +59,7 @@ impl Track {
 
     pub fn album_or_unknown(&self) -> &str {
         if self.album.is_empty() {
-            UNKNOWN_ALBUM
+            unknown_album()
         } else {
             &self.album
         }
@@ -181,8 +190,8 @@ impl Library {
         let mut order: Vec<usize> = (0..albums.len()).collect();
         order.sort_by(|&a, &b| {
             let (x, y) = (&albums[a], &albums[b]);
-            (x.title == UNKNOWN_ALBUM)
-                .cmp(&(y.title == UNKNOWN_ALBUM))
+            (x.title == unknown_album())
+                .cmp(&(y.title == unknown_album()))
                 .then_with(|| lower(&x.title).cmp(&lower(&y.title)))
                 .then_with(|| lower(&x.artist).cmp(&lower(&y.artist)))
         });
@@ -214,8 +223,8 @@ impl Library {
         let mut order: Vec<usize> = (0..artists.len()).collect();
         order.sort_by(|&a, &b| {
             let (x, y) = (&artists[a], &artists[b]);
-            (x.name == UNKNOWN_ARTIST)
-                .cmp(&(y.name == UNKNOWN_ARTIST))
+            (x.name == unknown_artist())
+                .cmp(&(y.name == unknown_artist()))
                 .then_with(|| lower(&x.name).cmp(&lower(&y.name)))
         });
         let mut remap = vec![0; artists.len()];
@@ -499,6 +508,7 @@ pub fn fmt_long(d: Duration) -> String {
     }
 }
 
+/// « 3 fichiers », « 1 fichier », dans la langue de l'interface (voir `i18n::plural`).
 pub fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n > 1 { many } else { one })
+    crate::i18n::plural(n, one, many)
 }

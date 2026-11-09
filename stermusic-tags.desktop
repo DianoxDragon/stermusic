@@ -5,6 +5,7 @@ Actions=editTags;
 X-KDE-Priority=TopLevel
 
 [Desktop Action editTags]
-Name=Modifier les tags avec SterMusic
+Name=Edit tags with SterMusic
+Name[fr]=Modifier les tags avec SterMusic
 Icon=stermusic
 Exec=stermusic --tags %F

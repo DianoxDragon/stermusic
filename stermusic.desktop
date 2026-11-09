@@ -1,9 +1,12 @@
 [Desktop Entry]
 Type=Application
 Name=SterMusic
-GenericName=Lecteur de musique
-Comment=Écouter sa bibliothèque musicale
-Exec=stermusic %f
+GenericName=Music Player
+GenericName[fr]=Lecteur de musique
+Comment=Listen to your music library
+Comment[fr]=Écouter sa bibliothèque musicale
+Exec=stermusic %F
+MimeType=audio/mpeg;audio/mp3;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/vorbis;audio/opus;audio/x-opus+ogg;audio/mp4;audio/x-m4a;audio/aac;audio/x-aac;audio/wav;audio/x-wav;audio/x-aiff;audio/aiff;
 Icon=stermusic
 Terminal=false
 Categories=AudioVideo;Audio;Player;

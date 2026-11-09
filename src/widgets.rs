@@ -162,11 +162,11 @@ pub fn play_button(ui: &mut Ui, playing: bool, size: f32) -> Response {
     }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(if playing {
-            "Pause (Espace)"
+        .on_hover_text(crate::i18n::tr(if playing {
+            crate::i18n::n_("Pause (Espace)")
         } else {
-            "Lecture (Espace)"
-        })
+            crate::i18n::n_("Lecture (Espace)")
+        }))
 }
 
 fn button_content(ui: &Ui, icon: Option<Icon>, text: &str, color: Color32) -> (Arc<Galley>, f32) {
@@ -632,7 +632,7 @@ pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max:
     painter.circle_filled(c, 3.5 + 1.5 * t, theme::accent_light());
     response
         .on_hover_cursor(egui::CursorIcon::ResizeVertical)
-        .on_hover_text(format!("{:+.1} dB (double-clic : 0)", value));
+        .on_hover_text(crate::trf!("{0} dB (double-clic : 0)", format!("{:+.1}", value)));
     changed
 }
 
@@ -645,21 +645,57 @@ pub fn text_field(
     width: f32,
     rows: usize,
 ) -> Response {
-    let height = if rows > 1 { 14.0 + 19.0 * rows as f32 } else { 32.0 };
+    const ROW: f32 = 19.0;
+    const MAX_ROWS: usize = 7;
+    // Plusieurs lignes : le champ grandit avec son texte (jusqu'à sept lignes), puis défile.
+    let height = if rows > 1 {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let wrapped = ui.fonts(|f| {
+            f.layout(text.clone(), font, Color32::WHITE, width - 20.0)
+                .rows
+                .len()
+        });
+        14.0 + ROW * wrapped.clamp(rows, MAX_ROWS) as f32
+    } else {
+        32.0
+    };
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let bg = ui.painter().add(egui::Shape::Noop);
-    let edit = if rows > 1 {
-        egui::TextEdit::multiline(text).desired_rows(rows)
-    } else {
-        egui::TextEdit::singleline(text).vertical_align(egui::Align::Center)
-    };
-    let response = ui.put(
-        rect,
+    fn style<'t>(edit: egui::TextEdit<'t>, id: egui::Id, hint: &str) -> egui::TextEdit<'t> {
         edit.id(id)
             .hint_text(egui::RichText::new(hint).color(theme::TEXT_3).italics())
             .frame(false)
-            .margin(vec2(10.0, 7.0)),
-    );
+            .margin(vec2(10.0, 7.0))
+    }
+    let response = if rows > 1 {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        egui::ScrollArea::vertical()
+            .id_salt(id.with("scroll"))
+            .max_height(height)
+            .auto_shrink([false, false])
+            .show(&mut child, |ui| {
+                ui.add_sized(
+                    vec2(width, height),
+                    style(
+                        egui::TextEdit::multiline(text)
+                            .desired_rows(rows)
+                            .desired_width(width - 12.0),
+                        id,
+                        hint,
+                    ),
+                )
+            })
+            .inner
+    } else {
+        ui.put(
+            rect,
+            style(
+                egui::TextEdit::singleline(text).vertical_align(egui::Align::Center),
+                id,
+                hint,
+            ),
+        )
+    };
     let t = anim::toggle(ui.ctx(), id.with("focus"), response.has_focus(), anim::FAST);
     let h = hover_t(ui, id.with("hover"), response.hovered());
     ui.painter().set(
@@ -684,4 +720,15 @@ pub fn text_field(
         theme::brand_fill(ui.painter(), line, 1, t);
     }
     response
+}
+
+/// Place un contrôle dans `rect` sans déplacer le curseur de mise en page du parent (ce que fait
+/// `Ui::put`) : pour les lignes de liste dessinées à la main, dont la hauteur est déjà réservée.
+pub fn place<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::centered_and_justified(egui::Direction::TopDown)),
+    );
+    add(&mut child)
 }

@@ -14,10 +14,12 @@ use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontI
 use super::tag_editor::{file_name, Prefs, TagEditor};
 use super::views::segment;
 use super::SterMusic;
+use crate::i18n::{n_, tr};
 use crate::icons::{self, Icon};
 use crate::library::{self, plural};
 use crate::tags::Field;
 use crate::tagtools::{self, NameParser, Replacer, PLACEHOLDERS};
+use crate::trf;
 use crate::{theme, widgets};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -49,36 +51,36 @@ const PATTERNS: [&str; 5] = [
 
 /// Aide-mémoire des expressions régulières.
 const REGEX_HELP: [(&str, &str); 12] = [
-    (".", "n'importe quel caractère"),
-    ("\\d   \\w   \\s", "chiffre · lettre ou chiffre · espace"),
-    ("[abc]   [^abc]", "un de ces caractères · tout sauf eux"),
-    ("[a-z]   [0-9]", "de « a » à « z » · de « 0 » à « 9 »"),
-    ("a|b", "« a » ou « b »"),
-    ("*   +   ?", "0 fois ou plus · 1 ou plus · 0 ou 1"),
-    ("{2}   {2,}", "exactement 2 fois · 2 fois ou plus"),
-    ("^   $", "début du texte · fin du texte"),
-    ("( … )", "groupe, à reprendre avec $1, $2…"),
-    ("\\.   \\(   \\[", "un vrai point, parenthèse, crochet"),
-    (".*?", "le moins de caractères possible"),
-    ("(?i)", "en tête : ignore les majuscules"),
+    (".", n_("n'importe quel caractère")),
+    ("\\d   \\w   \\s", n_("chiffre · lettre ou chiffre · espace")),
+    ("[abc]   [^abc]", n_("un de ces caractères · tout sauf eux")),
+    ("[a-z]   [0-9]", n_("de « a » à « z » · de « 0 » à « 9 »")),
+    ("a|b", n_("« a » ou « b »")),
+    ("*   +   ?", n_("0 fois ou plus · 1 ou plus · 0 ou 1")),
+    ("{2}   {2,}", n_("exactement 2 fois · 2 fois ou plus")),
+    ("^   $", n_("début du texte · fin du texte")),
+    ("( … )", n_("groupe, à reprendre avec $1, $2…")),
+    ("\\.   \\(   \\[", n_("un vrai point, parenthèse, crochet")),
+    (".*?", n_("le moins de caractères possible")),
+    ("(?i)", n_("en tête : ignore les majuscules")),
 ];
 
 /// Exemples prêts à l'emploi : (ce que ça fait, rechercher, remplacer par).
 const REGEX_EXAMPLES: [(&str, &str, &str); 6] = [
     (
-        "Retirer « (feat. …) »",
+        n_("Retirer « (feat. …) »"),
         r"\s*[\(\[](feat|ft)\.?\s[^\)\]]*[\)\]]",
         "",
     ),
     (
-        "Retirer « (Remastered 2011) »",
+        n_("Retirer « (Remastered 2011) »"),
         r"\s*[\(\[][^\)\]]*remaster[^\)\]]*[\)\]]",
         "",
     ),
-    ("Retirer le numéro en tête", r"^\d+\s*[-.)]?\s*", ""),
-    ("« Nom, Prénom » → « Prénom Nom »", r"^(.+), (.+)$", "$2 $1"),
-    ("« Artiste - Titre » → « Titre »", r"^.+? - ", ""),
-    ("Plusieurs espaces → une seule", r"\s{2,}", " "),
+    (n_("Retirer le numéro en tête"), r"^\d+\s*[-.)]?\s*", ""),
+    (n_("« Nom, Prénom » → « Prénom Nom »"), r"^(.+), (.+)$", "$2 $1"),
+    (n_("« Artiste - Titre » → « Titre »"), r"^.+? - ", ""),
+    (n_("Plusieurs espaces → une seule"), r"\s{2,}", " "),
 ];
 
 const WARN: Color32 = Color32::from_rgb(0xFF, 0xC0, 0x70);
@@ -139,7 +141,7 @@ fn rename_plan(
                     Some(ext) => old.with_file_name(format!("{name}.{}", ext.to_string_lossy())),
                     None => old.with_file_name(name),
                 })
-                .ok_or("les tags du motif sont vides");
+                .ok_or(tr("les tags du motif sont vides"));
             (k, new)
         })
         .collect();
@@ -152,7 +154,7 @@ fn rename_plan(
     }
     for (_, new) in &mut plan {
         if new.as_ref().is_ok_and(|p| uses[p] > 1) {
-            *new = Err("même nom qu'un autre fichier de la liste");
+            *new = Err(tr("même nom qu'un autre fichier de la liste"));
         }
     }
     plan
@@ -219,7 +221,7 @@ impl Tool {
         let mut p = Preview::default();
         match self.kind {
             ToolKind::Replace => match self.replacer() {
-                Err(e) => p.error = Some(format!("Expression régulière invalide : {e}")),
+                Err(e) => p.error = Some(trf!("Expression régulière invalide : {e}", e)),
                 Ok(None) => {}
                 Ok(Some(r)) => {
                     let fields = self.fields();
@@ -247,7 +249,7 @@ impl Tool {
             },
             ToolKind::Rename => {
                 if !tagtools::has_placeholder(&self.pattern) {
-                    p.error = Some("Le motif doit contenir au moins un mot-clé, comme %title%.".into());
+                    p.error = Some(tr("Le motif doit contenir au moins un mot-clé, comme %title%.").into());
                 } else {
                     for (k, new) in rename_plan(ed, &targets, &self.pattern) {
                         let old = &ed.files[k].path;
@@ -255,7 +257,7 @@ impl Tool {
                         // (et de nouveau, pour toutes, au moment de renommer).
                         let new = match new {
                             Ok(n) if n != *old && p.rows.len() < SHOWN && n.exists() => {
-                                Err("un fichier porte déjà ce nom")
+                                Err(tr("un fichier porte déjà ce nom"))
                             }
                             other => other,
                         };
@@ -287,7 +289,9 @@ impl Tool {
                 }
             }
             ToolKind::FromName => match NameParser::new(&self.pattern) {
-                None => p.error = Some("Le motif doit contenir au moins un mot-clé, comme %title%.".into()),
+                None => {
+                    p.error = Some(tr("Le motif doit contenir au moins un mot-clé, comme %title%.").into())
+                }
                 Some(parser) => {
                     for &k in &targets {
                         let path = &ed.files[k].path;
@@ -297,14 +301,14 @@ impl Tool {
                                 p.changes += 1;
                                 let text = found
                                     .iter()
-                                    .map(|(f, v)| format!("{} : {v}", f.label()))
+                                    .map(|(f, v)| trf!("{0} : {v}", f.label(), v))
                                     .collect::<Vec<_>>()
                                     .join("  ·  ");
                                 (text, false)
                             }
                             None => {
                                 p.problems += 1;
-                                ("ne correspond pas au motif".to_owned(), true)
+                                (tr("ne correspond pas au motif").to_owned(), true)
                             }
                         };
                         if p.rows.len() < SHOWN {
@@ -328,38 +332,30 @@ impl Tool {
     fn summary(&self) -> String {
         let p = &self.preview;
         match self.kind {
-            ToolKind::Replace if self.find.is_empty() => "Tape le texte à rechercher.".to_owned(),
-            ToolKind::Replace if p.changes == 0 => "Rien à remplacer.".to_owned(),
-            ToolKind::Replace => format!(
-                "{} dans {}",
+            ToolKind::Replace if self.find.is_empty() => tr("Tape le texte à rechercher.").to_owned(),
+            ToolKind::Replace if p.changes == 0 => tr("Rien à remplacer.").to_owned(),
+            ToolKind::Replace => trf!(
+                "{0} dans {1}",
                 plural(p.changes, "valeur à remplacer", "valeurs à remplacer"),
                 plural(p.files, "fichier", "fichiers")
             ),
             ToolKind::Rename => {
                 let mut parts = vec![plural(p.changes, "fichier à renommer", "fichiers à renommer")];
                 if p.unchanged > 0 {
-                    parts.push(format!(
-                        "{} déjà bien nommé{}",
-                        p.unchanged,
-                        if p.unchanged > 1 { "s" } else { "" }
-                    ));
+                    parts.push(plural(p.unchanged, "déjà bien nommé", "déjà bien nommés"));
                 }
                 if p.problems > 0 {
-                    parts.push(format!(
-                        "{} impossible{}",
-                        p.problems,
-                        if p.problems > 1 { "s" } else { "" }
-                    ));
+                    parts.push(plural(p.problems, "impossible", "impossibles"));
                 }
                 parts.join(" · ")
             }
             ToolKind::FromName => {
                 let mut parts = vec![plural(p.changes, "fichier reconnu", "fichiers reconnus")];
                 if p.problems > 0 {
-                    parts.push(format!(
-                        "{} ne correspond{} pas au motif",
+                    parts.push(plural(
                         p.problems,
-                        if p.problems > 1 { "ent" } else { "" }
+                        "ne correspond pas au motif",
+                        "ne correspondent pas au motif",
                     ));
                 }
                 parts.join(" · ")
@@ -420,13 +416,13 @@ impl SterMusic {
         tool.refresh(ed);
         let (selected, total) = (ed.scope().len(), ed.all_readable().len());
         let (title, icon, verb) = match tool.kind {
-            ToolKind::Replace => ("Rechercher et remplacer", Icon::Replace, "Remplacer"),
+            ToolKind::Replace => (tr("Rechercher et remplacer"), Icon::Replace, tr("Remplacer")),
             ToolKind::Rename => (
-                "Renommer les fichiers d'après les tags",
+                tr("Renommer les fichiers d'après les tags"),
                 Icon::FilePen,
-                "Renommer",
+                tr("Renommer"),
             ),
-            ToolKind::FromName => ("Tags d'après le nom des fichiers", Icon::Tag, "Appliquer"),
+            ToolKind::FromName => (tr("Tags d'après le nom des fichiers"), Icon::Tag, tr("Appliquer")),
         };
         let (mut close, mut apply) = (false, false);
         let width = (ctx.screen_rect().width() - 100.0).clamp(620.0, 780.0);
@@ -446,10 +442,10 @@ impl SterMusic {
                         ui.spacing_mut().item_spacing.x = 6.0;
                         // Sans rien de plus dans la liste que la sélection, pas de choix à faire.
                         if total > selected {
-                            if segment(ui, &format!("Toute la liste ({total})"), tool.all).clicked() {
+                            if segment(ui, &trf!("Toute la liste ({total})", total), tool.all).clicked() {
                                 tool.all = true;
                             }
-                            if segment(ui, &format!("Sélection ({selected})"), !tool.all).clicked() {
+                            if segment(ui, &trf!("Sélection ({selected})", selected), !tool.all).clicked() {
                                 tool.all = false;
                             }
                         }
@@ -484,7 +480,7 @@ impl SterMusic {
                                 apply = true;
                             }
                         });
-                        if widgets::secondary_button(ui, None, "Annuler").clicked() {
+                        if widgets::secondary_button(ui, None, tr("Annuler")).clicked() {
                             close = true;
                         }
                     });
@@ -502,8 +498,8 @@ impl SterMusic {
         match tool.kind {
             ToolKind::Replace => {
                 let (values, files) = apply_replace(&tool, &mut self.tag_editor);
-                self.toast(format!(
-                    "{} dans {} : vérifie, puis enregistre",
+                self.toast(trf!(
+                    "{0} dans {1} : vérifie, puis enregistre",
                     plural(values, "valeur remplacée", "valeurs remplacées"),
                     plural(files, "fichier", "fichiers")
                 ));
@@ -511,14 +507,14 @@ impl SterMusic {
             ToolKind::FromName => {
                 self.tag_editor.prefs.parse = tool.pattern.trim().to_owned();
                 let files = apply_from_name(&tool, &mut self.tag_editor);
-                self.toast(format!(
-                    "Tags lus dans le nom de {} : vérifie, puis enregistre",
+                self.toast(trf!(
+                    "Tags lus dans le nom de {0} : vérifie, puis enregistre",
                     plural(files, "fichier", "fichiers")
                 ));
             }
             ToolKind::Rename => {
                 if self.tag_editor.saving() {
-                    self.toast("Enregistrement en cours : réessaie quand il sera terminé");
+                    self.toast(tr("Enregistrement en cours : réessaie quand il sera terminé"));
                     self.tag_editor.tool = Some(tool);
                     return;
                 }
@@ -540,7 +536,7 @@ impl SterMusic {
             let old = self.tag_editor.files[k].path.clone();
             let result = match new {
                 Ok(new) if new == old => continue,
-                Ok(new) if new.exists() => Err((new, "un fichier porte déjà ce nom".to_owned())),
+                Ok(new) if new.exists() => Err((new, tr("un fichier porte déjà ce nom").to_owned())),
                 Ok(new) => match std::fs::rename(&old, &new) {
                     Ok(()) => Ok(new),
                     Err(e) => Err((new, e.to_string())),
@@ -587,9 +583,11 @@ impl SterMusic {
         let ok = plural(renamed.len(), "fichier renommé", "fichiers renommés");
         match failed.first() {
             None => self.toast(ok),
-            Some(first) => self.toast(format!(
-                "{ok}, {} : {first}",
-                plural(failed.len(), "échec", "échecs")
+            Some(first) => self.toast(trf!(
+                "{ok}, {0} : {first}",
+                ok,
+                plural(failed.len(), "échec", "échecs"),
+                first
             )),
         }
     }
@@ -608,9 +606,9 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let hint = if tool.regex {
-            "Rechercher (expression régulière)"
+            tr("Rechercher (expression régulière)")
         } else {
-            "Rechercher"
+            tr("Rechercher")
         };
         let r = widgets::text_field(ui, egui::Id::new("tool_find"), &mut tool.find, hint, half, 1);
         focus_once(tool, &r);
@@ -618,7 +616,7 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
             ui,
             egui::Id::new("tool_with"),
             &mut tool.with,
-            "Remplacer par (vide : supprimer)",
+            tr("Remplacer par (vide : supprimer)"),
             half,
             1,
         );
@@ -626,8 +624,8 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
     ui.add_space(10.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-        ui.label(RichText::new("Dans :").color(theme::TEXT_2));
-        if segment(ui, "Tous les champs", tool.field.is_none()).clicked() {
+        ui.label(RichText::new(tr("Dans :")).color(theme::TEXT_2));
+        if segment(ui, tr("Tous les champs"), tool.field.is_none()).clicked() {
             tool.field = None;
         }
         for f in TEXT_FIELDS {
@@ -639,16 +637,18 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        if segment(ui, "Expression régulière", tool.regex)
-            .on_hover_text("Le texte recherché est un motif : « \\d+ » trouve un nombre, « ^ » le début…")
+        if segment(ui, tr("Expression régulière"), tool.regex)
+            .on_hover_text(tr(
+                "Le texte recherché est un motif : « \\d+ » trouve un nombre, « ^ » le début…",
+            ))
             .clicked()
         {
             tool.regex = !tool.regex;
             // L'aide s'ouvre avec le mode, la première fois qu'on en a besoin.
             tool.help |= tool.regex && tool.find.is_empty();
         }
-        if segment(ui, "Respecter la casse", tool.case)
-            .on_hover_text("« Live » ne trouve plus « live »")
+        if segment(ui, tr("Respecter la casse"), tool.case)
+            .on_hover_text(tr("« Live » ne trouve plus « live »"))
             .clicked()
         {
             tool.case = !tool.case;
@@ -658,9 +658,9 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
                 ui,
                 Some(Icon::Help),
                 if tool.help {
-                    "Masquer l'aide"
+                    tr("Masquer l'aide")
                 } else {
-                    "Aide des expressions"
+                    tr("Aide des expressions")
                 },
             )
             .clicked()
@@ -697,8 +697,10 @@ fn regex_help_body(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
             ui.set_width(width - 10.0);
             ui.spacing_mut().item_spacing.y = 3.0;
             ui.label(
-                RichText::new("Une expression régulière décrit une forme de texte plutôt qu'un texte exact.")
-                    .color(theme::TEXT_2),
+                RichText::new(tr(
+                    "Une expression régulière décrit une forme de texte plutôt qu'un texte exact.",
+                ))
+                .color(theme::TEXT_2),
             );
             ui.add_space(4.0);
             let col = (width - 10.0 - 16.0) / 2.0;
@@ -716,7 +718,7 @@ fn regex_help_body(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
                         );
                         let g = widgets::galley(
                             ui,
-                            meaning,
+                            tr(meaning),
                             FontId::proportional(12.5),
                             theme::TEXT_2,
                             col - 112.0,
@@ -731,7 +733,7 @@ fn regex_help_body(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
             }
             ui.add_space(8.0);
             ui.label(
-                RichText::new("Exemples (un clic remplit les champs) :")
+                RichText::new(tr("Exemples (un clic remplit les champs) :"))
                     .small()
                     .color(theme::TEXT_3),
             );
@@ -740,11 +742,11 @@ fn regex_help_body(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
                 for (what, find, with) in REGEX_EXAMPLES {
                     let tip = if with.is_empty() {
-                        format!("Rechercher : {find}\nRemplacer par : (rien)")
+                        trf!("Rechercher : {find}\nRemplacer par : (rien)", find)
                     } else {
-                        format!("Rechercher : {find}\nRemplacer par : {with}")
+                        trf!("Rechercher : {find}\nRemplacer par : {with}", find, with)
                     };
-                    if segment(ui, what, tool.regex && tool.find == find)
+                    if segment(ui, tr(what), tool.regex && tool.find == find)
                         .on_hover_text(tip)
                         .clicked()
                     {
@@ -762,9 +764,9 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
     let rename = tool.kind == ToolKind::Rename;
     ui.label(
         RichText::new(if rename {
-            "Nouveau nom (sans l'extension) :"
+            tr("Nouveau nom (sans l'extension) :")
         } else {
-            "Forme du nom des fichiers (sans l'extension) :"
+            tr("Forme du nom des fichiers (sans l'extension) :")
         })
         .color(theme::TEXT_2),
     );
@@ -781,7 +783,7 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
     ui.add_space(8.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-        ui.label(RichText::new("Mots-clés :").color(theme::TEXT_2));
+        ui.label(RichText::new(tr("Mots-clés :")).color(theme::TEXT_2));
         for (name, field) in PLACEHOLDERS {
             // Les totaux servent rarement dans un nom de fichier.
             if matches!(field, Field::TrackTotal | Field::DiscTotal) {
@@ -789,7 +791,7 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
             }
             let key = format!("%{name}%");
             if segment(ui, &key, false)
-                .on_hover_text(format!("{} : ajoute {key} au motif", field.label()))
+                .on_hover_text(trf!("{0} : ajoute {key} au motif", field.label(), key))
                 .clicked()
             {
                 tool.pattern.push_str(&key);
@@ -797,7 +799,7 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
         }
         if !rename
             && segment(ui, "%_%", false)
-                .on_hover_text("Un morceau du nom à ignorer")
+                .on_hover_text(tr("Un morceau du nom à ignorer"))
                 .clicked()
         {
             tool.pattern.push_str("%_%");
@@ -806,7 +808,7 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
     ui.add_space(6.0);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-        ui.label(RichText::new("Motifs courants :").color(theme::TEXT_2));
+        ui.label(RichText::new(tr("Motifs courants :")).color(theme::TEXT_2));
         for p in PATTERNS {
             if segment(ui, p, tool.pattern.trim() == p).clicked() {
                 tool.pattern = p.to_owned();
@@ -816,10 +818,10 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
     ui.add_space(8.0);
     ui.label(
         RichText::new(if rename {
-            "Les fichiers sont renommés tout de suite, dans leur dossier ; playlists, favoris et \
-             compteurs d'écoutes suivent. Les tags modifiés mais pas encore enregistrés comptent."
+            tr("Les fichiers sont renommés tout de suite, dans leur dossier ; playlists, favoris et \
+             compteurs d'écoutes suivent. Les tags modifiés mais pas encore enregistrés comptent.")
         } else {
-            "Les tags trouvés remplissent les champs de l'éditeur : rien n'est écrit avant « Enregistrer »."
+            tr("Les tags trouvés remplissent les champs de l'éditeur : rien n'est écrit avant « Enregistrer ».")
         })
         .small()
         .color(theme::TEXT_3),
@@ -841,7 +843,7 @@ fn preview(ui: &mut egui::Ui, tool: &Tool, width: f32, height: f32) {
         ui.painter().text(
             rect.center(),
             Align2::CENTER_CENTER,
-            "L'aperçu des changements s'affichera ici",
+            tr("L'aperçu des changements s'affichera ici"),
             FontId::proportional(13.0),
             theme::TEXT_3,
         );

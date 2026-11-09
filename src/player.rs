@@ -55,7 +55,7 @@ impl Player {
     fn stream(&mut self) -> Result<&OutputStream, String> {
         if self.stream.is_none() {
             let mut stream = OutputStreamBuilder::open_default_stream()
-                .map_err(|e| format!("Impossible d'ouvrir la sortie audio : {e}"))?;
+                .map_err(|e| crate::trf!("Impossible d'ouvrir la sortie audio : {e}", e))?;
             stream.log_on_drop(false);
             self.stream = Some(stream);
         }
@@ -75,14 +75,14 @@ impl Player {
     }
 
     fn open(&mut self, path: &Path, position: Duration) -> Result<(), String> {
-        let file = File::open(path).map_err(|e| format!("Ouverture impossible : {e}"))?;
+        let file = File::open(path).map_err(|e| crate::trf!("Ouverture impossible : {e}", e))?;
         // `try_from(File)` donne au décodeur la taille du fichier et son extension : sans elles,
         // Symphonia échoue (voire panique, avec rodio 0.20) sur les M4A/AAC.
         // Filet de sécurité : un décodeur qui panique sur un fichier exotique ne doit pas
         // emporter toute l'application.
         let source = catch_unwind(AssertUnwindSafe(|| Decoder::try_from(file)))
-            .map_err(|_| "Format non pris en charge (le décodeur a échoué)".to_owned())?
-            .map_err(|e| format!("Format non lisible : {e}"))?;
+            .map_err(|_| crate::i18n::tr("Format non pris en charge (le décodeur a échoué)").to_owned())?
+            .map_err(|e| crate::trf!("Format non lisible : {e}", e))?;
         let source = Processor::new(
             source,
             self.audio.clone(),
@@ -251,7 +251,7 @@ impl Player {
         if let Some(sink) = &self.sink {
             return sink
                 .try_seek(pos)
-                .map_err(|e| format!("Déplacement impossible : {e}"));
+                .map_err(|e| crate::trf!("Déplacement impossible : {e}", e));
         }
         if self.parked.is_some() {
             self.parked = Some(pos);

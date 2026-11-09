@@ -11,21 +11,23 @@ use eframe::egui::{
 
 use super::tag_editor::{cover_from_bytes, file_name, paint_cover_texture, CoverSlot, TagEditor};
 use super::SterMusic;
+use crate::i18n::{n_, tr};
 use crate::icons::{self, Icon};
 use crate::library::{fmt_duration, plural};
 use crate::musicbrainz::{self, Hit, Release};
 use crate::tags::{Cover, Field};
+use crate::trf;
 use crate::{theme, widgets};
 
 type Task<T> = Option<Receiver<Result<T, String>>>;
 
 const OPTIONS: [&str; 6] = [
-    "Titres",
-    "Artistes",
-    "Album et année",
-    "Numéros",
-    "Genre",
-    "Pochette",
+    n_("Titres"),
+    n_("Artistes"),
+    n_("Album et année"),
+    n_("Numéros"),
+    n_("Genre"),
+    n_("Pochette"),
 ];
 
 pub struct MbImport {
@@ -248,7 +250,7 @@ impl SterMusic {
                 ui.horizontal(|ui| {
                     let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
                     icons::paint_centered(ui.painter(), Icon::Globe, r.center(), 20.0, theme::accent_light());
-                    ui.label(RichText::new("Importer depuis MusicBrainz").font(theme::semibold(20.0)));
+                    ui.label(RichText::new(tr("Importer depuis MusicBrainz")).font(theme::semibold(20.0)));
                     ui.label(
                         RichText::new(plural(mb.targets.len(), "fichier", "fichiers")).color(theme::TEXT_3),
                     );
@@ -265,13 +267,19 @@ impl SterMusic {
                         ui,
                         egui::Id::new("mb_artist"),
                         &mut mb.artist,
-                        "Artiste",
+                        tr("Artiste"),
                         260.0,
                         1,
                     );
-                    let b =
-                        widgets::text_field(ui, egui::Id::new("mb_album"), &mut mb.album, "Album", 300.0, 1);
-                    let go = widgets::primary_button(ui, Some(Icon::Search), "Rechercher").clicked();
+                    let b = widgets::text_field(
+                        ui,
+                        egui::Id::new("mb_album"),
+                        &mut mb.album,
+                        tr("Album"),
+                        300.0,
+                        1,
+                    );
+                    let go = widgets::primary_button(ui, Some(Icon::Search), tr("Rechercher")).clicked();
                     if go || enter(&a, ui) || enter(&b, ui) {
                         mb.start_search();
                     }
@@ -303,7 +311,7 @@ impl SterMusic {
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.label(RichText::new("Importer :").color(theme::TEXT_2));
+                    ui.label(RichText::new(tr("Importer :")).color(theme::TEXT_2));
                     for (i, name) in OPTIONS.iter().enumerate() {
                         let available = i != 5 || mb.cover.is_some();
                         ui.scope(|ui| {
@@ -311,7 +319,7 @@ impl SterMusic {
                                 ui.disable();
                                 ui.set_opacity(0.4);
                             }
-                            if super::views::segment(ui, name, mb.options[i] && available).clicked() {
+                            if super::views::segment(ui, tr(name), mb.options[i] && available).clicked() {
                                 mb.options[i] = !mb.options[i];
                             }
                         });
@@ -322,11 +330,11 @@ impl SterMusic {
                                 ui.disable();
                                 ui.set_opacity(0.5);
                             }
-                            if widgets::primary_button(ui, None, "Appliquer").clicked() {
+                            if widgets::primary_button(ui, None, tr("Appliquer")).clicked() {
                                 apply = true;
                             }
                         });
-                        if widgets::secondary_button(ui, None, "Annuler").clicked() {
+                        if widgets::secondary_button(ui, None, tr("Annuler")).clicked() {
                             close = true;
                         }
                     });
@@ -337,8 +345,8 @@ impl SterMusic {
         }
         if apply {
             let n = mb.apply(&mut self.tag_editor);
-            self.toast(format!(
-                "Infos MusicBrainz appliquées à {} : vérifie, puis enregistre",
+            self.toast(trf!(
+                "Infos MusicBrainz appliquées à {0} : vérifie, puis enregistre",
                 plural(n, "fichier", "fichiers")
             ));
         } else if !close {
@@ -350,11 +358,11 @@ impl SterMusic {
 fn results(ui: &mut egui::Ui, mb: &mut MbImport, w: f32) {
     if mb.hits.is_empty() {
         let text = if mb.search.is_some() {
-            "Recherche…"
+            tr("Recherche…")
         } else if mb.searched {
-            "Aucun album trouvé. Essaie avec moins de mots, ou sans l'artiste."
+            tr("Aucun album trouvé. Essaie avec moins de mots, ou sans l'artiste.")
         } else {
-            "Indique l'artiste et l'album, puis lance la recherche."
+            tr("Indique l'artiste et l'album, puis lance la recherche.")
         };
         ui.label(RichText::new(text).color(theme::TEXT_3));
         return;
@@ -418,7 +426,7 @@ fn detail(ui: &mut egui::Ui, mb: &mut MbImport, ed: &TagEditor) {
         if mb.fetch.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new("Chargement de l'album…").color(theme::TEXT_2));
+                ui.label(RichText::new(tr("Chargement de l'album…")).color(theme::TEXT_2));
             });
         }
         return;
@@ -446,7 +454,7 @@ fn detail(ui: &mut egui::Ui, mb: &mut MbImport, ed: &TagEditor) {
         info.insert(0, rel.year.clone());
     }
     if mb.cover.is_none() {
-        info.push("sans pochette".into());
+        info.push(tr("sans pochette").into());
     }
     ui.painter().text(
         pos2(x, row.top() + 56.0),
@@ -459,10 +467,10 @@ fn detail(ui: &mut egui::Ui, mb: &mut MbImport, ed: &TagEditor) {
 
     let (nt, nf) = (rel.tracks.len(), mb.targets.len());
     let note = if nt == nf {
-        format!("{nt} pistes ↔ {nf} fichiers, associés dans l'ordre :")
+        trf!("{nt} pistes ↔ {nf} fichiers, associés dans l'ordre :", nt, nf)
     } else {
-        format!(
-            "{} pour {} : seuls les {} premiers sont associés, dans l'ordre.",
+        trf!(
+            "{0} pour {1} : seuls les {2} premiers sont associés, dans l'ordre.",
             plural(nt, "piste", "pistes"),
             plural(nf, "fichier", "fichiers"),
             nt.min(nf)
@@ -571,7 +579,7 @@ fn detail(ui: &mut egui::Ui, mb: &mut MbImport, ed: &TagEditor) {
                         ui.painter().text(
                             pos2(fx, y),
                             Align2::LEFT_CENTER,
-                            "pas de fichier",
+                            tr("pas de fichier"),
                             FontId::proportional(12.0),
                             theme::TEXT_3,
                         );

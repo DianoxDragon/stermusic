@@ -75,9 +75,11 @@ fn get_json(url: &str) -> Result<Value, String> {
 
 fn describe(e: ureq::Error) -> String {
     match e {
-        ureq::Error::Status(503, _) => "MusicBrainz est surchargé, réessaie dans un instant".into(),
-        ureq::Error::Status(code, _) => format!("MusicBrainz a répondu {code}"),
-        ureq::Error::Transport(t) => format!("Pas de connexion à MusicBrainz ({})", t.kind()),
+        ureq::Error::Status(503, _) => {
+            crate::i18n::tr("MusicBrainz est surchargé, réessaie dans un instant").into()
+        }
+        ureq::Error::Status(code, _) => crate::trf!("MusicBrainz a répondu {code}", code),
+        ureq::Error::Transport(t) => crate::trf!("Pas de connexion à MusicBrainz ({0})", t.kind()),
     }
 }
 

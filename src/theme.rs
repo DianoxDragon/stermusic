@@ -5,8 +5,10 @@
 //! icônes du thème Breeze, boutons de fenêtre ronds.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+
+use serde::{Deserialize, Serialize};
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Rect, Shadow, Stroke,
@@ -46,36 +48,345 @@ const fn theme(
 
 /// Les mêmes seize thèmes que SterCode.
 pub const THEMES: [Theme; 16] = [
-    theme("stercode", "SterMusic", 0x14151D, 0x5468FF, 0x9A5CF5, 0x8E9BFF),
-    theme("ocean", "Océan", 0x0F171C, 0x2BB3C0, 0x3D7BFF, 0x7AD7E0),
-    theme("foret", "Forêt", 0x111814, 0x3FB27F, 0x9BCB3C, 0x86D9AE),
-    theme("couchant", "Couchant", 0x1A1214, 0xFF7A45, 0xFF4F8B, 0xFFAA85),
-    theme("sakura", "Sakura", 0x1A1219, 0xF06BA8, 0xB86BF0, 0xF7A6CB),
-    theme("lavande", "Lavande", 0x15131E, 0x9D7BFF, 0xE07BFF, 0xC3B0FF),
-    theme("ambre", "Ambre", 0x18150F, 0xF2A93B, 0xF26B3B, 0xF7CB86),
-    theme("rubis", "Rubis", 0x1A1113, 0xE5484D, 0xF27B3B, 0xF28A8D),
-    theme("menthe", "Menthe", 0x0F1918, 0x3DD6B5, 0x3DA0D6, 0x8AE8D4),
-    theme("aurore", "Aurore", 0x10161C, 0x5EC4E8, 0xA3E37A, 0x9EDDF2),
-    theme("graphite", "Graphite", 0x141516, 0xA0A8B8, 0x6E7686, 0xC8CEDA),
-    theme("cosmos", "Cosmos", 0x10101C, 0x6C5CE7, 0x00CEC9, 0xA99FF5),
-    theme("citron", "Citron vert", 0x14170F, 0xB5D93C, 0x5CC97A, 0xD3EC85),
-    theme("corail", "Corail", 0x1B1312, 0xFF6F61, 0xFFB25B, 0xFFA69C),
-    theme("glacier", "Glacier", 0x121620, 0x7FB8FF, 0xB8E0FF, 0xB5D6FF),
-    theme("amethyste", "Améthyste", 0x17121F, 0xB15CF5, 0x5C7CF5, 0xD2A3FA),
+    theme(
+        "stercode",
+        crate::i18n::n_("SterMusic"),
+        0x14151D,
+        0x5468FF,
+        0x9A5CF5,
+        0x8E9BFF,
+    ),
+    theme(
+        "ocean",
+        crate::i18n::n_("Océan"),
+        0x0F171C,
+        0x2BB3C0,
+        0x3D7BFF,
+        0x7AD7E0,
+    ),
+    theme(
+        "foret",
+        crate::i18n::n_("Forêt"),
+        0x111814,
+        0x3FB27F,
+        0x9BCB3C,
+        0x86D9AE,
+    ),
+    theme(
+        "couchant",
+        crate::i18n::n_("Couchant"),
+        0x1A1214,
+        0xFF7A45,
+        0xFF4F8B,
+        0xFFAA85,
+    ),
+    theme(
+        "sakura",
+        crate::i18n::n_("Sakura"),
+        0x1A1219,
+        0xF06BA8,
+        0xB86BF0,
+        0xF7A6CB,
+    ),
+    theme(
+        "lavande",
+        crate::i18n::n_("Lavande"),
+        0x15131E,
+        0x9D7BFF,
+        0xE07BFF,
+        0xC3B0FF,
+    ),
+    theme(
+        "ambre",
+        crate::i18n::n_("Ambre"),
+        0x18150F,
+        0xF2A93B,
+        0xF26B3B,
+        0xF7CB86,
+    ),
+    theme(
+        "rubis",
+        crate::i18n::n_("Rubis"),
+        0x1A1113,
+        0xE5484D,
+        0xF27B3B,
+        0xF28A8D,
+    ),
+    theme(
+        "menthe",
+        crate::i18n::n_("Menthe"),
+        0x0F1918,
+        0x3DD6B5,
+        0x3DA0D6,
+        0x8AE8D4,
+    ),
+    theme(
+        "aurore",
+        crate::i18n::n_("Aurore"),
+        0x10161C,
+        0x5EC4E8,
+        0xA3E37A,
+        0x9EDDF2,
+    ),
+    theme(
+        "graphite",
+        crate::i18n::n_("Graphite"),
+        0x141516,
+        0xA0A8B8,
+        0x6E7686,
+        0xC8CEDA,
+    ),
+    theme(
+        "cosmos",
+        crate::i18n::n_("Cosmos"),
+        0x10101C,
+        0x6C5CE7,
+        0x00CEC9,
+        0xA99FF5,
+    ),
+    theme(
+        "citron",
+        crate::i18n::n_("Citron vert"),
+        0x14170F,
+        0xB5D93C,
+        0x5CC97A,
+        0xD3EC85,
+    ),
+    theme(
+        "corail",
+        crate::i18n::n_("Corail"),
+        0x1B1312,
+        0xFF6F61,
+        0xFFB25B,
+        0xFFA69C,
+    ),
+    theme(
+        "glacier",
+        crate::i18n::n_("Glacier"),
+        0x121620,
+        0x7FB8FF,
+        0xB8E0FF,
+        0xB5D6FF,
+    ),
+    theme(
+        "amethyste",
+        crate::i18n::n_("Améthyste"),
+        0x17121F,
+        0xB15CF5,
+        0x5C7CF5,
+        0xD2A3FA,
+    ),
 ];
 
-static CURRENT: AtomicUsize = AtomicUsize::new(0);
+/// Thème en cours. Tous les thèmes vivent jusqu'à la fin du programme (constantes, thème du
+/// système, favoris), d'où un simple pointeur : `current()` est appelé des centaines de fois par image.
+static CURRENT: AtomicPtr<Theme> = AtomicPtr::new(std::ptr::null_mut());
 static BREEZE: AtomicBool = AtomicBool::new(false);
 static RADIUS: AtomicU8 = AtomicU8::new(0);
 
-/// Thème « KDE (système) » : couleurs lues dans `~/.config/kdeglobals`.
+/// Thème « système » : couleurs de KDE (`~/.config/kdeglobals`) ou accent de GNOME. L'identifiant
+/// est resté « kde » (réglages des versions précédentes).
 pub const KDE_ID: &str = "kde";
-const KDE_INDEX: usize = usize::MAX;
-static KDE: OnceLock<Option<Theme>> = OnceLock::new();
+const KDE_NAME: &str = "KDE (système)";
+const GNOME_NAME: &str = "GNOME (système)";
+static SYSTEM: OnceLock<Option<Theme>> = OnceLock::new();
+
+/// Le thème du bureau (KDE, sinon GNOME), s'il y en a un.
+pub fn system_theme() -> Option<&'static Theme> {
+    SYSTEM.get_or_init(|| load_kde().or_else(load_gnome)).as_ref()
+}
 
 /// Le thème de KDE, s'il y a une configuration KDE.
 pub fn kde_theme() -> Option<&'static Theme> {
-    KDE.get_or_init(load_kde).as_ref()
+    system_theme().filter(|t| t.name == KDE_NAME)
+}
+
+/// Nom court du thème du système, sous sa vignette.
+pub fn system_label() -> &'static str {
+    match system_theme() {
+        Some(t) if t.name == GNOME_NAME => "GNOME",
+        _ => "KDE",
+    }
+}
+
+/// Thème enregistré en favori : une copie figée des couleurs d'un thème (en général celui du
+/// bureau, qui change avec les réglages de KDE ou de GNOME).
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SavedTheme {
+    pub id: String,
+    pub name: String,
+    pub bg: [u8; 3],
+    pub accent: [u8; 3],
+    pub accent_2: [u8; 3],
+    pub accent_light: [u8; 3],
+}
+
+impl SavedTheme {
+    /// Copie du thème en cours, sous ce nom.
+    pub fn from_current(name: String) -> Self {
+        let t = current();
+        let rgb = |c: Color32| [c.r(), c.g(), c.b()];
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        Self {
+            id: format!("fav-{now:x}"),
+            name,
+            bg: rgb(t.bg),
+            accent: rgb(t.accent),
+            accent_2: rgb(t.accent_2),
+            accent_light: rgb(t.accent_light),
+        }
+    }
+}
+
+/// Favoris chargés (copies `'static`, voir `CURRENT`).
+static SAVED: Mutex<Vec<&'static Theme>> = Mutex::new(Vec::new());
+
+/// Remplace la liste des favoris. Les anciennes copies restent en mémoire (quelques octets par
+/// modification) : le thème en cours peut encore les désigner.
+pub fn set_saved(themes: &[SavedTheme]) {
+    let rgb = |c: [u8; 3]| Color32::from_rgb(c[0], c[1], c[2]);
+    let leaked = themes
+        .iter()
+        .map(|s| {
+            &*Box::leak(Box::new(Theme {
+                id: Box::leak(s.id.clone().into_boxed_str()),
+                name: Box::leak(s.name.clone().into_boxed_str()),
+                bg: rgb(s.bg),
+                accent: rgb(s.accent),
+                accent_2: rgb(s.accent_2),
+                accent_light: rgb(s.accent_light),
+            }))
+        })
+        .collect();
+    *SAVED.lock().unwrap() = leaked;
+}
+
+/// Les favoris, dans l'ordre où ils ont été enregistrés.
+pub fn saved() -> Vec<&'static Theme> {
+    SAVED.lock().unwrap().clone()
+}
+
+/// Un nom pour enregistrer le thème en cours : « KDE du 9 novembre ».
+pub fn suggested_name() -> String {
+    let t = current();
+    let base = if t.id == KDE_ID {
+        system_label()
+    } else {
+        crate::i18n::tr(t.name)
+    };
+    let (_, month, day) = today();
+    let month = (month as usize).saturating_sub(1).min(11);
+    match crate::i18n::lang() {
+        crate::i18n::Lang::Fr => {
+            const MONTHS: [&str; 12] = [
+                "janvier",
+                "février",
+                "mars",
+                "avril",
+                "mai",
+                "juin",
+                "juillet",
+                "août",
+                "septembre",
+                "octobre",
+                "novembre",
+                "décembre",
+            ];
+            format!("{base} du {day} {}", MONTHS[month])
+        }
+        crate::i18n::Lang::En => {
+            const MONTHS: [&str; 12] = [
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
+            ];
+            format!("{base}, {} {day}", MONTHS[month])
+        }
+    }
+}
+
+/// Date du jour, à l'heure locale (commande `date`), sinon en temps universel.
+fn today() -> (i64, u32, u32) {
+    let local = std::process::Command::new("date")
+        .arg("+%Y %m %d")
+        .output()
+        .ok()
+        .and_then(|o| {
+            let text = String::from_utf8(o.stdout).ok()?;
+            let mut parts = text.split_whitespace().map(|p| p.parse::<i64>().ok());
+            Some((parts.next()??, parts.next()?? as u32, parts.next()?? as u32))
+        });
+    local.unwrap_or_else(utc_today)
+}
+
+/// Date du jour en temps universel (année, mois, jour), sans dépendance : calendrier grégorien
+/// depuis l'époque Unix.
+fn utc_today() -> (i64, u32, u32) {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64 / 86_400)
+        .unwrap_or(0);
+    // Algorithme de Howard Hinnant (« civil_from_days »).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = yoe + era * 400 + if month <= 2 { 1 } else { 0 };
+    (year, month, day)
+}
+
+/// Thème du système sous GNOME : son accent (GNOME 47 et suivants) sur le fond sombre d'Adwaita.
+fn load_gnome() -> Option<Theme> {
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_uppercase();
+    if !desktop.contains("GNOME") && !desktop.contains("UNITY") {
+        return None;
+    }
+    let out = std::process::Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "accent-color"])
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .trim_matches('\'')
+        .to_owned();
+    let hex = match name.as_str() {
+        "teal" => 0x2190A4,
+        "green" => 0x3A944A,
+        "yellow" => 0xC88800,
+        "orange" => 0xED5B00,
+        "red" => 0xE62D42,
+        "pink" => 0xD56199,
+        "purple" => 0x9141AC,
+        "slate" => 0x6F8396,
+        _ => 0x3584E4,
+    };
+    let accent = Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8);
+    Some(Theme {
+        id: KDE_ID,
+        name: GNOME_NAME,
+        bg: Color32::from_rgb(0x22, 0x22, 0x26),
+        accent,
+        accent_2: mix(accent, Color32::WHITE, 0.16),
+        accent_light: mix(accent, Color32::WHITE, 0.45),
+    })
 }
 
 /// Vrai sous KDE Plasma (Kubuntu…).
@@ -117,7 +428,7 @@ fn load_kde() -> Option<Theme> {
     };
     Some(Theme {
         id: KDE_ID,
-        name: "KDE (système)",
+        name: KDE_NAME,
         bg,
         accent,
         // Breeze est plat : un « dégradé » à peine marqué.
@@ -148,20 +459,25 @@ pub fn set_window_radius(r: u8) {
 }
 
 pub fn current() -> &'static Theme {
-    match CURRENT.load(Ordering::Relaxed) {
-        KDE_INDEX => kde_theme().unwrap_or(&THEMES[0]),
-        i => &THEMES[i.min(THEMES.len() - 1)],
+    let p = CURRENT.load(Ordering::Relaxed);
+    if p.is_null() {
+        &THEMES[0]
+    } else {
+        // SAFETY: `CURRENT` ne reçoit que des références `'static` (voir `set`).
+        unsafe { &*p }
     }
 }
 
 /// Change de thème (identifiant inconnu : le premier) et met à jour les couleurs d'egui.
 pub fn set(ctx: &egui::Context, id: &str) {
-    let index = if id == KDE_ID && kde_theme().is_some() {
-        KDE_INDEX
+    let theme: &'static Theme = if id == KDE_ID {
+        system_theme().unwrap_or(&THEMES[0])
+    } else if let Some(t) = saved().into_iter().find(|t| t.id == id) {
+        t
     } else {
-        THEMES.iter().position(|t| t.id == id).unwrap_or(0)
+        THEMES.iter().find(|t| t.id == id).unwrap_or(&THEMES[0])
     };
-    CURRENT.store(index, Ordering::Relaxed);
+    CURRENT.store(theme as *const Theme as *mut Theme, Ordering::Relaxed);
     ctx.style_mut_of(egui::Theme::Dark, style);
 }
 
