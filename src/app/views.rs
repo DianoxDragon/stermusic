@@ -375,8 +375,20 @@ impl SterMusic {
         // Fond du bandeau : des lumières qui dérivent aux couleurs de la pochette et suivent la
         // musique (visualiseur), sinon un halo fixe.
         if self.settings.visualizer && self.current().is_some() {
-            let palette = self.viz_palette();
-            crate::viz::drifting_lights(ui.painter(), rect, &self.spectrum, palette);
+            let palette = crate::viz::harmonize(self.viz_palette());
+            if crate::shader::available() {
+                // De vraies vagues, découpées aux coins arrondis du bandeau, plus discrètes côté texte.
+                let mut w = crate::viz::waves(&self.spectrum, palette, 0.75);
+                w.base = 0.74;
+                w.amp = 0.5;
+                w.fade_top = 0.2;
+                w.fade_bottom = 0.12;
+                w.left = 1.0;
+                w.radius = 14.0;
+                crate::shader::paint(ui.painter(), rect, w);
+            } else {
+                crate::viz::drifting_lights(ui.painter(), rect, &self.spectrum, palette);
+            }
         } else {
             theme_glow(ui.painter(), rect);
         }
@@ -1392,25 +1404,38 @@ impl SterMusic {
             0.45,
             anim::Easing::OutBack,
         );
-        // Visualiseur : l'Aurore dans le bas de la page, puis le halo qui respire sur les basses.
+        // Visualiseur : l'Aurore dans le bas de la page et un halo doux derrière la pochette
+        // (la pochette elle-même ne bouge pas avec la musique).
         let viz = self.settings.visualizer;
-        let breath = if viz {
-            1.0 + 0.012 * self.spectrum.bass
-        } else {
-            1.0
-        };
         let cover = Rect::from_center_size(
             cover.center() + vec2(0.0, 12.0 * (1.0 - appear)),
-            cover.size() * (0.96 + 0.04 * appear) * (0.93 + 0.07 * live) * breath,
+            cover.size() * (0.96 + 0.04 * appear) * (0.93 + 0.07 * live),
         );
         if viz {
-            let palette = self.viz_palette();
+            let palette = crate::viz::harmonize(self.viz_palette());
             let area = ui.clip_rect();
-            // Sous le contenu : l'Aurore occupe le bas de la page, sans passer sur la pochette.
-            let top = (cover.bottom() - cover.height() * 0.08).max(area.bottom() - area.height() * 0.42);
-            let band = Rect::from_min_max(pos2(area.left(), top), area.max);
             let intensity = 0.55 + 0.45 * live;
-            crate::viz::aurora(ui.painter(), band, &self.spectrum, palette, intensity);
+            if crate::shader::available() {
+                // Vagues par la carte graphique : une grande zone qui s'estompe longuement vers le
+                // haut (derrière le contenu), les vagues restant sous la pochette.
+                let band =
+                    Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.62), area.max);
+                let mut w = crate::viz::waves(&self.spectrum, palette, intensity);
+                // Vagues sous le contenu (la liste « À suivre » reste lisible).
+                w.base = 0.84;
+                w.amp = 0.42;
+                w.fade_top = 0.55;
+                w.fade_bottom = 0.10;
+                crate::shader::paint(ui.painter(), band, w);
+                let low = Rect::from_min_max(pos2(band.left(), band.top() + band.height() * 0.45), band.max);
+                crate::viz::particles(ui.painter(), low, &self.spectrum, palette[1], intensity);
+            } else {
+                // Repli (pilote sans shader) : l'Aurore calculée par le processeur.
+                let top = (cover.bottom() - cover.height() * 0.08).max(area.bottom() - area.height() * 0.42);
+                let band = Rect::from_min_max(pos2(area.left(), top), area.max);
+                self.aurora
+                    .paint(ui.painter(), band, &self.spectrum, palette, intensity);
+            }
             crate::viz::halo(ui.painter(), cover, &self.spectrum, palette[0], intensity);
         }
         let tex = self.covers.large(&t.path).and_then(|l| l.cover.clone());

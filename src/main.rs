@@ -8,6 +8,7 @@ mod kwin;
 mod library;
 mod mpris;
 mod player;
+mod shader;
 mod theme;
 mod viz;
 mod widgets;

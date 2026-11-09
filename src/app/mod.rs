@@ -305,6 +305,7 @@ pub struct SterMusic {
     /// Copie du son et spectre, pour le visualiseur.
     tap: crate::dsp::SharedTap,
     spectrum: crate::viz::Spectrum,
+    aurora: crate::viz::Aurora,
 }
 
 /// Taille du mini lecteur.
@@ -409,6 +410,7 @@ impl SterMusic {
             crossfading: false,
             tap,
             spectrum: crate::viz::Spectrum::default(),
+            aurora: crate::viz::Aurora::default(),
             settings,
         };
         app.restore_queue();
