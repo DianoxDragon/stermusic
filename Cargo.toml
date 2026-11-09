@@ -25,6 +25,15 @@ walkdir = "2"
 fastrand = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Import des tags depuis MusicBrainz et des pochettes depuis le Cover Art Archive (HTTPS)
+ureq = { version = "2", default-features = false, features = ["tls"] }
+# Rechercher-remplacer et motifs de noms de fichiers de l'éditeur de tags
+regex = "1"
+# Glisser-déposer de fichiers sous Wayland (winit 0.30 ne le gère que sous X11) : on écoute
+# nous-mêmes le protocole, sur la connexion de la fenêtre.
+raw-window-handle = "0.6"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
 
 [profile.release]
 opt-level = 3

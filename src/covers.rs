@@ -153,6 +153,18 @@ impl Covers {
         }
     }
 
+    /// Oublie les pochettes de ces morceaux (leurs tags viennent d'être modifiés).
+    pub fn forget(&mut self, paths: &[PathBuf]) {
+        for p in paths {
+            self.thumbs.remove(p);
+            self.pending.remove(p);
+        }
+        if self.large.as_ref().is_some_and(|l| paths.contains(&l.path)) {
+            self.large = None;
+            self.large_pending = None;
+        }
+    }
+
     /// Oublie les vignettes (après un rescan, les pochettes ont pu changer).
     pub fn clear(&mut self) {
         self.thumbs.clear();

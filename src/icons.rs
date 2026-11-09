@@ -77,6 +77,16 @@ icons! {
     Upload => "upload.svg",
     AudioLines => "audio-lines.svg",
     Equalizer => "sliders-vertical.svg",
+    Tag => "tag.svg",
+    Image => "image.svg",
+    Undo => "undo-2.svg",
+    Globe => "globe.svg",
+    Save => "save.svg",
+    Replace => "replace.svg",
+    FilePen => "file-pen.svg",
+    Stop => "square-stop.svg",
+    Images => "images.svg",
+    Help => "circle-help.svg",
 }
 
 /// Rectangle aligné sur la grille des pixels physiques.
@@ -132,6 +142,16 @@ fn breeze_name(icon: Icon) -> Option<&'static str> {
         Upload => "document-export",
         AudioLines => "view-media-visualization",
         Equalizer => "view-media-equalizer",
+        Tag => "tag",
+        Image => "insert-image",
+        Undo => "edit-undo",
+        Globe => "globe",
+        Save => "document-save",
+        Replace => "edit-find-replace",
+        FilePen => "edit-rename",
+        Stop => "process-stop",
+        Images => "view-preview",
+        Help => "help-contextual",
         _ => return None,
     })
 }

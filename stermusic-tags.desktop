@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Service
+MimeType=audio/mpeg;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/opus;audio/x-opus+ogg;audio/mp4;audio/x-m4a;audio/aac;audio/wav;audio/x-wav;audio/x-aiff;inode/directory;
+Actions=editTags;
+X-KDE-Priority=TopLevel
+
+[Desktop Action editTags]
+Name=Modifier les tags avec SterMusic
+Icon=stermusic
+Exec=stermusic --tags %F

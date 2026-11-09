@@ -361,7 +361,7 @@ impl SterMusic {
                 }
 
                 // Playlists, en accès rapide.
-                let bottom_reserved = 52.0;
+                let bottom_reserved = 94.0;
                 if expanded {
                     y += 6.0;
                     ui.painter().hline(
@@ -406,6 +406,46 @@ impl SterMusic {
                                 }
                             });
                     });
+                }
+
+                // Éditeur de tags, juste au-dessus des paramètres (avec le nombre de fichiers à enregistrer).
+                let r = Rect::from_min_size(pos2(left, rect.bottom() - 90.0), vec2(inner_w, 40.0));
+                let selected = active_page == Some(Page::Tags);
+                let pending = self.tag_editor.dirty_count();
+                let badge = (pending > 0).then(|| pending.to_string());
+                let busy = self.tag_editor.busy();
+                let nav = nav_item(
+                    ui,
+                    r,
+                    Icon::Tag,
+                    "Éditeur de tags",
+                    selected,
+                    expanded,
+                    badge.as_deref().filter(|_| !busy),
+                );
+                // Lecture ou enregistrement en cours : visible depuis n'importe quelle page.
+                if busy {
+                    let center = if expanded {
+                        pos2(r.right() - 22.0, r.center().y)
+                    } else {
+                        pos2(r.left() + 36.0, r.top() + 11.0)
+                    };
+                    let side = if expanded { 16.0 } else { 11.0 };
+                    egui::Spinner::new()
+                        .color(theme::accent_light())
+                        .paint_at(ui, Rect::from_center_size(center, vec2(side, side)));
+                }
+                let tip = if self.tag_editor.saving() {
+                    "Enregistrement des tags en cours…"
+                } else {
+                    "Lecture des tags en cours…"
+                };
+                let nav = if busy { nav.on_hover_text(tip) } else { nav };
+                if nav.clicked() {
+                    self.actions.push(Action::Go(View::Page(Page::Tags)));
+                }
+                if selected {
+                    pill_target = Some(r.center().y);
                 }
 
                 // Paramètres, en bas.

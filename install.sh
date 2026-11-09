@@ -22,6 +22,11 @@ install -Dm644 assets/icon.png "$HOME/.local/share/icons/hicolor/256x256/apps/st
 # Chemin complet dans le lanceur : le menu marche même si ~/.local/bin n'est pas (encore) dans le PATH.
 mkdir -p "$HOME/.local/share/applications"
 sed "s|^Exec=stermusic|Exec=$BIN|" stermusic.desktop > "$HOME/.local/share/applications/stermusic.desktop"
+# Clic droit dans Dolphin sur des morceaux ou un dossier : « Modifier les tags avec SterMusic ».
+SERVICE_MENU="$HOME/.local/share/kio/servicemenus/stermusic-tags.desktop"
+mkdir -p "$(dirname "$SERVICE_MENU")"
+sed "s|^Exec=stermusic|Exec=$BIN|" stermusic-tags.desktop > "$SERVICE_MENU"
+chmod +x "$SERVICE_MENU"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
 # Rafraîchit le menu de KDE Plasma tout de suite.

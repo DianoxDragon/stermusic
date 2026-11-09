@@ -163,7 +163,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         Some(pos) => pos == Some(i),
         None => c.current == Some(idx),
     };
-    let selected = *c.selected == Some(idx) && opts.queue_pos.is_none();
+    let selected = c.selected.contains(idx) && opts.queue_pos.is_none();
     let cols = columns(rect, opts);
     let t = &c.lib.tracks[idx];
     let fav = c.settings.favorites.contains(&t.path);
@@ -356,8 +356,9 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
     };
     if gutter_resp.clicked() || resp.double_clicked() {
         c.actions.push(play());
-    } else if resp.clicked() {
-        *c.selected = Some(idx);
+    } else if resp.clicked() && opts.queue_pos.is_none() {
+        let mods = ui.input(|i| i.modifiers);
+        c.selected.click(list, i, mods);
     }
     resp.context_menu(|ui| track_menu(ui, c, list, i, opts));
     gutter_resp.context_menu(|ui| track_menu(ui, c, list, i, opts));
@@ -366,6 +367,16 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
 
 fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) {
     let idx = list[i];
+    // Clic droit dans une sélection de plusieurs morceaux : le menu agit sur toute la sélection.
+    let targets = if opts.queue_pos.is_none() {
+        c.selected.targets(idx)
+    } else {
+        vec![idx]
+    };
+    if targets.len() > 1 {
+        selection_menu(ui, c, targets);
+        return;
+    }
     let t = &c.lib.tracks[idx];
     if widgets::menu_item(ui, Some(Icon::PlayOutline), "Lire").clicked() {
         c.actions.push(match opts.queue_pos {
@@ -412,6 +423,14 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
             c.actions.push(Action::OpenFolder(dir.to_path_buf()));
         }
     }
+    ui.separator();
+    if widgets::menu_item(ui, Some(Icon::Tag), "Modifier les infos…").clicked() {
+        c.actions.push(Action::EditTags(vec![t.path.clone()]));
+    }
+    if widgets::menu_item(ui, Some(Icon::Disc), "Modifier les infos de l'album…").clicked() {
+        c.actions
+            .push(Action::EditTags(paths(c, &c.lib.albums[album].tracks)));
+    }
     if let Some(pl) = opts.playlist {
         ui.separator();
         if widgets::menu_item(ui, Some(Icon::Trash), "Retirer de la playlist").clicked() {
@@ -423,6 +442,41 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         if widgets::menu_item(ui, Some(Icon::Close), "Retirer de la file d'attente").clicked() {
             c.actions.push(Action::QueueRemove(i));
         }
+    }
+}
+
+fn paths(c: &Ctx, tracks: &[usize]) -> Vec<std::path::PathBuf> {
+    tracks.iter().map(|&t| c.lib.tracks[t].path.clone()).collect()
+}
+
+/// Menu d'une sélection de plusieurs morceaux.
+fn selection_menu(ui: &mut Ui, c: &mut Ctx, targets: Vec<usize>) {
+    let n = targets.len();
+    if widgets::menu_item(ui, Some(Icon::PlayOutline), &format!("Lire les {n} morceaux")).clicked() {
+        c.actions.push(Action::Play {
+            tracks: targets.clone(),
+            start: 0,
+        });
+    }
+    if widgets::menu_item(ui, Some(Icon::ListStart), "Lire ensuite").clicked() {
+        c.actions.push(Action::PlayNext(targets.clone()));
+    }
+    if widgets::menu_item(ui, Some(Icon::ListEnd), "Ajouter à la file d'attente").clicked() {
+        c.actions.push(Action::Enqueue(targets.clone()));
+    }
+    add_to_menu(ui, c, targets.clone());
+    ui.separator();
+    if widgets::menu_item(
+        ui,
+        Some(Icon::Tag),
+        &format!("Modifier les infos des {n} morceaux…"),
+    )
+    .clicked()
+    {
+        c.actions.push(Action::EditTags(paths(c, &targets)));
+    }
+    if widgets::menu_item(ui, Some(Icon::Close), "Désélectionner").clicked() {
+        c.selected.clear();
     }
 }
 
@@ -646,6 +700,10 @@ pub fn album_menu(ui: &mut Ui, c: &mut Ctx, a: usize) {
             c.actions.push(Action::OpenFolder(dir.to_path_buf()));
         }
     }
+    ui.separator();
+    if widgets::menu_item(ui, Some(Icon::Tag), "Modifier les infos de l'album…").clicked() {
+        c.actions.push(Action::EditTags(paths(c, &tracks)));
+    }
 }
 
 /// Carte d'artiste : avatar rond (pochette de son premier album), nom, nombre d'albums.
@@ -705,6 +763,10 @@ pub fn artist_card(ui: &mut Ui, c: &mut Ctx, ar: usize, w: f32) {
             c.actions.push(Action::Enqueue(tracks.clone()));
         }
         add_to_menu(ui, c, tracks.clone());
+        ui.separator();
+        if widgets::menu_item(ui, Some(Icon::Tag), "Modifier les infos de tous ses morceaux…").clicked() {
+            c.actions.push(Action::EditTags(paths(c, &tracks)));
+        }
     });
 }
 

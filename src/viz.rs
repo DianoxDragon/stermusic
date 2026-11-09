@@ -27,6 +27,8 @@ pub struct Spectrum {
     pub energy_slow: f32,
     /// Coup de grosse caisse : monte d'un coup sur une attaque des basses, retombe en ~0,3 s.
     pub kick: f32,
+    /// Forme d'onde récente, stabilisée (−1 → 1), pour l'Oscilloscope.
+    pub wave: [f32; crate::shader::WAVE],
     /// « Temps » des animations : avance plus vite quand la musique est intense.
     pub flow: f32,
     raw_bass_avg: f32,
@@ -52,6 +54,7 @@ impl Default for Spectrum {
             bass_slow: 0.0,
             energy_slow: 0.0,
             kick: 0.0,
+            wave: [0.0; crate::shader::WAVE],
             flow: 0.0,
             raw_bass_avg: 0.0,
             last_written: 0,
@@ -77,6 +80,7 @@ impl Spectrum {
         }
         let fresh = playing && self.silent_for < 0.25 && self.samples.len() == FFT_SIZE && rate > 0;
         let mut target = [0f32; BANDS];
+        self.update_wave(fresh);
         if fresh {
             for i in 0..FFT_SIZE {
                 self.re[i] = self.samples[i] * self.window[i];
@@ -125,6 +129,29 @@ impl Spectrum {
             } else {
                 0.06
             };
+    }
+
+    /// Forme d'onde : départ calé sur un passage à zéro montant (l'onde ne « saute » pas d'une
+    /// image à l'autre), 1024 échantillons ramenés à 128 points, gain automatique, lissage.
+    fn update_wave(&mut self, fresh: bool) {
+        const SPAN: usize = 1024;
+        if !fresh || self.samples.len() < FFT_SIZE {
+            for w in &mut self.wave {
+                *w *= 0.85;
+            }
+            return;
+        }
+        let start = (1..FFT_SIZE - SPAN)
+            .find(|&i| self.samples[i - 1] < 0.0 && self.samples[i] >= 0.0)
+            .unwrap_or(0);
+        let window = &self.samples[start..start + SPAN];
+        let peak = window.iter().fold(0f32, |m, v| m.max(v.abs())).max(0.2);
+        let step = SPAN / crate::shader::WAVE;
+        for (k, w) in self.wave.iter_mut().enumerate() {
+            let chunk = &window[k * step..(k + 1) * step];
+            let v = chunk.iter().sum::<f32>() / step as f32 / peak * 0.9;
+            *w += (v - *w) * 0.5;
+        }
     }
 
     /// Niveau du spectre à la position `u` (0 → 1) d'une largeur : graves au centre, aigus aux
@@ -447,20 +474,83 @@ pub fn waves(s: &Spectrum, palette: [Color32; 3], intensity: f32) -> crate::shad
         fade_bottom: 0.12,
         left: 0.0,
         radius: 0.0,
+        mode: 0,
+        energy: s.energy_slow,
+        scale: 1.0,
+        wave: s.wave,
+        texture: None,
+        focus: [0.0; 3],
     }
 }
 
-/// Poussières de lumière qui montent doucement et scintillent (nettes, très discrètes).
-pub fn particles(painter: &egui::Painter, rect: Rect, s: &Spectrum, color: Color32, intensity: f32) {
+/// Poussières de lumière qui montent doucement, scintillent et s'illuminent sur les coups de
+/// grosse caisse (nettes, discrètes).
+pub fn particles(
+    painter: &egui::Painter,
+    rect: Rect,
+    s: &Spectrum,
+    color: Color32,
+    intensity: f32,
+    count: u32,
+) {
     let t = s.flow;
-    for i in 0..24u32 {
-        let x = rect.left() + (0.08 + 0.84 * hash(i)) * rect.width();
-        let speed = 0.025 + hash(i + 100) * 0.04;
+    let bright = crate::theme::mix(color, Color32::WHITE, 0.5);
+    for i in 0..count {
+        let x = rect.left() + (0.03 + 0.94 * hash(i)) * rect.width();
+        let speed = 0.02 + hash(i + 100) * 0.05;
+        // Légère dérive latérale, comme des poussières en suspension.
+        let sway = (t * (0.3 + hash(i + 500) * 0.4) + i as f32).sin() * 6.0;
         let y_norm = (hash(i + 200) + t * speed).fract();
         let y = rect.bottom() - y_norm * rect.height();
-        let twinkle = 0.5 + 0.5 * (t * (1.2 + hash(i + 300) * 2.0) + i as f32).sin();
+        let twinkle = 0.45 + 0.55 * (t * (1.2 + hash(i + 300) * 2.5) + i as f32).sin();
         let fade = (1.0 - y_norm).min(y_norm * 3.0).clamp(0.0, 1.0);
-        let a = (0.10 + 0.30 * s.high) * twinkle * fade * intensity;
-        painter.circle_filled(pos2(x, y), 0.8 + hash(i + 400), with_alpha(color, a));
+        let a = (0.10 + 0.30 * s.high + 0.45 * s.kick) * twinkle * fade * intensity;
+        let r = 0.7 + hash(i + 400) * 1.6 + 0.6 * s.kick * hash(i + 600);
+        let c = if hash(i + 700) > 0.7 { bright } else { color };
+        painter.circle_filled(pos2(x + sway, y), r, with_alpha(c, a));
+    }
+}
+
+/// Visualiseur automatique, comme Alchemy dans le lecteur Windows Media : un nouveau, au hasard,
+/// à chaque morceau et toutes les 45 secondes, en fondu enchaîné de 2 secondes.
+#[derive(Default)]
+pub struct AutoViz {
+    current: usize,
+    previous: Option<usize>,
+    since: f64,
+    track: Option<usize>,
+    started: bool,
+}
+
+impl AutoViz {
+    /// Le visualiseur à afficher (parmi `allowed`), et l'ancien avec la progression du fondu
+    /// (0 → 1) s'il s'efface.
+    pub fn pick(
+        &mut self,
+        now: f64,
+        track: Option<usize>,
+        allowed: &[usize],
+    ) -> (usize, Option<(usize, f32)>) {
+        if allowed.is_empty() {
+            return (0, None);
+        }
+        if !self.started {
+            self.started = true;
+            self.current = allowed[fastrand::usize(..allowed.len())];
+            self.since = now - 10.0; // pas de fondu au premier affichage
+            self.track = track;
+        }
+        let excluded = !allowed.contains(&self.current);
+        if excluded || track != self.track || now - self.since > 45.0 {
+            self.track = track;
+            self.previous = Some(self.current);
+            // Jamais deux fois le même d'affilée (s'il y a le choix).
+            let others: Vec<usize> = allowed.iter().copied().filter(|&s| s != self.current).collect();
+            let pool = if others.is_empty() { allowed } else { &others[..] };
+            self.current = pool[fastrand::usize(..pool.len())];
+            self.since = now;
+        }
+        let t = ((now - self.since) / 2.0).clamp(0.0, 1.0) as f32;
+        (self.current, self.previous.filter(|_| t < 1.0).map(|p| (p, t)))
     }
 }

@@ -635,3 +635,53 @@ pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max:
         .on_hover_text(format!("{:+.1} dB (double-clic : 0)", value));
     changed
 }
+
+/// Champ de saisie au style des autres contrôles (verre, soulignement aux couleurs du thème).
+pub fn text_field(
+    ui: &mut Ui,
+    id: egui::Id,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    rows: usize,
+) -> Response {
+    let height = if rows > 1 { 14.0 + 19.0 * rows as f32 } else { 32.0 };
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let edit = if rows > 1 {
+        egui::TextEdit::multiline(text).desired_rows(rows)
+    } else {
+        egui::TextEdit::singleline(text).vertical_align(egui::Align::Center)
+    };
+    let response = ui.put(
+        rect,
+        edit.id(id)
+            .hint_text(egui::RichText::new(hint).color(theme::TEXT_3).italics())
+            .frame(false)
+            .margin(vec2(10.0, 7.0)),
+    );
+    let t = anim::toggle(ui.ctx(), id.with("focus"), response.has_focus(), anim::FAST);
+    let h = hover_t(ui, id.with("hover"), response.hovered());
+    ui.painter().set(
+        bg,
+        egui::epaint::RectShape::new(
+            rect,
+            CornerRadius::same(6),
+            theme::mix(
+                theme::white(0x0D + (0x05 as f32 * h) as u8),
+                theme::white(0x06),
+                t,
+            ),
+            Stroke::new(1.0_f32, theme::stroke()),
+            StrokeKind::Inside,
+        ),
+    );
+    if t > 0.0 {
+        let line = Rect::from_min_max(
+            pos2(rect.left() + 1.0, rect.bottom() - 2.0),
+            pos2(rect.right() - 1.0, rect.bottom()),
+        );
+        theme::brand_fill(ui.painter(), line, 1, t);
+    }
+    response
+}

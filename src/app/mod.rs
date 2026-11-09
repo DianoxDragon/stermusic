@@ -2,7 +2,10 @@
 
 mod chrome;
 mod lists;
+mod mb_import;
 mod nowbar;
+mod tag_editor;
+mod tag_tools;
 mod views;
 
 use std::collections::{HashMap, HashSet};
@@ -38,6 +41,8 @@ pub enum Page {
     Queue,
     Playlists,
     Settings,
+    /// Éditeur de tags.
+    Tags,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -131,6 +136,16 @@ pub struct Settings {
     pub leveling: bool,
     /// Visualiseur (animations qui suivent la musique).
     pub visualizer: bool,
+    /// Visualiseur de « En cours de lecture » et du bandeau de l'accueil (voir `shader::STYLES`).
+    pub viz_style: usize,
+    pub banner_style: usize,
+    /// Visualiseurs exclus du mode automatique (par leur nom).
+    pub auto_excluded: Vec<String>,
+    /// Éditeur de tags : ID3v2.3 plutôt que 2.4, et date de modification conservée.
+    pub tag_id3v23: bool,
+    pub tag_keep_mtime: bool,
+    /// Éditeur de tags : largeur des colonnes, derniers motifs de renommage.
+    pub tag_prefs: tag_editor::Prefs,
     pub sidebar_collapsed: bool,
     pub resume: bool,
     pub page: Page,
@@ -168,6 +183,12 @@ impl Default for Settings {
             crossfade_secs: 5.0,
             leveling: false,
             visualizer: true,
+            viz_style: 0,
+            banner_style: 1,
+            auto_excluded: Vec::new(),
+            tag_id3v23: false,
+            tag_keep_mtime: true,
+            tag_prefs: Default::default(),
             sidebar_collapsed: false,
             resume: true,
             page: Page::Home,
@@ -230,6 +251,71 @@ pub enum Action {
     /// Ajoute SterMusic aux fenêtres floutées par l'effet Better Blur de KWin.
     EnableKwinBlur,
     FocusSearch,
+    /// Ouvre l'éditeur de tags sur ces fichiers (de la bibliothèque ou non).
+    EditTags(Vec<PathBuf>),
+    /// Choisit des fichiers à éditer, hors bibliothèque compris.
+    PickTagFiles,
+}
+
+/// Morceaux sélectionnés dans une liste (Ctrl+clic, Maj+clic).
+#[derive(Default)]
+pub struct Selection {
+    pub items: Vec<usize>,
+    /// Point de départ d'une sélection Maj+clic.
+    pub anchor: Option<usize>,
+}
+
+impl Selection {
+    pub fn contains(&self, idx: usize) -> bool {
+        self.items.contains(&idx)
+    }
+
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.anchor = None;
+    }
+
+    /// Clic sur la ligne `i` de `list`, selon les touches enfoncées.
+    pub fn click(&mut self, list: &[usize], i: usize, mods: egui::Modifiers) {
+        let idx = list[i];
+        if mods.shift {
+            let from = self
+                .anchor
+                .and_then(|a| list.iter().position(|&t| t == a))
+                .unwrap_or(i);
+            let (a, b) = (from.min(i), from.max(i));
+            if !mods.command {
+                self.items.clear();
+            }
+            for &t in &list[a..=b] {
+                if !self.items.contains(&t) {
+                    self.items.push(t);
+                }
+            }
+        } else if mods.command {
+            match self.items.iter().position(|&t| t == idx) {
+                Some(k) => {
+                    self.items.remove(k);
+                }
+                None => self.items.push(idx),
+            }
+            self.anchor = Some(idx);
+        } else {
+            self.items = vec![idx];
+            self.anchor = Some(idx);
+        }
+    }
+
+    /// Les morceaux visés par un menu ouvert sur `idx` : la sélection si `idx` en fait partie.
+    pub fn targets(&self, idx: usize) -> Vec<usize> {
+        if self.items.len() > 1 && self.contains(idx) {
+            let mut v = self.items.clone();
+            v.sort_unstable();
+            v
+        } else {
+            vec![idx]
+        }
+    }
 }
 
 pub enum Dialog {
@@ -244,7 +330,7 @@ pub struct Ctx<'a> {
     pub covers: &'a mut Covers,
     pub actions: &'a mut Vec<Action>,
     pub settings: &'a Settings,
-    pub selected: &'a mut Option<usize>,
+    pub selected: &'a mut Selection,
     pub current: Option<usize>,
     pub playing: bool,
     /// Un morceau est chargé (en lecture ou en pause).
@@ -278,6 +364,8 @@ pub struct SterMusic {
     detail_filter: String,
     /// Recherche dans la file d'attente.
     queue_filter: String,
+    /// Filtre de la bibliothèque (morceaux, albums ou artistes).
+    lib_filter: String,
     search_results: (Vec<usize>, Vec<usize>, Vec<usize>),
     focus_search: bool,
     songs_sorted: Option<(SongSort, Vec<usize>)>,
@@ -287,8 +375,13 @@ pub struct SterMusic {
     restored: bool,
 
     actions: Vec<Action>,
-    selected: Option<usize>,
+    selected: Selection,
     dialog: Option<Dialog>,
+    tag_editor: tag_editor::TagEditor,
+    /// Fichiers à éditer envoyés par une autre instance (`stermusic --tags`, menu de Dolphin).
+    ipc: crate::ipc::Ipc,
+    /// Fichiers glissés sur la fenêtre sous Wayland.
+    dnd: crate::dnd::Dnd,
     toast: Option<(String, f64)>,
     queue_drag: Option<usize>,
 
@@ -306,6 +399,10 @@ pub struct SterMusic {
     tap: crate::dsp::SharedTap,
     spectrum: crate::viz::Spectrum,
     aurora: crate::viz::Aurora,
+    /// Visualiseurs automatiques, et nom affiché quand le visualiseur change.
+    auto_np: crate::viz::AutoViz,
+    auto_banner: crate::viz::AutoViz,
+    viz_label: Option<(usize, f64)>,
 }
 
 /// Taille du mini lecteur.
@@ -324,7 +421,7 @@ fn perceptual(v: f32) -> f32 {
 }
 
 impl SterMusic {
-    pub fn new(cc: &eframe::CreationContext<'_>, cli_dir: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, cli_dir: Option<PathBuf>, tag_files: Vec<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let mut settings: Settings = cc
             .storage
@@ -390,6 +487,7 @@ impl SterMusic {
             search: String::new(),
             detail_filter: String::new(),
             queue_filter: String::new(),
+            lib_filter: String::new(),
             search_results: Default::default(),
             focus_search: false,
             songs_sorted: None,
@@ -397,8 +495,11 @@ impl SterMusic {
             scan_count: 0,
             restored: false,
             actions: Vec::new(),
-            selected: None,
+            selected: Selection::default(),
             dialog: None,
+            tag_editor: tag_editor::TagEditor::new(settings.tag_prefs.clone().sanitized()),
+            ipc: crate::ipc::Ipc::new(&cc.egui_ctx),
+            dnd: crate::dnd::Dnd::new(cc),
             toast,
             queue_drag: None,
             mini: false,
@@ -411,10 +512,16 @@ impl SterMusic {
             tap,
             spectrum: crate::viz::Spectrum::default(),
             aurora: crate::viz::Aurora::default(),
+            auto_np: crate::viz::AutoViz::default(),
+            auto_banner: crate::viz::AutoViz::default(),
+            viz_label: None,
             settings,
         };
         app.restore_queue();
         app.start_scan();
+        if !tag_files.is_empty() {
+            app.open_tag_editor(&cc.egui_ctx, tag_files);
+        }
         app
     }
 
@@ -449,13 +556,6 @@ impl SterMusic {
         let Some(tracks) = finished else { return };
         self.scan_rx = None;
 
-        // On garde la file d'attente et le morceau en cours à travers le rescan.
-        let queue_paths: Vec<PathBuf> = self
-            .queue
-            .iter()
-            .map(|&i| self.lib.tracks[i].path.clone())
-            .collect();
-        let current_path = self.current().map(|i| self.lib.tracks[i].path.clone());
         // Le scan ne rend pas les morceaux dans l'ordre de la bibliothèque : on compare par chemin.
         let changed = tracks.len() != self.lib.tracks.len()
             || tracks.iter().any(|t| {
@@ -467,8 +567,74 @@ impl SterMusic {
             return;
         }
         let count = tracks.len();
+        self.set_library(tracks);
+        self.covers.clear();
+        if !self.restored {
+            self.restore_queue();
+        }
+        self.toast(format!(
+            "Bibliothèque à jour : {}",
+            library::plural(count, "morceau", "morceaux")
+        ));
+    }
+
+    /// Remplace la bibliothèque en gardant la file d'attente, le morceau en cours et la page
+    /// ouverte (un album dont on vient de changer le titre reste affiché sous son nouveau nom).
+    fn set_library(&mut self, tracks: Vec<library::Track>) {
+        let paths = |lib: &Library, v: &[usize]| -> Vec<PathBuf> {
+            v.iter().map(|&i| lib.tracks[i].path.clone()).collect()
+        };
+        let queue_paths = paths(&self.lib, &self.queue);
+        let unshuffled = self.unshuffled.as_ref().map(|u| paths(&self.lib, u));
+        let current_path = self.current().map(|i| self.lib.tracks[i].path.clone());
+        // Album ou artiste : repéré par l'un de ses morceaux.
+        let anchor = |lib: &Library, v: &View| -> Option<(bool, PathBuf)> {
+            match *v {
+                View::Album(a) => lib
+                    .albums
+                    .get(a)
+                    .map(|al| (true, lib.tracks[al.tracks[0]].path.clone())),
+                View::Artist(a) => lib
+                    .artists
+                    .get(a)
+                    .and_then(|ar| ar.tracks.first())
+                    .map(|&t| (false, lib.tracks[t].path.clone())),
+                _ => None,
+            }
+        };
+        let view_anchor = anchor(&self.lib, &self.view);
+        let history: Vec<(View, Option<(bool, PathBuf)>)> = self
+            .history
+            .iter()
+            .map(|v| (v.clone(), anchor(&self.lib, v)))
+            .collect();
+
         self.lib = Library::new(tracks);
-        self.queue = queue_paths.iter().filter_map(|p| self.lib.find(p)).collect();
+        let lib = &self.lib;
+        let remap = |v: View, anchor: Option<(bool, PathBuf)>| -> Option<View> {
+            match anchor {
+                None => Some(v),
+                Some((album, path)) => lib.find(&path).map(|t| {
+                    let a = lib.track_album[t];
+                    if album {
+                        View::Album(a)
+                    } else {
+                        View::Artist(lib.album_artist[a])
+                    }
+                }),
+            }
+        };
+        self.history = history.into_iter().filter_map(|(v, a)| remap(v, a)).collect();
+        match remap(self.view.clone(), view_anchor) {
+            Some(v) => self.view = v,
+            None => {
+                self.view = View::Page(Page::Library);
+                self.history.clear();
+            }
+        }
+        let find = |v: &[PathBuf]| -> Vec<usize> { v.iter().filter_map(|p| self.lib.find(p)).collect() };
+        self.queue = find(&queue_paths);
+        self.unshuffled = unshuffled.map(|u| find(&u));
         self.queue_pos = current_path
             .and_then(|p| self.lib.find(&p))
             .and_then(|c| self.queue.iter().position(|&i| i == c));
@@ -477,22 +643,9 @@ impl SterMusic {
                 p.stop();
             }
         }
-        self.unshuffled = None;
         self.songs_sorted = None;
-        self.selected = None;
-        self.covers.clear();
-        if matches!(self.view, View::Album(_) | View::Artist(_)) {
-            self.view = View::Page(Page::Library);
-            self.history.clear();
-        }
+        self.selected.clear();
         self.refresh_search();
-        if !self.restored {
-            self.restore_queue();
-        }
-        self.toast(format!(
-            "Bibliothèque à jour : {}",
-            library::plural(count, "morceau", "morceaux")
-        ));
     }
 
     /// Reprend la file d'attente et la position du dernier lancement (en pause).
@@ -623,6 +776,20 @@ impl SterMusic {
         self.spectrum.update(&self.tap, dt, playing);
         if playing || self.spectrum.alive() {
             ctx.request_repaint();
+        }
+    }
+
+    /// Visualiseurs du tirage automatique (ceux que l'utilisateur n'a pas exclus).
+    pub(super) fn auto_allowed(&self) -> Vec<usize> {
+        let all = crate::shader::STYLES.iter().enumerate();
+        let allowed: Vec<usize> = all
+            .filter(|(_, (n, _))| !self.settings.auto_excluded.iter().any(|e| e == n))
+            .map(|(i, _)| i)
+            .collect();
+        if allowed.is_empty() {
+            (0..crate::shader::STYLES.len()).collect()
+        } else {
+            allowed
         }
     }
 
@@ -785,7 +952,7 @@ impl SterMusic {
             self.search.clear();
         }
         self.view = view;
-        self.selected = None;
+        self.selected.clear();
         self.detail_filter.clear();
     }
 
@@ -1010,6 +1177,16 @@ impl SterMusic {
                 self.unshuffled = None;
                 if let Some(p) = &mut self.player {
                     p.stop();
+                }
+            }
+            Action::EditTags(paths) => self.open_tag_editor(ctx, paths),
+            Action::PickTagFiles => {
+                if let Some(files) = rfd::FileDialog::new()
+                    .set_title("Fichiers dont modifier les tags")
+                    .add_filter("Musique", crate::library::AUDIO_EXTENSIONS)
+                    .pick_files()
+                {
+                    self.open_tag_editor(ctx, files);
                 }
             }
             Action::AddFolder => {
@@ -1258,10 +1435,8 @@ impl SterMusic {
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
-        for path in dropped {
-            if path.is_dir() {
-                self.actions.push(Action::UseFolder(path));
-            }
+        if !dropped.is_empty() {
+            self.handle_drop(ctx, dropped);
         }
         let cmd = egui::Modifiers::COMMAND;
         let none = egui::Modifiers::NONE;
@@ -1271,7 +1446,7 @@ impl SterMusic {
         if ctx.input_mut(|i| i.consume_key(cmd, Key::M)) {
             self.actions.push(Action::ToggleMini);
         }
-        if ctx.wants_keyboard_input() || self.dialog.is_some() {
+        if ctx.wants_keyboard_input() || self.dialog.is_some() || self.tag_editor.modal_open() {
             return;
         }
         let keys = [
@@ -1356,6 +1531,11 @@ impl SterMusic {
 impl eframe::App for SterMusic {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_scan();
+        self.poll_tag_editor(ctx);
+        if let Some(files) = self.ipc.poll() {
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+            self.actions.push(Action::EditTags(files));
+        }
         self.covers.poll(ctx);
         self.kwin.poll();
         self.apply_pending_size(ctx);
@@ -1423,11 +1603,16 @@ impl eframe::App for SterMusic {
         }
     }
 
-    /// Fenêtre transparente : seul le fond arrondi peint par SterMusic est opaque.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.kwin.stop();
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.dnd.feed(raw_input);
     }
 
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.kwin.stop();
+        self.dnd.stop();
+    }
+
+    /// Fenêtre transparente : seul le fond arrondi peint par SterMusic est opaque.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
     }
@@ -1435,6 +1620,7 @@ impl eframe::App for SterMusic {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.queue = self.paths(&self.queue);
         self.settings.queue_pos = self.queue_pos;
+        self.settings.tag_prefs = self.tag_editor.prefs.clone();
         self.settings.position = self
             .player
             .as_ref()

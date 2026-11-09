@@ -178,6 +178,14 @@ impl Player {
         self.stream.is_some() && !self.is_playing()
     }
 
+    /// Le fichier chargé a été renommé : une reprise après une pause le rouvrira sous son
+    /// nouveau nom.
+    pub fn renamed(&mut self, old: &Path, new: &Path) {
+        if self.path.as_deref() == Some(old) {
+            self.path = Some(new.to_path_buf());
+        }
+    }
+
     pub fn stop(&mut self) {
         self.finish_fade();
         if let Some(sink) = self.sink.take() {

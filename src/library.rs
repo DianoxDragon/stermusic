@@ -101,6 +101,36 @@ fn lower(s: &str) -> String {
     s.to_lowercase()
 }
 
+/// Minuscules sans accents, pour chercher « pokemon » et trouver « Pokémon ».
+pub fn fold(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars().flat_map(char::to_lowercase) {
+        match c {
+            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' => out.push('a'),
+            'ç' | 'ć' | 'č' => out.push('c'),
+            'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ę' | 'ě' => out.push('e'),
+            'ì' | 'í' | 'î' | 'ï' | 'ī' => out.push('i'),
+            'ñ' | 'ń' | 'ň' => out.push('n'),
+            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' => out.push('o'),
+            'ù' | 'ú' | 'û' | 'ü' | 'ū' | 'ů' => out.push('u'),
+            'ý' | 'ÿ' => out.push('y'),
+            'š' | 'ś' => out.push('s'),
+            'ž' | 'ź' | 'ż' => out.push('z'),
+            'ł' => out.push('l'),
+            'ß' => out.push_str("ss"),
+            'œ' => out.push_str("oe"),
+            'æ' => out.push_str("ae"),
+            '’' | '‘' => out.push('\''),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn words(query: &str) -> Vec<String> {
+    fold(query).split_whitespace().map(str::to_owned).collect()
+}
+
 impl Library {
     pub fn new(mut tracks: Vec<Track>) -> Self {
         tracks.sort_by(|a, b| {
@@ -206,7 +236,7 @@ impl Library {
         let search_text = tracks
             .iter()
             .map(|t| {
-                lower(&format!(
+                fold(&format!(
                     "{} {} {} {}",
                     t.title, t.artist, t.album, t.album_artist
                 ))
@@ -233,13 +263,51 @@ impl Library {
         self.by_path.get(path).copied()
     }
 
+    /// Le fichier du morceau `i` a été renommé (ses tags, donc sa place, ne changent pas).
+    pub fn rename(&mut self, i: usize, path: PathBuf) {
+        self.by_path.remove(&self.tracks[i].path);
+        self.by_path.insert(path.clone(), i);
+        self.tracks[i].path = path;
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tracks.is_empty()
     }
 
+    /// Filtre de la bibliothèque : les éléments de `list` dont le texte contient tous les mots.
+    pub fn filter_tracks(&self, list: &[usize], query: &str) -> Vec<usize> {
+        let words = words(query);
+        list.iter()
+            .copied()
+            .filter(|&i| words.iter().all(|w| self.search_text[i].contains(w.as_str())))
+            .collect()
+    }
+
+    pub fn filter_albums(&self, query: &str) -> Vec<usize> {
+        let words = words(query);
+        (0..self.albums.len())
+            .filter(|&i| {
+                let a = &self.albums[i];
+                let year = a.year.map(|y| y.to_string()).unwrap_or_default();
+                let text = fold(&format!("{} {} {} {year}", a.title, a.artist, a.genre));
+                words.iter().all(|w| text.contains(w.as_str()))
+            })
+            .collect()
+    }
+
+    pub fn filter_artists(&self, query: &str) -> Vec<usize> {
+        let words = words(query);
+        (0..self.artists.len())
+            .filter(|&i| {
+                let text = fold(&self.artists[i].name);
+                words.iter().all(|w| text.contains(w.as_str()))
+            })
+            .collect()
+    }
+
     /// Morceaux, albums et artistes qui contiennent tous les mots de la recherche.
     pub fn search(&self, query: &str) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
-        let words: Vec<String> = lower(query).split_whitespace().map(str::to_owned).collect();
+        let words = words(query);
         if words.is_empty() {
             return Default::default();
         }
@@ -249,14 +317,14 @@ impl Library {
             .collect();
         let albums = (0..self.albums.len())
             .filter(|&i| {
-                matches(&lower(&format!(
+                matches(&fold(&format!(
                     "{} {}",
                     self.albums[i].title, self.albums[i].artist
                 )))
             })
             .collect();
         let artists = (0..self.artists.len())
-            .filter(|&i| matches(&lower(&self.artists[i].name)))
+            .filter(|&i| matches(&fold(&self.artists[i].name)))
             .collect();
         (tracks, albums, artists)
     }
@@ -384,7 +452,7 @@ pub fn load_cache() -> Vec<Track> {
         .unwrap_or_default()
 }
 
-fn save_cache(tracks: &[Track]) {
+pub fn save_cache(tracks: &[Track]) {
     let _ = std::fs::create_dir_all(data_dir());
     if let Ok(json) = serde_json::to_vec(tracks) {
         let tmp = cache_file().with_extension("json.tmp");

@@ -22,7 +22,7 @@ struct Header<'a> {
     info: &'a str,
 }
 
-fn heading(ui: &mut egui::Ui, text: &str) {
+pub(super) fn heading(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).font(theme::semibold(28.0)).color(theme::TEXT));
 }
 
@@ -31,6 +31,61 @@ fn meta(ui: &mut egui::Ui, text: &str) {
 }
 
 impl SterMusic {
+    /// Un visualiseur dans « En cours de lecture » : toute la page (« plein écran »), ou une bande
+    /// sous le contenu avec un long fondu vers le haut.
+    fn paint_np_style(
+        &self,
+        ui: &egui::Ui,
+        area: Rect,
+        palette: [Color32; 3],
+        intensity: f32,
+        style: usize,
+        cover: (Rect, Option<egui::TextureId>),
+    ) {
+        let fill = crate::shader::STYLES[style].1;
+        let mut w = crate::viz::waves(&self.spectrum, palette, intensity);
+        w.mode = style as i32;
+        let rect = if fill {
+            w.intensity *= 0.6;
+            w.fade_top = 0.08;
+            w.fade_bottom = 0.08;
+            area
+        } else {
+            w.base = if style == 3 { 0.88 } else { 0.84 };
+            w.amp = if style == 0 { 0.42 } else { 0.8 };
+            w.fade_top = 0.55;
+            w.fade_bottom = 0.10;
+            Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.62), area.max)
+        };
+        set_cover(&mut w, rect, cover);
+        crate::shader::paint(ui.painter(), rect, w);
+    }
+
+    /// Un visualiseur dans le bandeau de l'accueil : discret, zoomé (motifs larges et calmes),
+    /// découpé aux coins arrondis.
+    fn paint_banner_style(
+        &self,
+        ui: &egui::Ui,
+        rect: Rect,
+        palette: [Color32; 3],
+        alpha: f32,
+        style: usize,
+        cover: (Rect, Option<egui::TextureId>),
+    ) {
+        let fill = crate::shader::STYLES[style].1;
+        let mut w = crate::viz::waves(&self.spectrum, palette, if fill { 0.5 } else { 0.7 } * alpha);
+        w.mode = style as i32;
+        w.scale = 3.0;
+        w.base = 0.74;
+        w.amp = 0.5;
+        w.fade_top = if fill { 0.04 } else { 0.2 };
+        w.fade_bottom = if fill { 0.04 } else { 0.12 };
+        w.left = if fill { 0.0 } else { 1.0 };
+        w.radius = 14.0;
+        set_cover(&mut w, rect, cover);
+        crate::shader::paint(ui.painter(), rect, w);
+    }
+
     /// Égaliseur graphique 10 bandes : interrupteur, préréglages, pré-amplification et curseurs.
     pub(super) fn equalizer_panel(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
@@ -180,15 +235,15 @@ impl SterMusic {
 
     fn no_match(ui: &mut egui::Ui) {
         ui.add_space(12.0);
-        ui.label(RichText::new("Aucun titre ne correspond à la recherche.").color(theme::TEXT_3));
+        ui.label(RichText::new("Rien ne correspond à la recherche.").color(theme::TEXT_3));
     }
 
     fn matches_filter(&self, t: usize) -> bool {
-        let q = self.detail_filter.trim().to_lowercase();
+        let q = crate::library::fold(self.detail_filter.trim());
         q.is_empty() || {
             let tr = &self.lib.tracks[t];
-            q.split_whitespace()
-                .all(|w| tr.title.to_lowercase().contains(w) || tr.artist.to_lowercase().contains(w))
+            let text = crate::library::fold(&format!("{} {}", tr.title, tr.artist));
+            q.split_whitespace().all(|w| text.contains(w))
         }
     }
 
@@ -223,6 +278,7 @@ impl SterMusic {
                 View::Page(Page::Queue) => self.queue_page(ui),
                 View::Page(Page::Playlists) => self.playlists_page(ui),
                 View::Page(Page::Settings) => self.settings_page(ui),
+                View::Page(Page::Tags) => self.tags_page(ui),
                 View::Album(a) => self.album_page(ui, a),
                 View::Artist(a) => self.artist_page(ui, a),
                 View::Playlist(id) => self.playlist_page(ui, id),
@@ -377,15 +433,43 @@ impl SterMusic {
         if self.settings.visualizer && self.current().is_some() {
             let palette = crate::viz::harmonize(self.viz_palette());
             if crate::shader::available() {
-                // De vraies vagues, découpées aux coins arrondis du bandeau, plus discrètes côté texte.
-                let mut w = crate::viz::waves(&self.spectrum, palette, 0.75);
-                w.base = 0.74;
-                w.amp = 0.5;
-                w.fade_top = 0.2;
-                w.fade_bottom = 0.12;
-                w.left = 1.0;
-                w.radius = 14.0;
-                crate::shader::paint(ui.painter(), rect, w);
+                // Visualiseur du bandeau (Caustiques par défaut : des reflets d'eau sur toute la
+                // largeur), discret et découpé aux coins arrondis.
+                let setting = self.settings.banner_style.min(crate::shader::AUTO);
+                let (style, fading) = if setting == crate::shader::AUTO {
+                    let now = ui.input(|i| i.time);
+                    let allowed = self.auto_allowed();
+                    self.auto_banner.pick(now, self.current(), &allowed)
+                } else {
+                    (setting, None)
+                };
+                let side = rect.height() - 48.0;
+                let banner_cover = Rect::from_min_size(rect.min + vec2(24.0, 24.0), vec2(side, side));
+                let blur = self.current().and_then(|i| {
+                    let path = self.lib.tracks[i].path.clone();
+                    self.covers
+                        .large(&path)
+                        .and_then(|l| l.blurred.as_ref().map(|t| t.id()))
+                });
+                if let Some((old, t)) = fading {
+                    self.paint_banner_style(ui, rect, palette, 1.0 - t, old, (banner_cover, blur));
+                }
+                self.paint_banner_style(
+                    ui,
+                    rect,
+                    palette,
+                    fading.map(|(_, t)| t).unwrap_or(1.0),
+                    style,
+                    (banner_cover, blur),
+                );
+                crate::viz::particles(
+                    ui.painter(),
+                    rect.shrink(6.0),
+                    &self.spectrum,
+                    palette[1],
+                    0.6,
+                    18,
+                );
             } else {
                 crate::viz::drifting_lights(ui.painter(), rect, &self.spectrum, palette);
             }
@@ -538,9 +622,9 @@ impl SterMusic {
                         target = Some(r);
                     }
                 }
-                if self.settings.lib_tab == LibTab::Songs {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(12.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.add_space(12.0);
+                    if self.settings.lib_tab == LibTab::Songs {
                         let sorts = [
                             (SongSort::Title, "Titre"),
                             (SongSort::Artist, "Artiste"),
@@ -561,8 +645,16 @@ impl SterMusic {
                                 }
                             });
                         ui.label(RichText::new("Trier par").color(theme::TEXT_3));
-                    });
-                }
+                        ui.add_space(12.0);
+                    }
+                    let hint = match self.settings.lib_tab {
+                        LibTab::Songs => "Filtrer les morceaux",
+                        LibTab::Albums => "Filtrer les albums",
+                        LibTab::Artists => "Filtrer les artistes",
+                    };
+                    let w = (ui.available_width() - 8.0).clamp(140.0, 260.0);
+                    widgets::search_field(ui, egui::Id::new("lib_filter"), &mut self.lib_filter, hint, w);
+                });
             })
             .response
             .rect;
@@ -586,27 +678,54 @@ impl SterMusic {
         }
         ui.add_space(14.0);
 
+        let query = self.lib_filter.trim().to_owned();
         match self.settings.lib_tab {
             LibTab::Songs => {
                 let songs = self.sorted_songs().to_vec();
+                let songs = if query.is_empty() {
+                    songs
+                } else {
+                    self.lib.filter_tracks(&songs, &query)
+                };
                 let opts = ListOpts {
                     cover: true,
                     album: true,
                     ..Default::default()
                 };
                 lists::header(ui, &opts);
+                if songs.is_empty() {
+                    Self::no_match(ui);
+                }
                 let mut c = self.view_ctx();
                 lists::track_list(ui, &mut c, "songs", &songs, &opts);
             }
             LibTab::Albums => {
-                let n = self.lib.albums.len();
+                let albums: Vec<usize> = if query.is_empty() {
+                    (0..self.lib.albums.len()).collect()
+                } else {
+                    self.lib.filter_albums(&query)
+                };
+                if albums.is_empty() {
+                    Self::no_match(ui);
+                }
                 let mut c = self.view_ctx();
-                lists::virtual_grid(ui, "albums", n, |ui, k, w| lists::album_card(ui, &mut c, k, w));
+                lists::virtual_grid(ui, "albums", albums.len(), |ui, k, w| {
+                    lists::album_card(ui, &mut c, albums[k], w)
+                });
             }
             LibTab::Artists => {
-                let n = self.lib.artists.len();
+                let artists: Vec<usize> = if query.is_empty() {
+                    (0..self.lib.artists.len()).collect()
+                } else {
+                    self.lib.filter_artists(&query)
+                };
+                if artists.is_empty() {
+                    Self::no_match(ui);
+                }
                 let mut c = self.view_ctx();
-                lists::virtual_grid(ui, "artists", n, |ui, k, w| lists::artist_card(ui, &mut c, k, w));
+                lists::virtual_grid(ui, "artists", artists.len(), |ui, k, w| {
+                    lists::artist_card(ui, &mut c, artists[k], w)
+                });
             }
         }
     }
@@ -741,6 +860,12 @@ impl SterMusic {
                         if widgets::secondary_button(ui, Some(Icon::Mic), "Artiste").clicked() {
                             s.actions.push(Action::Go(View::Artist(artist)));
                         }
+                        if widgets::icon_button(ui, Icon::Tag, "Modifier les infos de l'album", 34.0, 16.0)
+                            .clicked()
+                        {
+                            let paths = tracks.iter().map(|&t| s.lib.tracks[t].path.clone()).collect();
+                            s.actions.push(Action::EditTags(paths));
+                        }
                         if tracks.len() >= 8 {
                             s.detail_search_field(ui, "Rechercher un titre");
                         }
@@ -813,14 +938,14 @@ impl SterMusic {
                 );
                 // La recherche garde les albums dont le titre correspond, ou qui contiennent un titre trouvé.
                 let shown = self.filtered(&artist.tracks);
-                let query = self.detail_filter.trim().to_lowercase();
+                let query = crate::library::fold(self.detail_filter.trim());
                 let albums: Vec<usize> = artist
                     .albums
                     .iter()
                     .copied()
                     .filter(|&a| {
                         query.is_empty()
-                            || self.lib.albums[a].title.to_lowercase().contains(&query)
+                            || crate::library::fold(&self.lib.albums[a].title).contains(&query)
                             || self.lib.albums[a].tracks.iter().any(|t| shown.contains(t))
                     })
                     .collect();
@@ -890,14 +1015,14 @@ impl SterMusic {
         }
 
         // Positions affichées : toute la file, ou celles qui correspondent à la recherche.
-        let query = self.queue_filter.trim().to_lowercase();
+        let query = crate::library::fold(self.queue_filter.trim());
         let positions: Vec<usize> = if query.is_empty() {
             (0..self.queue.len()).collect()
         } else {
             (0..self.queue.len())
                 .filter(|&p| {
                     let t = &self.lib.tracks[self.queue[p]];
-                    let text = format!("{} {} {}", t.title, t.artist, t.album).to_lowercase();
+                    let text = crate::library::fold(&format!("{} {} {}", t.title, t.artist, t.album));
                     query.split_whitespace().all(|w| text.contains(w))
                 })
                 .collect()
@@ -1418,17 +1543,72 @@ impl SterMusic {
             if crate::shader::available() {
                 // Vagues par la carte graphique : une grande zone qui s'estompe longuement vers le
                 // haut (derrière le contenu), les vagues restant sous la pochette.
-                let band =
-                    Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.62), area.max);
-                let mut w = crate::viz::waves(&self.spectrum, palette, intensity);
-                // Vagues sous le contenu (la liste « À suivre » reste lisible).
-                w.base = 0.84;
-                w.amp = 0.42;
-                w.fade_top = 0.55;
-                w.fade_bottom = 0.10;
-                crate::shader::paint(ui.painter(), band, w);
-                let low = Rect::from_min_max(pos2(band.left(), band.top() + band.height() * 0.45), band.max);
-                crate::viz::particles(ui.painter(), low, &self.spectrum, palette[1], intensity);
+                // Visualiseur choisi, ou automatique (au hasard, en fondu enchaîné).
+                let setting = self.settings.viz_style.min(crate::shader::AUTO);
+                let now = ui.input(|i| i.time);
+                let (style, fading) = if setting == crate::shader::AUTO {
+                    let allowed = self.auto_allowed();
+                    self.auto_np.pick(now, self.current(), &allowed)
+                } else {
+                    (setting, None)
+                };
+                let blur = self
+                    .covers
+                    .large(&t.path)
+                    .and_then(|l| l.blurred.as_ref().map(|x| x.id()));
+                if let Some((old, f)) = fading {
+                    self.paint_np_style(ui, area, palette, intensity * (1.0 - f), old, (cover, blur));
+                }
+                let k = fading.map(|(_, f)| f).unwrap_or(1.0);
+                self.paint_np_style(ui, area, palette, intensity * k, style, (cover, blur));
+                let low =
+                    Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.45), area.max);
+                crate::viz::particles(ui.painter(), low, &self.spectrum, palette[1], intensity, 64);
+
+                // Nom du visualiseur, qui apparaît puis s'efface quand il change.
+                if self.viz_label.map(|(s, _)| s) != Some(style) {
+                    self.viz_label = Some((style, now));
+                }
+                let r = Rect::from_min_size(pos2(area.right() - 52.0, area.top() + 8.0), vec2(36.0, 36.0));
+                if let Some((s, since)) = self.viz_label {
+                    let age = (now - since) as f32;
+                    let a = (age / 0.3).min(1.0).min((3.0 - age) / 0.6).clamp(0.0, 1.0);
+                    if a > 0.0 {
+                        let name = crate::shader::STYLES[s].0;
+                        let text = if setting == crate::shader::AUTO {
+                            format!("{name} · automatique")
+                        } else {
+                            name.to_owned()
+                        };
+                        ui.painter().text(
+                            pos2(r.left() - 6.0, r.center().y),
+                            Align2::RIGHT_CENTER,
+                            text,
+                            FontId::proportional(13.0),
+                            theme::alpha(theme::TEXT_2, (255.0 * a) as u8),
+                        );
+                        ui.ctx().request_repaint();
+                    }
+                }
+
+                // Changer de visualiseur d'un clic (comme le clic droit du lecteur Windows Media).
+                let current = if setting == crate::shader::AUTO {
+                    "Automatique".to_owned()
+                } else {
+                    crate::shader::STYLES[style].0.to_owned()
+                };
+                let tip = format!("Visualiseur : {current} (clic : suivant)");
+                if ui
+                    .put(r, |ui: &mut egui::Ui| {
+                        widgets::icon_button(ui, Icon::Sparkles, &tip, 36.0, 18.0)
+                    })
+                    .clicked()
+                {
+                    self.settings.viz_style = (setting + 1) % (crate::shader::AUTO + 1);
+                    if self.settings.viz_style == crate::shader::AUTO {
+                        self.toast("Visualiseur automatique : il change à chaque morceau");
+                    }
+                }
             } else {
                 // Repli (pilote sans shader) : l'Aurore calculée par le processeur.
                 let top = (cover.bottom() - cover.height() * 0.08).max(area.bottom() - area.height() * 0.42);
@@ -1761,6 +1941,53 @@ impl SterMusic {
                     widgets::switch(ui, &mut visualizer);
                 }, self);
                 self.settings.visualizer = visualizer;
+                if visualizer && crate::shader::available() {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(52.0);
+                        ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new("Mode automatique").color(theme::TEXT_2)))
+                            .on_hover_text("Les visualiseurs parmi lesquels le mode automatique choisit au hasard.");
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                            let allowed = self.auto_allowed();
+                            for (i, (name, _)) in crate::shader::STYLES.iter().enumerate() {
+                                let on = allowed.contains(&i);
+                                if segment(ui, name, on).clicked() {
+                                    let excluded = &mut self.settings.auto_excluded;
+                                    if on {
+                                        // Au moins un visualiseur reste dans le tirage.
+                                        if allowed.len() > 1 {
+                                            excluded.push((*name).to_owned());
+                                        }
+                                    } else {
+                                        excluded.retain(|n| n != name);
+                                    }
+                                }
+                            }
+                        });
+                    });
+                    for (label, banner) in [("En cours de lecture", false), ("Bandeau de l'accueil", true)] {
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(52.0);
+                            ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new(label).color(theme::TEXT_2)));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                                let names = crate::shader::STYLES.iter().map(|(n, _)| *n).chain(["Automatique"]);
+                                for (i, name) in names.enumerate() {
+                                    let current = if banner { self.settings.banner_style } else { self.settings.viz_style };
+                                    if segment(ui, name, current == i).clicked() {
+                                        if banner {
+                                            self.settings.banner_style = i;
+                                        } else {
+                                            self.settings.viz_style = i;
+                                        }
+                                    }
+                                }
+                            });
+                        });
+                    }
+                }
                 separator(ui);
                 let mut leveling = self.settings.leveling;
                 card_row(ui, Icon::Volume2, "Nivellement du volume", "Joue les morceaux à un volume semblable : gain ReplayGain du fichier s'il existe, sinon réglage automatique.", |_, ui| {
@@ -1790,6 +2017,29 @@ impl SterMusic {
                 }, self);
             });
 
+            subtitle(ui, "Éditeur de tags");
+            card(ui, |ui| {
+                card_row(ui, Icon::Tag, "Modifier des fichiers", "Page « Tags » de la barre latérale, ou clic droit sur un morceau, un album, une sélection ; même hors bibliothèque.", |s, ui| {
+                    if widgets::secondary_button(ui, Some(Icon::FolderOpen), "Choisir des fichiers…").clicked() {
+                        s.actions.push(Action::PickTagFiles);
+                    }
+                }, self);
+                separator(ui);
+                card_row(ui, Icon::Music, "Version des tags MP3", "ID3v2.4 : la plus récente. ID3v2.3 : pour les vieux autoradios et l'Explorateur de Windows.", |s, ui| {
+                    for (v23, label) in [(true, "ID3v2.3"), (false, "ID3v2.4")] {
+                        if segment(ui, label, s.settings.tag_id3v23 == v23).clicked() {
+                            s.settings.tag_id3v23 = v23;
+                        }
+                    }
+                }, self);
+                separator(ui);
+                let mut keep = self.settings.tag_keep_mtime;
+                card_row(ui, Icon::Clock, "Conserver la date de modification", "Un album retouché ne remonte pas dans « Ajoutés récemment ».", |_, ui| {
+                    widgets::switch(ui, &mut keep);
+                }, self);
+                self.settings.tag_keep_mtime = keep;
+            });
+
             subtitle(ui, "Raccourcis clavier");
             card(ui, |ui| {
                 for (keys, what) in [
@@ -1800,6 +2050,10 @@ impl SterMusic {
                     ("Ctrl + F", "Rechercher"),
                     ("Ctrl + M", "Mini lecteur"),
                     ("Échap", "Retour"),
+                    ("Ctrl / Maj + clic", "Sélectionner plusieurs morceaux"),
+                    ("Ctrl + S", "Enregistrer les tags (éditeur)"),
+                    ("Ctrl + Maj + S", "Enregistrer les tags de la sélection"),
+                    ("Suppr", "Retirer la sélection de la liste (éditeur)"),
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(52.0);
@@ -1888,7 +2142,7 @@ fn theme_glow(painter: &egui::Painter, rect: Rect) {
 }
 
 /// Bouton segmenté (choix exclusif), sélection à l'accent.
-fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+pub(super) fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_owned(), FontId::proportional(13.5), theme::TEXT));
     let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 26.0, 30.0), Sense::click());
     let painter = ui.painter();
@@ -1916,4 +2170,14 @@ fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
         if selected { theme::TEXT } else { theme::TEXT_2 },
     );
     response
+}
+
+/// Pochette pour le shader : sa version floutée (Pochette liquide) et sa position (Anneau).
+fn set_cover(w: &mut crate::shader::Waves, rect: Rect, (cover, texture): (Rect, Option<egui::TextureId>)) {
+    w.texture = texture;
+    w.focus = [
+        cover.center().x - rect.left(),
+        cover.center().y - rect.top(),
+        cover.width() / 2.0,
+    ];
 }
