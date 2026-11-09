@@ -47,14 +47,7 @@ struct Tween {
 }
 
 /// Valeur qui glisse vers `target` en `duration` secondes. La première fois, elle part de `initial`.
-pub fn value_from(
-    ctx: &Context,
-    id: Id,
-    initial: f32,
-    target: f32,
-    duration: f32,
-    easing: Easing,
-) -> f32 {
+pub fn value_from(ctx: &Context, id: Id, initial: f32, target: f32, duration: f32, easing: Easing) -> f32 {
     let now = ctx.input(|i| i.time);
     let mut tween = ctx.data_mut(|d| {
         *d.get_temp_mut_or_insert_with(id, || Tween {

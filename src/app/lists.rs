@@ -19,6 +19,8 @@ pub struct ListOpts {
     pub playlist: Option<PlaylistId>,
     /// Liste de la file d'attente : la ligne en cours se repère par sa position.
     pub queue_pos: Option<Option<usize>>,
+    /// Numéro de position avant la pochette (file d'attente).
+    pub numbered: bool,
 }
 
 struct Cols {
@@ -32,7 +34,7 @@ struct Cols {
 }
 
 fn columns(rect: Rect, opts: &ListOpts) -> Cols {
-    let gutter = if opts.cover { 60.0 } else { 48.0 };
+    let gutter = if opts.cover { 60.0 } else { 48.0 } + if opts.numbered { 44.0 } else { 0.0 };
     let heart_w = 40.0;
     let dur_w = 64.0;
     let year_w = if opts.album && rect.width() > 920.0 {
@@ -115,13 +117,7 @@ pub fn header(ui: &mut Ui, opts: &ListOpts) {
             theme::TEXT_3,
         );
     }
-    icons::paint_centered(
-        p,
-        Icon::Clock,
-        pos2(c.duration.0 + 12.0, y),
-        14.0,
-        theme::TEXT_3,
-    );
+    icons::paint_centered(p, Icon::Clock, pos2(c.duration.0 + 12.0, y), 14.0, theme::TEXT_3);
     p.hline(
         rect.x_range(),
         rect.bottom(),
@@ -131,18 +127,38 @@ pub fn header(ui: &mut Ui, opts: &ListOpts) {
 
 pub struct RowOut {
     pub rect: Rect,
-    pub handle: Option<egui::Response>,
+    /// Un glisser-déposer commence sur cette ligne (file d'attente).
+    pub drag_started: bool,
 }
 
 /// Une ligne de morceau. `list` est la liste affichée : on la lit à partir de la ligne `i`.
+/// Les premières lignes apparaissent en cascade à l'ouverture de la page.
 pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) -> RowOut {
+    let a = stagger(ui.ctx(), i);
+    ui.scope(|ui| {
+        ui.set_opacity(a);
+        track_row_inner(ui, c, list, i, opts)
+    })
+    .inner
+}
+
+fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) -> RowOut {
     let idx = list[i];
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     if !ui.is_rect_visible(rect) {
-        return RowOut { rect, handle: None };
+        return RowOut {
+            rect,
+            drag_started: false,
+        };
     }
     let row = rect.shrink2(vec2(0.0, 2.0));
-    let resp = ui.interact(row, ui.id().with(("row", i, idx)), Sense::click());
+    // File d'attente : la ligne entière se glisse pour réorganiser.
+    let sense = if opts.queue_pos.is_some() {
+        Sense::click_and_drag()
+    } else {
+        Sense::click()
+    };
+    let resp = ui.interact(row, ui.id().with(("row", i, idx)), sense);
     let is_current = match opts.queue_pos {
         Some(pos) => pos == Some(i),
         None => c.current == Some(idx),
@@ -170,34 +186,58 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
     widgets::paint_interaction(ui, row, 6, &resp);
     let hovered = resp.hovered();
 
-    // Marge : pochette / numéro, et bouton lecture au survol.
+    // Marge : numéro de position (file d'attente), pochette / numéro, et bouton lecture au survol.
     let gutter = Rect::from_min_size(row.min, vec2(cols.gutter, row.height()));
+    let gutter = if opts.numbered {
+        let slot = Rect::from_min_size(gutter.min, vec2(44.0, gutter.height()));
+        if is_current {
+            widgets::equalizer(
+                ui.painter(),
+                slot.center(),
+                14.0,
+                theme::accent_light(),
+                c.playing,
+            );
+        } else {
+            ui.painter().text(
+                slot.center(),
+                Align2::CENTER_CENTER,
+                (i + 1).to_string(),
+                FontId::proportional(13.0),
+                theme::TEXT_3,
+            );
+        }
+        Rect::from_min_max(pos2(slot.right(), gutter.top()), gutter.max)
+    } else {
+        gutter
+    };
     let gutter_resp = ui.interact(gutter, ui.id().with(("gutter", i, idx)), Sense::click());
     let show_play = hovered || gutter_resp.hovered();
     if opts.cover {
         let cover = Rect::from_center_size(gutter.center(), vec2(38.0, 38.0));
         let tex = c.covers.thumb(&t.path).cloned();
         widgets::cover(ui.painter(), cover, tex.as_ref(), 4, &t.album);
-        if show_play || is_current {
+        if show_play || (is_current && !opts.numbered) {
             ui.painter()
                 .rect_filled(cover, CornerRadius::same(4), Color32::from_black_alpha(130));
         }
     }
     let center = gutter.center();
-    if is_current && !show_play {
-        let icon = if c.playing {
-            Icon::AudioLines
-        } else {
-            Icon::PlayOutline
-        };
-        icons::paint_centered(ui.painter(), icon, center, 17.0, theme::accent_light());
+    if is_current && !show_play && !opts.numbered {
+        widgets::equalizer(ui.painter(), center, 15.0, theme::accent_light(), c.playing);
     } else if show_play {
         let color = if gutter_resp.hovered() {
             Color32::WHITE
         } else {
             theme::TEXT
         };
-        icons::paint_centered(ui.painter(), Icon::Play, center, 15.0, color);
+        // Le morceau en cours propose Pause (ou Lecture s'il est en pause), pas « relancer ».
+        let icon = if is_current && c.playing {
+            Icon::Pause
+        } else {
+            Icon::Play
+        };
+        icons::paint_centered(ui.painter(), icon, center, 15.0, color);
     } else if !opts.cover {
         let n = if opts.track_no {
             t.track_no.map(|n| n.to_string()).unwrap_or_default()
@@ -227,16 +267,9 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
     };
     let text = |ui: &Ui, s: &str, col: (f32, f32), font: FontId, color: Color32| {
         let g = widgets::galley(ui, s, font, color, col.1);
-        ui.painter()
-            .galley(pos2(col.0, y - g.size().y / 2.0), g, color);
+        ui.painter().galley(pos2(col.0, y - g.size().y / 2.0), g, color);
     };
-    text(
-        ui,
-        &t.title,
-        cols.title,
-        FontId::proportional(14.0),
-        title_color,
-    );
+    text(ui, &t.title, cols.title, FontId::proportional(14.0), title_color);
     text(
         ui,
         t.artist_or_unknown(),
@@ -245,13 +278,7 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
         other,
     );
     if let Some(a) = cols.album {
-        text(
-            ui,
-            t.album_or_unknown(),
-            a,
-            FontId::proportional(13.5),
-            other,
-        );
+        text(ui, t.album_or_unknown(), a, FontId::proportional(13.5), other);
     }
     if let Some(a) = cols.year {
         text(
@@ -272,7 +299,7 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
 
     // Favori, ou poignée de déplacement dans la file d'attente.
     let heart = Rect::from_center_size(pos2(cols.heart.0 + 12.0, y), vec2(30.0, 30.0));
-    let mut handle = None;
+    let mut drag_started = resp.drag_started();
     if opts.queue_pos.is_some() {
         let h = ui.interact(heart, ui.id().with(("grip", i)), Sense::drag());
         if hovered || h.hovered() || h.dragged() {
@@ -281,25 +308,21 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
                 Icon::Grip,
                 heart.center(),
                 16.0,
-                if h.hovered() {
-                    theme::TEXT
-                } else {
-                    theme::TEXT_3
-                },
+                if h.hovered() { theme::TEXT } else { theme::TEXT_3 },
             );
         }
-        handle = Some(
-            h.on_hover_cursor(egui::CursorIcon::Grab)
-                .on_hover_text("Glisser pour déplacer"),
-        );
+        drag_started |= h.drag_started();
+        h.on_hover_cursor(egui::CursorIcon::Grab)
+            .on_hover_text("Glisser pour déplacer");
     } else {
         let h = ui.interact(heart, ui.id().with(("heart", i, idx)), Sense::click());
+        let pop = widgets::pop(ui.ctx(), h.id, fav);
         if fav {
             icons::paint_centered(
                 ui.painter(),
                 Icon::HeartFilled,
                 heart.center(),
-                15.0,
+                15.0 * pop,
                 theme::accent_light(),
             );
         } else if hovered || h.hovered() {
@@ -308,11 +331,7 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
                 Icon::Heart,
                 heart.center(),
                 15.0,
-                if h.hovered() {
-                    theme::TEXT
-                } else {
-                    theme::TEXT_3
-                },
+                if h.hovered() { theme::TEXT } else { theme::TEXT_3 },
             );
         }
         if h.on_hover_text(if fav {
@@ -327,6 +346,8 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
     }
 
     let play = || match opts.queue_pos {
+        // Le morceau en cours : pause / reprise plutôt que de le relancer depuis le début.
+        _ if is_current && c.has_track => Action::TogglePlay,
         Some(_) => Action::QueueJump(i),
         None => Action::Play {
             tracks: list.to_vec(),
@@ -340,7 +361,7 @@ pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &List
     }
     resp.context_menu(|ui| track_menu(ui, c, list, i, opts));
     gutter_resp.context_menu(|ui| track_menu(ui, c, list, i, opts));
-    RowOut { rect, handle }
+    RowOut { rect, drag_started }
 }
 
 fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) {
@@ -478,7 +499,11 @@ pub fn grid(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = GAP;
                 for k in r * cols..((r + 1) * cols).min(n) {
-                    card(ui, k, w);
+                    let a = stagger(ui.ctx(), k);
+                    ui.scope(|ui| {
+                        ui.set_opacity(a);
+                        card(ui, k, w);
+                    });
                 }
             });
             ui.add_space(GAP * 0.6);
@@ -499,7 +524,11 @@ pub fn virtual_grid(ui: &mut Ui, id: &str, n: usize, mut card: impl FnMut(&mut U
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = GAP;
                     for k in r * cols..((r + 1) * cols).min(n) {
-                        card(ui, k, w);
+                        let a = stagger(ui.ctx(), k);
+                        ui.scope(|ui| {
+                            ui.set_opacity(a);
+                            card(ui, k, w);
+                        });
                     }
                 });
             }
@@ -515,7 +544,9 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
     }
     let album = &c.lib.albums[a];
     let resp = ui.interact(rect, ui.id().with(("album", a)), Sense::click());
-    let h = widgets::hover_t(ui, resp.id, resp.hovered());
+    // Survol de toute la carte, bouton lecture compris : sinon, survoler le bouton « quitte » la
+    // carte, qui redescend, ce qui déplace le bouton… et la carte tremblait.
+    let h = widgets::hover_t(ui, resp.id, ui.rect_contains_pointer(rect));
     let cover = Rect::from_min_size(rect.min, vec2(w, w)).translate(vec2(0.0, -3.0 * h));
     let tex = c.covers.thumb(&c.lib.tracks[album.tracks[0]].path).cloned();
     let shadow = egui::Shadow {
@@ -524,9 +555,15 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
         spread: 0,
         color: Color32::from_black_alpha((70.0 + 50.0 * h) as u8),
     };
-    ui.painter()
-        .add(shadow.as_shape(cover, CornerRadius::same(8)));
+    ui.painter().add(shadow.as_shape(cover, CornerRadius::same(8)));
     widgets::cover(ui.painter(), cover, tex.as_ref(), 8, &album.title);
+    // Album en cours de lecture : pastille avec l'égaliseur animé.
+    if c.current.is_some_and(|t| c.lib.track_album[t] == a) {
+        let center = pos2(cover.right() - 22.0, cover.top() + 22.0);
+        ui.painter()
+            .circle_filled(center, 15.0, Color32::from_black_alpha(150));
+        widgets::equalizer(ui.painter(), center, 13.0, theme::accent_light(), c.playing);
+    }
 
     // Bouton lecture, en bas à gauche de la pochette.
     let mut play_clicked = false;
@@ -542,12 +579,7 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
             size / 2.0 + 1.0,
             Color32::from_black_alpha((90.0 * h) as u8),
         );
-        theme::brand_fill(
-            ui.painter(),
-            pr_rect,
-            CornerRadius::same((size / 2.0) as u8),
-            h,
-        );
+        theme::brand_fill(ui.painter(), pr_rect, CornerRadius::same((size / 2.0) as u8), h);
         icons::paint_centered(
             ui.painter(),
             Icon::Play,
@@ -695,10 +727,31 @@ pub fn section(ui: &mut Ui, title: &str, link: Option<&str>) -> bool {
     clicked
 }
 
-/// Fondu d'apparition d'une page (léger glissement vers le haut).
-pub fn page_fade(ui: &mut Ui, key: impl std::hash::Hash) -> f32 {
+fn page_ids(key: &str) -> (egui::Id, egui::Id) {
     let id = egui::Id::new(("page_fade", key));
-    let t = anim::appear(ui.ctx(), id, anim::SLOW);
-    ui.set_opacity(t);
+    (id, id.with("stagger"))
+}
+
+/// Apparition d'une page : renvoie sa progression (0 → 1) et prépare la cascade des éléments.
+pub fn page_progress(ctx: &egui::Context, key: &str) -> f32 {
+    let (fade, cascade) = page_ids(key);
+    let t = anim::value_from(ctx, fade, 0.0, 1.0, anim::SLOW, anim::Easing::OutExpo);
+    let s = anim::value_from(ctx, cascade, 0.0, 1.0, 0.75, anim::Easing::Out);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("page_stagger"), s));
     t
+}
+
+/// Rejoue l'apparition d'une page (navigation).
+pub fn reset_page(ctx: &egui::Context, key: &str) {
+    let (fade, cascade) = page_ids(key);
+    anim::reset(ctx, fade);
+    anim::reset(ctx, cascade);
+}
+
+/// Opacité du `i`-ème élément d'une page qui apparaît (les premiers d'abord).
+pub fn stagger(ctx: &egui::Context, i: usize) -> f32 {
+    let s = ctx
+        .data(|d| d.get_temp::<f32>(egui::Id::new("page_stagger")))
+        .unwrap_or(1.0);
+    ((s - (i.min(15) as f32) * 0.04) / 0.4).clamp(0.0, 1.0)
 }

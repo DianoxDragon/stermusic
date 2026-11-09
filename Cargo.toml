@@ -10,13 +10,15 @@ license = "MIT"
 eframe = { version = "0.31", features = ["persistence"] }
 egui_extras = { version = "0.31", default-features = false, features = ["svg"] }
 # Lecture audio (décodage via Symphonia : MP3, FLAC, OGG/Vorbis, WAV, AAC/M4A)
-rodio = { version = "0.20", default-features = false, features = ["symphonia-all"] }
+rodio = { version = "0.21", default-features = false, features = ["playback", "symphonia-all"] }
 # Lecture des tags et des pochettes intégrées
 lofty = "0.22"
 # Pochettes et fond Mica
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif"] }
 # Contrôle depuis le bureau (MPRIS) : touches multimédia, widget lecteur de KDE / GNOME
 souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+# Position de la fenêtre envoyée par un script KWin (Mica qui suit la fenêtre), sur D-Bus
+zbus = "5"
 # Boîtes de dialogue (portail XDG, sans GTK)
 rfd = "0.15"
 walkdir = "2"

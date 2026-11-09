@@ -1,99 +1,261 @@
 //! Moteur audio : une fine couche au-dessus de rodio.
+//!
+//! En pause, la sortie audio est libérée tout de suite (à l'arrêt, après un court délai, pour
+//! ne pas couper entre deux morceaux) : sinon PipeWire voit un flux actif (du silence) et Plasma
+//! affiche SterMusic « en lecture ». À la reprise, le morceau est rouvert au même endroit.
 
 use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
-use std::time::Duration;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink};
+
+use crate::dsp::{self, Processor};
+
+/// Délai avant de libérer la sortie audio quand rien ne joue (entre deux morceaux, elle reste).
+pub const RELEASE_AFTER: Duration = Duration::from_millis(300);
 
 pub struct Player {
-    // Le flux de sortie doit rester vivant tant qu'on joue du son.
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
+    stream: Option<OutputStream>,
     sink: Option<Sink>,
+    path: Option<PathBuf>,
+    /// Morceau chargé dont la sortie audio a été libérée : sa position.
+    parked: Option<Duration>,
+    /// Depuis quand rien ne joue (pause ou arrêt).
+    idle_since: Option<Instant>,
     volume: f32,
+    /// Égaliseur et nivellement (réglages partagés avec l'interface).
+    audio: dsp::Shared,
+    /// Copie du son pour le visualiseur.
+    tap: dsp::SharedTap,
+    /// Fondu enchaîné : le morceau précédent qui s'efface, depuis quand, et la durée du fondu.
+    fading: Option<(Sink, Instant, Duration)>,
 }
 
 impl Player {
-    pub fn new(volume: f32) -> Result<Self, String> {
-        let (stream, handle) = OutputStream::try_default()
-            .map_err(|e| format!("Impossible d'ouvrir la sortie audio : {e}"))?;
-        Ok(Self {
-            _stream: stream,
-            handle,
+    pub fn new(volume: f32, audio: dsp::Shared, tap: dsp::SharedTap) -> Result<Self, String> {
+        let mut player = Self {
+            stream: None,
             sink: None,
+            path: None,
+            parked: None,
+            idle_since: None,
             volume,
-        })
+            audio,
+            tap,
+            fading: None,
+        };
+        // On vérifie tout de suite qu'une sortie audio existe ; elle sera libérée si rien ne joue.
+        player.stream()?;
+        player.idle_since = Some(Instant::now());
+        Ok(player)
+    }
+
+    fn stream(&mut self) -> Result<&OutputStream, String> {
+        if self.stream.is_none() {
+            let mut stream = OutputStreamBuilder::open_default_stream()
+                .map_err(|e| format!("Impossible d'ouvrir la sortie audio : {e}"))?;
+            stream.log_on_drop(false);
+            self.stream = Some(stream);
+        }
+        Ok(self.stream.as_ref().unwrap())
     }
 
     /// Charge un fichier (remplace le morceau en cours), en lecture ou en pause.
     pub fn load(&mut self, path: &Path, paused: bool) -> Result<(), String> {
         self.stop();
-        let file = File::open(path).map_err(|e| format!("Ouverture impossible : {e}"))?;
-        let source =
-            Decoder::new(BufReader::new(file)).map_err(|e| format!("Format non lisible : {e}"))?;
-        let sink = Sink::try_new(&self.handle).map_err(|e| format!("Erreur audio : {e}"))?;
-        sink.set_volume(self.volume);
+        self.path = Some(path.to_path_buf());
         if paused {
-            sink.pause();
+            // En pause : rien n'est ouvert tant qu'on ne relance pas la lecture.
+            self.parked = Some(Duration::ZERO);
+            return Ok(());
         }
+        self.open(path, Duration::ZERO)
+    }
+
+    fn open(&mut self, path: &Path, position: Duration) -> Result<(), String> {
+        let file = File::open(path).map_err(|e| format!("Ouverture impossible : {e}"))?;
+        // `try_from(File)` donne au décodeur la taille du fichier et son extension : sans elles,
+        // Symphonia échoue (voire panique, avec rodio 0.20) sur les M4A/AAC.
+        // Filet de sécurité : un décodeur qui panique sur un fichier exotique ne doit pas
+        // emporter toute l'application.
+        let source = catch_unwind(AssertUnwindSafe(|| Decoder::try_from(file)))
+            .map_err(|_| "Format non pris en charge (le décodeur a échoué)".to_owned())?
+            .map_err(|e| format!("Format non lisible : {e}"))?;
+        let source = Processor::new(
+            source,
+            self.audio.clone(),
+            dsp::replaygain(path),
+            Some(self.tap.clone()),
+        );
+        let volume = self.volume;
+        let sink = Sink::connect_new(self.stream()?.mixer());
+        sink.set_volume(volume);
         sink.append(source);
+        if !position.is_zero() {
+            let _ = sink.try_seek(position);
+        }
         self.sink = Some(sink);
+        self.parked = None;
+        self.idle_since = None;
         Ok(())
     }
 
+    /// Fondu enchaîné : `path` démarre en silence et monte pendant que le morceau en cours s'efface.
+    pub fn crossfade_to(&mut self, path: &Path, duration: Duration) -> Result<(), String> {
+        let Some(old) = self.sink.take().filter(|s| !s.is_paused()) else {
+            return self.load(path, false);
+        };
+        self.finish_fade();
+        self.path = Some(path.to_path_buf());
+        match self.open(path, Duration::ZERO) {
+            Ok(()) => {
+                if let Some(sink) = &self.sink {
+                    sink.set_volume(0.0);
+                }
+                self.fading = Some((old, Instant::now(), duration));
+                Ok(())
+            }
+            Err(e) => {
+                old.stop();
+                Err(e)
+            }
+        }
+    }
+
+    /// Vrai pendant un fondu enchaîné.
+    pub fn is_fading(&self) -> bool {
+        self.fading.is_some()
+    }
+
+    fn finish_fade(&mut self) {
+        if let Some((old, ..)) = self.fading.take() {
+            old.stop();
+        }
+        if let Some(sink) = &self.sink {
+            sink.set_volume(self.volume);
+        }
+    }
+
+    /// À appeler régulièrement : fait avancer le fondu enchaîné, et libère la sortie audio quand
+    /// rien ne joue depuis un moment.
+    pub fn tick(&mut self) {
+        if let Some((old, start, duration)) = &self.fading {
+            let t = (start.elapsed().as_secs_f32() / duration.as_secs_f32().max(0.01)).clamp(0.0, 1.0);
+            if t >= 1.0 {
+                self.finish_fade();
+            } else {
+                // Courbes à puissance constante : pas de creux de volume au milieu du fondu.
+                let angle = t * std::f32::consts::FRAC_PI_2;
+                old.set_volume(self.volume * angle.cos());
+                if let Some(sink) = &self.sink {
+                    sink.set_volume(self.volume * angle.sin());
+                }
+            }
+        }
+        let idle = match &self.sink {
+            Some(sink) => sink.is_paused(),
+            None => true,
+        };
+        if !idle {
+            self.idle_since = None;
+            return;
+        }
+        let since = *self.idle_since.get_or_insert_with(Instant::now);
+        if since.elapsed() < RELEASE_AFTER {
+            return;
+        }
+        if let Some(sink) = self.sink.take() {
+            self.parked = Some(sink.get_pos());
+            sink.stop();
+        }
+        self.stream = None;
+    }
+
+    /// Vrai si la sortie audio est ouverte sans rien jouer (elle sera bientôt libérée).
+    pub fn holds_idle_output(&self) -> bool {
+        self.stream.is_some() && !self.is_playing()
+    }
+
     pub fn stop(&mut self) {
+        self.finish_fade();
         if let Some(sink) = self.sink.take() {
             sink.stop();
         }
+        self.parked = None;
+        self.path = None;
+        self.idle_since = Some(Instant::now());
     }
 
-    pub fn play(&self) {
+    pub fn play(&mut self) -> Result<(), String> {
+        if let (Some(position), Some(path)) = (self.parked, self.path.clone()) {
+            return self.open(&path, position);
+        }
         if let Some(sink) = &self.sink {
             sink.play();
+            self.idle_since = None;
         }
+        Ok(())
     }
 
-    pub fn pause(&self) {
-        if let Some(sink) = &self.sink {
-            sink.pause();
+    /// Met en pause et libère aussitôt la sortie audio : l'indicateur de son de Plasma s'éteint.
+    pub fn pause(&mut self) {
+        self.finish_fade();
+        if let Some(sink) = self.sink.take() {
+            self.parked = Some(sink.get_pos());
+            sink.stop();
         }
+        self.stream = None;
+        self.idle_since = Some(Instant::now());
     }
 
     pub fn is_paused(&self) -> bool {
-        self.sink.as_ref().map(|s| s.is_paused()).unwrap_or(true)
+        match &self.sink {
+            Some(sink) => sink.is_paused(),
+            None => true,
+        }
     }
 
     /// Vrai si un morceau est chargé (en lecture ou en pause).
     pub fn has_track(&self) -> bool {
-        self.sink.is_some()
+        self.sink.is_some() || self.parked.is_some()
     }
 
     pub fn is_playing(&self) -> bool {
-        self.has_track() && !self.is_paused()
+        self.sink.as_ref().is_some_and(|s| !s.is_paused())
     }
 
     /// Vrai si le morceau chargé est arrivé à la fin.
     pub fn finished(&self) -> bool {
-        self.sink.as_ref().map(|s| s.empty()).unwrap_or(false)
+        self.sink.as_ref().is_some_and(|s| s.empty())
     }
 
     pub fn position(&self) -> Duration {
-        self.sink.as_ref().map(|s| s.get_pos()).unwrap_or_default()
+        match (&self.sink, self.parked) {
+            (Some(sink), _) => sink.get_pos(),
+            (None, Some(pos)) => pos,
+            _ => Duration::ZERO,
+        }
     }
 
-    pub fn seek(&self, pos: Duration) -> Result<(), String> {
-        match &self.sink {
-            Some(sink) => sink
+    pub fn seek(&mut self, pos: Duration) -> Result<(), String> {
+        if let Some(sink) = &self.sink {
+            return sink
                 .try_seek(pos)
-                .map_err(|e| format!("Déplacement impossible : {e}")),
-            None => Ok(()),
+                .map_err(|e| format!("Déplacement impossible : {e}"));
         }
+        if self.parked.is_some() {
+            self.parked = Some(pos);
+        }
+        Ok(())
     }
 
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume;
+        if self.fading.is_some() {
+            return; // le fondu applique le nouveau volume à la prochaine étape
+        }
         if let Some(sink) = &self.sink {
             sink.set_volume(volume);
         }

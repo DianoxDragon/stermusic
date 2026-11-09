@@ -57,6 +57,17 @@ pub enum SongSort {
     Added,
 }
 
+/// Fond de la fenêtre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum BackdropKind {
+    Solid,
+    /// Mica simulé (fond d'écran flouté et teinté).
+    #[default]
+    Mica,
+    /// Fenêtre transparente, floutée par KWin.
+    Transparent,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaylistId {
     Favorites,
@@ -97,7 +108,29 @@ pub struct Settings {
     pub shuffle: bool,
     pub repeat: Repeat,
     pub theme: String,
+    /// Ancien réglage (avant les fonds au choix) : repris dans `backdrop`.
     pub mica: bool,
+    pub backdrop: BackdropKind,
+    /// Intensité du Mica, ou opacité en mode transparent (0 → 1).
+    pub mica_strength: f32,
+    /// Style Breeze (Kubuntu) : police, icônes et boutons de fenêtre de KDE.
+    pub breeze: bool,
+    /// Coins arrondis de la fenêtre.
+    pub rounded: bool,
+    /// Version des réglages d'apparence (migrations).
+    pub style_version: u32,
+    /// Égaliseur graphique 10 bandes.
+    pub eq_on: bool,
+    pub eq_gains: [f32; 10],
+    pub eq_preamp: f32,
+    pub eq_preset: String,
+    /// Fondu enchaîné entre les morceaux, et sa durée (s).
+    pub crossfade: bool,
+    pub crossfade_secs: f32,
+    /// Nivellement du volume (ReplayGain, sinon automatique).
+    pub leveling: bool,
+    /// Visualiseur (animations qui suivent la musique).
+    pub visualizer: bool,
     pub sidebar_collapsed: bool,
     pub resume: bool,
     pub page: Page,
@@ -122,6 +155,19 @@ impl Default for Settings {
             repeat: Repeat::Off,
             theme: "stercode".into(),
             mica: true,
+            backdrop: BackdropKind::Mica,
+            mica_strength: 0.6,
+            breeze: true,
+            rounded: true,
+            style_version: 0,
+            eq_on: false,
+            eq_gains: [0.0; 10],
+            eq_preamp: 0.0,
+            eq_preset: "Plat".into(),
+            crossfade: false,
+            crossfade_secs: 5.0,
+            leveling: false,
+            visualizer: true,
             sidebar_collapsed: false,
             resume: true,
             page: Page::Home,
@@ -141,7 +187,10 @@ impl Default for Settings {
 
 /// Tout ce que l'interface peut demander ; appliqué en fin de frame.
 pub enum Action {
-    Play { tracks: Vec<usize>, start: usize },
+    Play {
+        tracks: Vec<usize>,
+        start: usize,
+    },
     PlayShuffled(Vec<usize>),
     PlayNext(Vec<usize>),
     Enqueue(Vec<usize>),
@@ -177,6 +226,9 @@ pub enum Action {
     ToggleMini,
     ToggleSidebar,
     SetTheme(&'static str),
+    SetBreeze(bool),
+    /// Ajoute SterMusic aux fenêtres floutées par l'effet Better Blur de KWin.
+    EnableKwinBlur,
     FocusSearch,
 }
 
@@ -195,6 +247,8 @@ pub struct Ctx<'a> {
     pub selected: &'a mut Option<usize>,
     pub current: Option<usize>,
     pub playing: bool,
+    /// Un morceau est chargé (en lecture ou en pause).
+    pub has_track: bool,
 }
 
 impl Ctx<'_> {
@@ -209,6 +263,7 @@ pub struct SterMusic {
     lib: Library,
     covers: Covers,
     mpris: Mpris,
+    kwin: crate::kwin::KWin,
     backdrop: Backdrop,
 
     queue: Vec<usize>,
@@ -219,6 +274,10 @@ pub struct SterMusic {
     view: View,
     history: Vec<View>,
     search: String,
+    /// Recherche dans la page d'un album ou d'un artiste.
+    detail_filter: String,
+    /// Recherche dans la file d'attente.
+    queue_filter: String,
     search_results: (Vec<usize>, Vec<usize>, Vec<usize>),
     focus_search: bool,
     songs_sorted: Option<(SongSort, Vec<usize>)>,
@@ -235,9 +294,21 @@ pub struct SterMusic {
 
     mini: bool,
     restore_size: Option<egui::Vec2>,
+    /// Taille à imposer à la fenêtre pendant quelques images (KWin peut d'abord rendre l'ancienne).
+    pending_size: Option<(egui::Vec2, u8)>,
     window_title: String,
     seeked: bool,
+    /// Égaliseur et nivellement, partagés avec le son.
+    audio: crate::dsp::Shared,
+    /// Le prochain morceau démarre en fondu enchaîné.
+    crossfading: bool,
+    /// Copie du son et spectre, pour le visualiseur.
+    tap: crate::dsp::SharedTap,
+    spectrum: crate::viz::Spectrum,
 }
+
+/// Taille du mini lecteur.
+const MINI_SIZE: egui::Vec2 = egui::vec2(380.0, 116.0);
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -269,14 +340,35 @@ impl SterMusic {
                 settings.music_dirs.push(dir);
             }
         }
-        theme::install(&cc.egui_ctx, &settings.theme);
+        // Apparence v2 : style Breeze et couleurs de KDE par défaut sous Plasma (Kubuntu).
+        if settings.style_version < 2 {
+            settings.style_version = 2;
+            settings.backdrop = if settings.mica {
+                BackdropKind::Mica
+            } else {
+                BackdropKind::Solid
+            };
+            settings.breeze = theme::is_kde_desktop() || theme::kde_theme().is_some();
+            if settings.breeze && theme::kde_theme().is_some() {
+                settings.theme = theme::KDE_ID.into();
+            }
+        }
+        theme::install(&cc.egui_ctx, &settings.theme, settings.breeze);
 
         let volume = if settings.muted {
             0.0
         } else {
             perceptual(settings.volume)
         };
-        let (player, toast) = match Player::new(volume) {
+        let audio = crate::dsp::AudioSettings::new();
+        audio.set(
+            settings.eq_on,
+            &settings.eq_gains,
+            settings.eq_preamp,
+            settings.leveling,
+        );
+        let tap = crate::dsp::Tap::new();
+        let (player, toast) = match Player::new(volume, audio.clone(), tap.clone()) {
             Ok(p) => (Some(p), None),
             Err(e) => (None, Some((e, 0.0))),
         };
@@ -287,6 +379,7 @@ impl SterMusic {
             lib: Library::new(library::load_cache()),
             covers: Covers::new(&cc.egui_ctx),
             mpris: Mpris::new(&cc.egui_ctx),
+            kwin: crate::kwin::KWin::new(&cc.egui_ctx),
             backdrop: Backdrop::default(),
             queue: Vec::new(),
             queue_pos: None,
@@ -294,6 +387,8 @@ impl SterMusic {
             view: View::Page(page),
             history: Vec::new(),
             search: String::new(),
+            detail_filter: String::new(),
+            queue_filter: String::new(),
             search_results: Default::default(),
             focus_search: false,
             songs_sorted: None,
@@ -307,8 +402,13 @@ impl SterMusic {
             queue_drag: None,
             mini: false,
             restore_size: None,
+            pending_size: None,
             window_title: String::new(),
             seeked: false,
+            audio,
+            crossfading: false,
+            tap,
+            spectrum: crate::viz::Spectrum::default(),
             settings,
         };
         app.restore_queue();
@@ -366,10 +466,7 @@ impl SterMusic {
         }
         let count = tracks.len();
         self.lib = Library::new(tracks);
-        self.queue = queue_paths
-            .iter()
-            .filter_map(|p| self.lib.find(p))
-            .collect();
+        self.queue = queue_paths.iter().filter_map(|p| self.lib.find(p)).collect();
         self.queue_pos = current_path
             .and_then(|p| self.lib.find(&p))
             .and_then(|c| self.queue.iter().position(|&i| i == c));
@@ -438,9 +535,9 @@ impl SterMusic {
             match sort {
                 SongSort::Title => v.sort_by_cached_key(|&i| key(i)),
                 SongSort::Artist => {} // ordre naturel de la bibliothèque : artiste, album, piste
-                SongSort::Album => v.sort_by_cached_key(|&i| {
-                    (lib.tracks[i].album.to_lowercase(), lib.tracks[i].track_no)
-                }),
+                SongSort::Album => {
+                    v.sort_by_cached_key(|&i| (lib.tracks[i].album.to_lowercase(), lib.tracks[i].track_no))
+                }
                 SongSort::Added => v.sort_by_key(|&i| std::cmp::Reverse(lib.tracks[i].mtime)),
             }
             self.songs_sorted = Some((sort, v));
@@ -464,7 +561,13 @@ impl SterMusic {
             return;
         };
         let track = &self.lib.tracks[idx];
-        match player.load(&track.path, false) {
+        let result = if self.crossfading {
+            let duration = Duration::from_secs_f32(self.settings.crossfade_secs.clamp(1.0, 12.0));
+            player.crossfade_to(&track.path, duration)
+        } else {
+            player.load(&track.path, false)
+        };
+        match result {
             Ok(()) => {
                 let stat = self.settings.plays.entry(track.path.clone()).or_default();
                 stat.count += 1;
@@ -476,6 +579,64 @@ impl SterMusic {
             }
         }
         self.seeked = true;
+    }
+
+    /// Fondu enchaîné : quelques secondes avant la fin du morceau, le suivant démarre en fondu.
+    fn maybe_crossfade(&mut self) {
+        if !self.settings.crossfade {
+            return;
+        }
+        let Some(p) = &self.player else { return };
+        if !p.is_playing() || p.is_fading() {
+            return;
+        }
+        let Some(cur) = self.current() else { return };
+        let total = self.lib.tracks[cur].duration().as_secs_f32();
+        let fade = self.settings.crossfade_secs.clamp(1.0, 12.0);
+        // Morceaux très courts : pas de fondu (il en mangerait une trop grande part).
+        if total < fade * 3.0 || total - p.position().as_secs_f32() > fade {
+            return;
+        }
+        let has_next =
+            self.settings.repeat != Repeat::Off || self.queue_pos.is_some_and(|q| q + 1 < self.queue.len());
+        if !has_next {
+            return;
+        }
+        self.crossfading = true;
+        self.next(true);
+        self.crossfading = false;
+    }
+
+    /// Visualiseur : analyse le son quand une page qui l'affiche est à l'écran, et redessine en
+    /// continu pendant la lecture (ou tant que l'animation retombe).
+    fn update_visualizer(&mut self, ctx: &egui::Context) {
+        let visible = self.settings.visualizer
+            && !self.mini
+            && matches!(self.view, View::NowPlaying | View::Page(Page::Home));
+        if !visible {
+            return;
+        }
+        let playing = self.is_playing();
+        let dt = ctx.input(|i| i.stable_dt);
+        self.spectrum.update(&self.tap, dt, playing);
+        if playing || self.spectrum.alive() {
+            ctx.request_repaint();
+        }
+    }
+
+    /// Couleurs du visualiseur : celles de la pochette en cours, sinon celles du thème.
+    pub(super) fn viz_palette(&mut self) -> [egui::Color32; 3] {
+        let from_cover = self.current().and_then(|i| {
+            let path = self.lib.tracks[i].path.clone();
+            self.covers.large(&path).and_then(|l| l.palette)
+        });
+        from_cover.unwrap_or([theme::accent(), theme::accent_2(), theme::accent_light()])
+    }
+
+    /// Transmet les réglages de l'égaliseur et du nivellement au son (effet immédiat).
+    fn push_audio(&self) {
+        let s = &self.settings;
+        self.audio.set(s.eq_on, &s.eq_gains, s.eq_preamp, s.leveling);
     }
 
     fn play_list(&mut self, tracks: Vec<usize>, start: usize) {
@@ -512,13 +673,18 @@ impl SterMusic {
     fn toggle_play(&mut self) {
         let has_track = self.player.as_ref().is_some_and(Player::has_track);
         if has_track {
-            if let Some(p) = &self.player {
+            let mut error = None;
+            if let Some(p) = &mut self.player {
                 if p.is_paused() {
-                    p.play();
+                    error = p.play().err();
                 } else {
                     p.pause();
                 }
             }
+            if let Some(e) = error {
+                self.toast(e);
+            }
+            self.seeked = true;
         } else if self.current().is_some() {
             self.play_current();
         } else if !self.lib.is_empty() {
@@ -552,7 +718,7 @@ impl SterMusic {
     }
 
     fn previous(&mut self) {
-        if let Some(p) = &self.player {
+        if let Some(p) = &mut self.player {
             if p.has_track() && p.position() > Duration::from_secs(3) {
                 let _ = p.seek(Duration::ZERO);
                 self.seeked = true;
@@ -571,14 +737,14 @@ impl SterMusic {
     }
 
     fn seek_to(&mut self, secs: f32) {
-        let Some(p) = &self.player else { return };
-        if !p.has_track() {
-            return;
-        }
         let max = self
             .current()
             .map(|i| self.lib.tracks[i].duration().as_secs_f32())
             .unwrap_or(f32::MAX);
+        let Some(p) = &mut self.player else { return };
+        if !p.has_track() {
+            return;
+        }
         if let Err(e) = p.seek(Duration::from_secs_f32(secs.clamp(0.0, max.max(0.0)))) {
             self.toast(e);
         }
@@ -618,6 +784,7 @@ impl SterMusic {
         }
         self.view = view;
         self.selected = None;
+        self.detail_filter.clear();
     }
 
     fn back(&mut self) {
@@ -629,6 +796,7 @@ impl SterMusic {
         if self.view != View::Search {
             self.search.clear();
         }
+        self.detail_filter.clear();
     }
 
     pub fn playlist_tracks(&self, id: PlaylistId) -> Vec<usize> {
@@ -665,10 +833,7 @@ impl SterMusic {
     }
 
     fn paths(&self, tracks: &[usize]) -> Vec<PathBuf> {
-        tracks
-            .iter()
-            .map(|&i| self.lib.tracks[i].path.clone())
-            .collect()
+        tracks.iter().map(|&i| self.lib.tracks[i].path.clone()).collect()
     }
 
     // ---------- Application des actions ----------
@@ -719,15 +884,12 @@ impl SterMusic {
             }
             Action::Go(view) => {
                 // Rejoue le fondu d'apparition de la page.
-                crate::anim::reset(ctx, egui::Id::new(("page_fade", format!("{view:?}"))));
+                lists::reset_page(ctx, &format!("{view:?}"));
                 self.go(view);
             }
             Action::Back => {
                 self.back();
-                crate::anim::reset(
-                    ctx,
-                    egui::Id::new(("page_fade", format!("{:?}", self.view))),
-                );
+                lists::reset_page(ctx, &format!("{:?}", self.view));
             }
             Action::ToggleFavorite(i) => {
                 let path = self.lib.tracks[i].path.clone();
@@ -836,10 +998,7 @@ impl SterMusic {
                     self.queue_pos = Some(if from == pos {
                         to
                     } else {
-                        self.queue
-                            .iter()
-                            .position(|&i| Some(i) == cur)
-                            .unwrap_or(pos)
+                        self.queue.iter().position(|&i| Some(i) == cur).unwrap_or(pos)
                     });
                 }
             }
@@ -919,9 +1078,12 @@ impl SterMusic {
                 self.apply_volume();
             }
             Action::ToggleMini => self.toggle_mini(ctx),
-            Action::ToggleSidebar => {
-                self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed
+            Action::ToggleSidebar => self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed,
+            Action::SetBreeze(on) => {
+                self.settings.breeze = on;
+                theme::set_breeze(ctx, on);
             }
+            Action::EnableKwinBlur => self.enable_kwin_blur(),
             Action::SetTheme(id) => {
                 self.settings.theme = id.to_owned();
                 theme::set(ctx, id);
@@ -936,17 +1098,47 @@ impl SterMusic {
     fn toggle_mini(&mut self, ctx: &egui::Context) {
         self.mini = !self.mini;
         if self.mini {
-            self.restore_size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+            let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+            if !maximized {
+                self.restore_size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+            }
             ctx.send_viewport_cmd(ViewportCommand::Maximized(false));
-            ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(egui::vec2(320.0, 132.0)));
-            ctx.send_viewport_cmd(ViewportCommand::InnerSize(egui::vec2(400.0, 148.0)));
+            ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(MINI_SIZE));
+            ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(MINI_SIZE * egui::vec2(1.6, 1.25)));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(MINI_SIZE));
+            // X11 seulement ; sous Wayland, c'est le script KWin qui s'en charge (titre marqué).
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+            self.pending_size = Some((MINI_SIZE, 30));
         } else {
             ctx.send_viewport_cmd(ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+            ctx.send_viewport_cmd(ViewportCommand::MaxInnerSize(egui::vec2(
+                f32::INFINITY,
+                f32::INFINITY,
+            )));
             ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(egui::vec2(760.0, 520.0)));
-            let size = self.restore_size.unwrap_or(egui::vec2(1200.0, 780.0));
+            let size = self.restore_size.unwrap_or(egui::vec2(1240.0, 800.0));
+            ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+            self.pending_size = Some((size, 30));
+        }
+    }
+
+    /// Redemande la taille voulue tant que la fenêtre ne l'a pas : en sortant de l'état agrandi,
+    /// KWin peut d'abord lui rendre son ancienne taille.
+    fn apply_pending_size(&mut self, ctx: &egui::Context) {
+        let Some((size, frames)) = self.pending_size else {
+            return;
+        };
+        let current = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+        let done = current.is_some_and(|c| (c - size).length() < 2.0);
+        if done || frames == 0 {
+            self.pending_size = None;
+            return;
+        }
+        if frames % 5 == 0 {
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
         }
+        self.pending_size = Some((size, frames - 1));
+        ctx.request_repaint_after(Duration::from_millis(30));
     }
 
     fn export_playlist(&mut self, id: PlaylistId) {
@@ -1125,12 +1317,17 @@ impl SterMusic {
             ),
             _ => (mpris::State::Stopped, Duration::ZERO),
         };
-        self.mpris
-            .set_state(state, pos, std::mem::take(&mut self.seeked));
+        self.mpris.set_state(state, pos, std::mem::take(&mut self.seeked));
 
         let title = match current.map(|i| &self.lib.tracks[i]) {
             Some(t) => format!("{} — {} · SterMusic", t.title, t.artist_or_unknown()),
             None => "SterMusic".to_owned(),
+        };
+        // Le script KWin garde au premier plan la fenêtre dont le titre porte cette marque.
+        let title = if self.mini {
+            format!("{title}{}", crate::kwin::KEEP_ABOVE_MARK)
+        } else {
+            title
         };
         if title != self.window_title {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
@@ -1149,6 +1346,7 @@ impl SterMusic {
             selected: &mut self.selected,
             current,
             playing,
+            has_track: self.player.as_ref().is_some_and(Player::has_track),
         }
     }
 }
@@ -1157,16 +1355,41 @@ impl eframe::App for SterMusic {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_scan();
         self.covers.poll(ctx);
+        self.kwin.poll();
+        self.apply_pending_size(ctx);
         self.handle_remote(ctx);
         if self.player.as_ref().is_some_and(Player::finished) {
             self.next(true);
         }
+        self.maybe_crossfade();
+        if let Some(p) = &mut self.player {
+            p.tick();
+            if p.is_fading() {
+                ctx.request_repaint_after(Duration::from_millis(30));
+            }
+            if p.holds_idle_output() {
+                ctx.request_repaint_after(crate::player::RELEASE_AFTER + Duration::from_millis(50));
+            }
+        }
         self.handle_keys(ctx);
+        self.update_visualizer(ctx);
 
-        self.backdrop.paint(ctx, self.settings.mica);
+        // Coins arrondis, sauf fenêtre agrandie ou plein écran.
+        let full = ctx
+            .input(|i| i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false));
+        theme::set_window_radius(if self.settings.rounded && !full { 12 } else { 0 });
+
+        let strength = self.settings.mica_strength;
+        let mode = match self.settings.backdrop {
+            BackdropKind::Solid => backdrop::Mode::Solid,
+            BackdropKind::Mica => backdrop::Mode::Mica(strength),
+            BackdropKind::Transparent => backdrop::Mode::Transparent(strength),
+        };
+        self.backdrop.paint(ctx, mode, self.kwin.geometry.as_ref());
         if self.view == View::NowPlaying || self.mini {
             self.paint_cover_backdrop(ctx);
         }
+        self.paint_window_border(ctx);
 
         if self.mini {
             self.mini_player(ctx);
@@ -1198,6 +1421,15 @@ impl eframe::App for SterMusic {
         }
     }
 
+    /// Fenêtre transparente : seul le fond arrondi peint par SterMusic est opaque.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.kwin.stop();
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         self.settings.queue = self.paths(&self.queue);
         self.settings.queue_pos = self.queue_pos;
@@ -1225,17 +1457,84 @@ impl SterMusic {
         if let Some(tex) = blurred {
             let painter = ctx.layer_painter(egui::LayerId::background());
             let screen = ctx.screen_rect();
+            let radius = egui::CornerRadius::same(theme::window_radius());
             backdrop::paint_fill(
                 &painter,
                 &tex,
                 screen,
                 egui::Color32::from_gray(150).gamma_multiply(t),
+                radius,
             );
-            painter.rect_filled(
-                screen,
-                0.0,
-                theme::alpha(theme::bg(), (0x70 as f32 * t) as u8),
-            );
+            painter.rect_filled(screen, radius, theme::alpha(theme::bg(), (0x70 as f32 * t) as u8));
         }
+    }
+
+    /// Liseré de la fenêtre (elle n'a pas de bordure du système) : fin trait clair, arrondi.
+    fn paint_window_border(&self, ctx: &egui::Context) {
+        let r = theme::window_radius();
+        if r == 0 {
+            return;
+        }
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("window_border"),
+        ));
+        painter.rect_stroke(
+            ctx.screen_rect(),
+            egui::CornerRadius::same(r),
+            egui::Stroke::new(1.0_f32, theme::white(0x1E)),
+            egui::StrokeKind::Inside,
+        );
+    }
+
+    /// Ajoute « stermusic » aux classes de fenêtres de l'effet Better Blur (forceblur) de KWin,
+    /// puis demande à KWin de relire sa configuration.
+    fn enable_kwin_blur(&mut self) {
+        let read = std::process::Command::new("kreadconfig6")
+            .args([
+                "--file",
+                "kwinrc",
+                "--group",
+                "Effect-blurplus",
+                "--key",
+                "WindowClasses",
+            ])
+            .output();
+        let Ok(out) = read else {
+            self.toast("kreadconfig6 introuvable : l'effet Better Blur n'est pas réglable automatiquement");
+            return;
+        };
+        let current = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        // kreadconfig6 rend la liste avec de vrais retours à la ligne (kwriteconfig6 les échappe).
+        let classes: Vec<&str> = current.lines().map(str::trim).filter(|c| !c.is_empty()).collect();
+        if !classes.contains(&"stermusic") {
+            let value = classes
+                .iter()
+                .copied()
+                .chain(["stermusic"])
+                .collect::<Vec<_>>()
+                .join("\n");
+            let ok = std::process::Command::new("kwriteconfig6")
+                .args([
+                    "--file",
+                    "kwinrc",
+                    "--group",
+                    "Effect-blurplus",
+                    "--key",
+                    "WindowClasses",
+                    &value,
+                ])
+                .status()
+                .is_ok_and(|s| s.success());
+            if !ok {
+                self.toast("Impossible de modifier la configuration de KWin");
+                return;
+            }
+        }
+        let _ = std::process::Command::new("qdbus6")
+            .args(["org.kde.KWin", "/KWin", "reconfigure"])
+            .status();
+        self.settings.backdrop = BackdropKind::Transparent;
+        self.toast("SterMusic ajouté à Better Blur : KWin floute maintenant l'arrière-plan");
     }
 }

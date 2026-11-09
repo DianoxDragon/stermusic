@@ -30,9 +30,14 @@ vraie intégration au bureau Linux.
 
 **Bureau Linux**
 - **MPRIS** : widget lecteur de KDE Plasma / GNOME, touches multimédia, écran de verrouillage
-- Fond **Mica** tiré du fond d'écran (KDE Plasma et GNOME)
-- Polices du système (Ubuntu, Noto, DejaVu…), dossiers XDG, lanceur `.desktop`
-- Seize thèmes de couleurs (ceux de SterCode), barre de titre intégrée
+- **Style Breeze (Kubuntu)**, par défaut sous KDE : couleurs et accent de KDE (`kdeglobals`),
+  icônes Breeze du système, police Noto Sans, boutons de fenêtre ronds et titre centré
+- Fond au choix : **Mica** simulé (fond d'écran de KDE Plasma ou GNOME, flouté, teinté, avec un
+  grain discret ; intensité réglable), **transparent** (flouté par KWin : bouton pour ajouter
+  SterMusic à l'effet Better Blur) ou uni
+- **Coins arrondis** (droits quand la fenêtre est agrandie)
+- Polices de secours pour le japonais, le chinois et le coréen (Noto Sans CJK)
+- Dossiers XDG, lanceur `.desktop`, seize thèmes de SterCode en plus de celui de KDE
 
 ## Installation
 
@@ -81,7 +86,7 @@ cargo run --release -- ~/Musique
 - `src/app/lists.rs` : listes de morceaux, grilles, menus contextuels
 - `src/library.rs` : scan, tags, cache, albums et artistes
 - `src/covers.rs` : pochettes (chargées en arrière-plan)
-- `src/player.rs` : moteur audio (rodio)
+- `src/player.rs` : moteur audio (rodio 0.21 ; M4A/AAC compris)
 - `src/mpris.rs` : intégration MPRIS (souvlaki, D-Bus en pur Rust)
 - `src/backdrop.rs` : fond Mica
 - `src/theme.rs`, `src/anim.rs`, `src/icons.rs`, `src/widgets.rs` : charte, animations, icônes

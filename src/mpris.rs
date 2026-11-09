@@ -58,9 +58,7 @@ impl Mpris {
                     MediaControlEvent::Previous => Remote::Previous,
                     MediaControlEvent::Stop => Remote::Stop,
                     MediaControlEvent::Seek(dir) => Remote::SeekBy(sign(dir) * 10.0),
-                    MediaControlEvent::SeekBy(dir, d) => {
-                        Remote::SeekBy(sign(dir) * d.as_secs_f32())
-                    }
+                    MediaControlEvent::SeekBy(dir, d) => Remote::SeekBy(sign(dir) * d.as_secs_f32()),
                     MediaControlEvent::SetPosition(MediaPosition(d)) => Remote::SetPosition(d),
                     MediaControlEvent::Raise => Remote::Raise,
                     _ => return,

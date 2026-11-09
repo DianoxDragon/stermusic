@@ -121,10 +121,7 @@ impl Library {
         let mut albums: Vec<Album> = Vec::new();
         let mut track_album = Vec::with_capacity(tracks.len());
         for (i, t) in tracks.iter().enumerate() {
-            let key = (
-                lower(t.album_artist_or_artist()),
-                lower(t.album_or_unknown()),
-            );
+            let key = (lower(t.album_artist_or_artist()), lower(t.album_or_unknown()));
             let idx = *album_index.entry(key).or_insert_with(|| {
                 albums.push(Album {
                     title: t.album_or_unknown().to_owned(),
@@ -312,9 +309,7 @@ pub fn read_track(path: &Path) -> Track {
             if let Some(t) = tag.title().filter(|t| !t.trim().is_empty()) {
                 track.title = t.trim().to_owned();
             }
-            let get = |v: Option<std::borrow::Cow<str>>| {
-                v.map(|s| s.trim().to_owned()).unwrap_or_default()
-            };
+            let get = |v: Option<std::borrow::Cow<str>>| v.map(|s| s.trim().to_owned()).unwrap_or_default();
             track.artist = get(tag.artist());
             track.album = get(tag.album());
             track.genre = get(tag.genre());
@@ -375,9 +370,7 @@ fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
     std::env::var_os(var)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| {
-            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback)
-        })
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback))
 }
 
 fn cache_file() -> PathBuf {
@@ -408,9 +401,7 @@ pub fn default_music_dir() -> Option<PathBuf> {
         .output()
         .ok()
         .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
-        .filter(|p| {
-            p.is_dir() && p != &PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-        });
+        .filter(|p| p.is_dir() && p != &PathBuf::from(std::env::var_os("HOME").unwrap_or_default()));
     from_xdg.or_else(|| {
         let home = PathBuf::from(std::env::var_os("HOME")?);
         ["Musique", "Music"]

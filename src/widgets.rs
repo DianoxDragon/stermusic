@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, pos2, vec2, Color32, CornerRadius, FontId, Galley, Pos2, Rect, Response, Sense, Stroke,
-    StrokeKind, TextureHandle, Ui,
+    self, pos2, vec2, Color32, CornerRadius, FontId, Galley, Pos2, Rect, Response, Sense, Stroke, StrokeKind,
+    TextureHandle, Ui,
 };
 
 use crate::anim;
@@ -34,10 +34,8 @@ pub fn paint_interaction(ui: &Ui, rect: Rect, radius: u8, response: &Response) {
 
 /// Texte sur une ligne, coupé par « … » s'il dépasse `max_width`.
 pub fn galley(ui: &Ui, text: &str, font: FontId, color: Color32, max_width: f32) -> Arc<Galley> {
-    let mut job = egui::text::LayoutJob::single_section(
-        text.to_owned(),
-        egui::TextFormat::simple(font, color),
-    );
+    let mut job =
+        egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(font, color));
     job.wrap = egui::text::TextWrapping {
         max_width: max_width.max(1.0),
         max_rows: 1,
@@ -54,11 +52,24 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, size: f32, icon_size:
         paint_interaction(ui, rect, 6, &response);
         let t = hover_t(ui, response.id, response.hovered());
         let color = if ui.is_enabled() {
-            theme::mix(theme::TEXT_2, theme::TEXT, t)
+            theme::mix(theme::icon_idle(), theme::TEXT, t)
         } else {
             theme::TEXT_3
         };
-        icons::paint_centered(ui.painter(), icon, rect.center(), icon_size, color);
+        // Petit enfoncement au clic.
+        let press = anim::toggle(
+            ui.ctx(),
+            response.id.with("press"),
+            response.is_pointer_button_down_on(),
+            anim::FAST,
+        );
+        icons::paint_centered(
+            ui.painter(),
+            icon,
+            rect.center(),
+            icon_size * (1.0 - 0.1 * press),
+            color,
+        );
     }
     if tooltip.is_empty() {
         response
@@ -69,28 +80,23 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, size: f32, icon_size:
 
 /// Bouton-icône à bascule : icône dans l'accent et petit point dessous quand il est actif
 /// (aléatoire, répétition), comme dans le lecteur de Windows 11.
-pub fn toggle_icon(
-    ui: &mut Ui,
-    on: bool,
-    icon: Icon,
-    tooltip: &str,
-    size: f32,
-    icon_size: f32,
-) -> Response {
+pub fn toggle_icon(ui: &mut Ui, on: bool, icon: Icon, tooltip: &str, size: f32, icon_size: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::click());
     paint_interaction(ui, rect, 6, &response);
     let a = anim::toggle(ui.ctx(), response.id.with("on"), on, anim::NORMAL);
     let t = hover_t(ui, response.id, response.hovered());
     let color = theme::mix(
-        theme::mix(theme::TEXT_2, theme::TEXT, t),
+        theme::mix(theme::icon_idle(), theme::TEXT, t),
         theme::accent_light(),
         a,
     );
+    // Petit rebond quand on l'active (favori, aléatoire, répétition).
+    let pop = pop(ui.ctx(), response.id, on);
     icons::paint_centered(
         ui.painter(),
         icon,
         rect.center() - vec2(0.0, 2.0 * a),
-        icon_size,
+        icon_size * pop,
         color,
     );
     if a > 0.0 {
@@ -105,31 +111,55 @@ pub fn toggle_icon(
 pub fn play_button(ui: &mut Ui, playing: bool, size: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::click());
     let t = hover_t(ui, response.id, response.hovered());
-    let press = if response.is_pointer_button_down_on() {
-        0.94
-    } else {
-        1.0 + 0.04 * t
-    };
-    let r = Rect::from_center_size(rect.center(), rect.size() * press);
+    let press = anim::toggle(
+        ui.ctx(),
+        response.id.with("press"),
+        response.is_pointer_button_down_on(),
+        anim::FAST,
+    );
+    let scale = 1.0 + 0.05 * t - 0.09 * press;
+    let r = Rect::from_center_size(rect.center(), rect.size() * scale);
     let painter = ui.painter();
+    let radius = CornerRadius::same((r.width() / 2.0) as u8);
     let shadow = egui::Shadow {
         offset: [0, 3],
-        blur: (8.0 + 8.0 * t) as u8,
+        blur: (8.0 + 10.0 * t) as u8,
         spread: 0,
-        color: theme::accent().gamma_multiply(0.30 + 0.25 * t),
+        color: theme::accent().gamma_multiply(0.30 + 0.30 * t),
     };
-    painter.add(shadow.as_shape(r, CornerRadius::same((size / 2.0) as u8)));
-    theme::brand_fill(painter, r, CornerRadius::same((size / 2.0) as u8), 1.0);
-    let icon = if playing { Icon::Pause } else { Icon::Play };
-    // Le triangle « lecture » paraît décentré : on le pousse un peu à droite.
-    let nudge = if playing { 0.0 } else { size * 0.04 };
-    icons::paint_centered(
-        painter,
-        icon,
-        r.center() + vec2(nudge, 0.0),
-        size * 0.42,
-        Color32::WHITE,
+    painter.add(shadow.as_shape(r, radius));
+    theme::brand_fill(painter, r, radius, 1.0);
+    // Lecture ↔ pause : les deux icônes se croisent en tournant légèrement et en changeant d'échelle.
+    let p = anim::value(
+        ui.ctx(),
+        response.id.with("morph"),
+        if playing { 1.0 } else { 0.0 },
+        anim::NORMAL,
+        anim::Easing::OutBack,
     );
+    let p = p.clamp(0.0, 1.0);
+    let icon_size = r.width() * 0.42;
+    if p < 1.0 {
+        // Le triangle « lecture » paraît décentré : on le pousse un peu à droite.
+        let s = icon_size * (1.0 - 0.5 * p);
+        icons::paint_centered(
+            painter,
+            Icon::Play,
+            r.center() + vec2(size * 0.04, 0.0),
+            s,
+            Color32::WHITE.gamma_multiply(1.0 - p),
+        );
+    }
+    if p > 0.0 {
+        let s = icon_size * (0.5 + 0.5 * p);
+        icons::paint_centered(
+            painter,
+            Icon::Pause,
+            r.center(),
+            s,
+            Color32::WHITE.gamma_multiply(p),
+        );
+    }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(if playing {
@@ -145,30 +175,15 @@ fn button_content(ui: &Ui, icon: Option<Icon>, text: &str, color: Color32) -> (A
     (galley, width)
 }
 
-fn paint_button_content(
-    ui: &Ui,
-    rect: Rect,
-    icon: Option<Icon>,
-    galley: Arc<Galley>,
-    color: Color32,
-) {
+fn paint_button_content(ui: &Ui, rect: Rect, icon: Option<Icon>, galley: Arc<Galley>, color: Color32) {
     let content_w = galley.size().x + if icon.is_some() { 26.0 } else { 0.0 };
     let mut x = rect.center().x - content_w / 2.0;
     if let Some(icon) = icon {
-        icons::paint_centered(
-            ui.painter(),
-            icon,
-            pos2(x + 8.0, rect.center().y),
-            16.0,
-            color,
-        );
+        icons::paint_centered(ui.painter(), icon, pos2(x + 8.0, rect.center().y), 16.0, color);
         x += 26.0;
     }
-    ui.painter().galley(
-        pos2(x, rect.center().y - galley.size().y / 2.0),
-        galley,
-        color,
-    );
+    ui.painter()
+        .galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
 }
 
 /// Bouton principal, dans le dégradé de marque.
@@ -176,16 +191,26 @@ pub fn primary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     let (galley, w) = button_content(ui, icon, text, Color32::WHITE);
     let (rect, response) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
     let t = hover_t(ui, response.id, response.hovered());
+    // Enfoncement au clic, puis petit rebond au relâchement.
+    let down = response.is_pointer_button_down_on();
+    let press = anim::value(
+        ui.ctx(),
+        response.id.with("press"),
+        if down { 1.0 } else { 0.0 },
+        anim::NORMAL,
+        anim::Easing::OutBack,
+    );
+    let rect = Rect::from_center_size(rect.center(), rect.size() * (1.0 - 0.05 * press));
     let painter = ui.painter();
     let shadow = egui::Shadow {
         offset: [0, 4],
-        blur: (6.0 + 8.0 * t) as u8,
+        blur: (6.0 + 10.0 * t) as u8,
         spread: 0,
-        color: theme::accent().gamma_multiply(0.22 + 0.2 * t),
+        color: theme::accent().gamma_multiply(0.22 + 0.25 * t),
     };
     painter.add(shadow.as_shape(rect, CornerRadius::same(6)));
     theme::brand_fill(painter, rect, 6, 1.0);
-    let overlay = if response.is_pointer_button_down_on() {
+    let overlay = if down {
         Color32::from_black_alpha(0x26)
     } else {
         theme::white((0x1A as f32 * t) as u8)
@@ -193,6 +218,96 @@ pub fn primary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     painter.rect_filled(rect, CornerRadius::same(6), overlay);
     paint_button_content(ui, rect, icon, galley, Color32::WHITE);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Petit rebond (0,3 → 1, avec dépassement) quand `on` devient vrai : cœur des favoris…
+pub fn pop(ctx: &egui::Context, id: egui::Id, on: bool) -> f32 {
+    let pop_id = id.with("pop");
+    let was = ctx.data(|d| d.get_temp::<bool>(pop_id.with("was")));
+    let fresh = on && was == Some(false);
+    if fresh {
+        anim::reset(ctx, pop_id);
+    }
+    ctx.data_mut(|d| d.insert_temp(pop_id.with("was"), on));
+    anim::value_from(
+        ctx,
+        pop_id,
+        if fresh { 0.3 } else { 1.0 },
+        1.0,
+        anim::NORMAL,
+        anim::Easing::OutBack,
+    )
+}
+
+/// Égaliseur animé (trois barres qui dansent) : le morceau en cours. À l'arrêt, les barres se posent.
+pub fn equalizer(painter: &egui::Painter, center: Pos2, size: f32, color: Color32, playing: bool) {
+    let ctx = painter.ctx();
+    let time = ctx.input(|i| i.time) as f32;
+    // Transition douce entre lecture et pause.
+    let id = egui::Id::new(("equalizer", (center.x as i32, center.y as i32)));
+    let k = anim::toggle(ctx, id, playing, anim::NORMAL);
+    let bar_w = (size * 0.2).max(2.0);
+    let gap = size * 0.13;
+    let bottom = center.y + size / 2.0;
+    for (i, (speed, phase)) in [(7.3_f32, 0.0_f32), (9.1, 1.9), (6.2, 3.4)]
+        .into_iter()
+        .enumerate()
+    {
+        let wave =
+            ((time * speed + phase).sin() * 0.5 + 0.5) * ((time * speed * 0.37 + phase).cos() * 0.25 + 0.75);
+        let h = size * (0.28 + k * 0.72 * wave.clamp(0.0, 1.0)).max(0.22);
+        let x = center.x + (i as f32 - 1.0) * (bar_w + gap);
+        let bar = Rect::from_min_max(pos2(x - bar_w / 2.0, bottom - h), pos2(x + bar_w / 2.0, bottom));
+        painter.rect_filled(bar, CornerRadius::same((bar_w / 2.0) as u8), color);
+    }
+    if playing {
+        ctx.request_repaint_after(std::time::Duration::from_millis(33));
+    }
+}
+
+/// Champ de recherche (fond arrondi, loupe, soulignement à l'accent quand il a le focus).
+pub fn search_field(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, width: f32) -> Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let response = ui.put(
+        rect,
+        egui::TextEdit::singleline(text)
+            .id(id)
+            .hint_text(hint)
+            .frame(false)
+            .margin(vec2(32.0, 7.0))
+            .vertical_align(egui::Align::Center),
+    );
+    let t = anim::toggle(ui.ctx(), id.with("focus"), response.has_focus(), anim::FAST);
+    ui.painter().set(
+        bg,
+        egui::epaint::RectShape::new(
+            rect,
+            CornerRadius::same(6),
+            theme::mix(theme::white(0x0F), theme::white(0x06), t),
+            Stroke::new(1.0_f32, theme::stroke()),
+            StrokeKind::Inside,
+        ),
+    );
+    if t > 0.0 {
+        let line = Rect::from_min_max(
+            pos2(rect.left() + 1.0, rect.bottom() - 2.0),
+            pos2(rect.right() - 1.0, rect.bottom()),
+        );
+        theme::brand_fill(ui.painter(), line, 1, t);
+    }
+    icons::paint_centered(
+        ui.painter(),
+        Icon::Search,
+        pos2(rect.left() + 16.0, rect.center().y),
+        15.0,
+        theme::TEXT_3,
+    );
+    if response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+        text.clear();
+        response.surrender_focus();
+    }
+    response
 }
 
 /// Bouton secondaire « verre ».
@@ -209,10 +324,7 @@ pub fn secondary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response
     painter.rect_stroke(
         rect,
         CornerRadius::same(6),
-        Stroke::new(
-            1.0_f32,
-            theme::mix(theme::stroke(), theme::stroke_strong(), t),
-        ),
+        Stroke::new(1.0_f32, theme::mix(theme::stroke(), theme::stroke_strong(), t)),
         StrokeKind::Inside,
     );
     if response.is_pointer_button_down_on() {
@@ -324,13 +436,7 @@ pub fn seek_bar(ui: &mut Ui, id_salt: &str, value: f32, width: f32, enabled: boo
 }
 
 /// Pochette dans un rectangle arrondi ; sans image, un dégradé avec une note de musique.
-pub fn cover(
-    painter: &egui::Painter,
-    rect: Rect,
-    texture: Option<&TextureHandle>,
-    radius: u8,
-    seed: &str,
-) {
+pub fn cover(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHandle>, radius: u8, seed: &str) {
     match texture {
         Some(tex) => {
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
@@ -347,21 +453,9 @@ pub fn cover(
                 rect.right() - rect.width() * 0.25,
                 rect.top() + rect.height() * 0.25,
             );
-            soft_glow(
-                painter,
-                rect,
-                center,
-                rect.width() * 0.9,
-                theme::alpha(b, 0x80),
-            );
+            soft_glow(painter, rect, center, rect.width() * 0.9, theme::alpha(b, 0x80));
             let size = (rect.width() * 0.34).clamp(12.0, 64.0);
-            icons::paint_centered(
-                painter,
-                Icon::Music,
-                rect.center(),
-                size,
-                theme::white(0x70),
-            );
+            icons::paint_centered(painter, Icon::Music, rect.center(), size, theme::white(0x70));
         }
     }
     painter.rect_stroke(
@@ -394,36 +488,19 @@ pub fn soft_glow(painter: &egui::Painter, bounds: Rect, center: Pos2, radius: f3
 }
 
 /// Image ronde (artistes) ; sans image, l'initiale sur un dégradé.
-pub fn circle_cover(
-    ui: &Ui,
-    center: Pos2,
-    radius: f32,
-    texture: Option<&TextureHandle>,
-    name: &str,
-) {
+pub fn circle_cover(ui: &Ui, center: Pos2, radius: f32, texture: Option<&TextureHandle>, name: &str) {
     let painter = ui.painter();
-    let steps = 64u32;
     match texture {
         Some(tex) => {
-            let mut mesh = egui::Mesh::with_texture(tex.id());
-            mesh.vertices.push(egui::epaint::Vertex {
-                pos: center,
-                uv: pos2(0.5, 0.5),
-                color: Color32::WHITE,
-            });
-            for i in 0..=steps {
-                let a = i as f32 / steps as f32 * std::f32::consts::TAU;
-                let d = vec2(a.cos(), a.sin());
-                mesh.vertices.push(egui::epaint::Vertex {
-                    pos: center + d * radius,
-                    uv: pos2(0.5 + 0.5 * d.x, 0.5 + 0.5 * d.y),
-                    color: Color32::WHITE,
-                });
-                if i > 0 {
-                    mesh.add_triangle(0, i, i + 1);
-                }
-            }
-            painter.add(mesh);
+            // Rectangle aux coins entièrement arrondis : egui en lisse le bord (anti-crénelage),
+            // ce qu'il ne fait pas pour un maillage en éventail.
+            let rect = Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            let r = radius.min(255.0) as u8;
+            painter.add(
+                egui::epaint::RectShape::filled(rect, CornerRadius::same(r), Color32::WHITE)
+                    .with_texture(tex.id(), uv),
+            );
         }
         None => {
             let (a, b) = theme::seeded_colors(name);
@@ -474,8 +551,7 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
 
 /// Lien texte discret (« Tout afficher »).
 pub fn link(ui: &mut Ui, text: &str) -> Response {
-    let galley =
-        ui.fonts(|f| f.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), theme::TEXT_2));
+    let galley = ui.fonts(|f| f.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), theme::TEXT_2));
     let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(18.0, 6.0), Sense::click());
     let t = hover_t(ui, response.id, response.hovered());
     let color = theme::mix(theme::TEXT_2, theme::accent_light(), t);
@@ -498,13 +574,7 @@ pub fn empty_state(ui: &mut Ui, icon: Icon, title: &str, subtitle: &str) {
         let (rect, _) = ui.allocate_exact_size(vec2(88.0, 88.0), Sense::hover());
         ui.painter()
             .circle_filled(rect.center(), 44.0, theme::accent_soft());
-        icons::paint_centered(
-            ui.painter(),
-            icon,
-            rect.center(),
-            40.0,
-            theme::accent_light(),
-        );
+        icons::paint_centered(ui.painter(), icon, rect.center(), 40.0, theme::accent_light());
         ui.add_space(14.0);
         ui.label(
             egui::RichText::new(title)
@@ -515,4 +585,53 @@ pub fn empty_state(ui: &mut Ui, icon: Icon, title: &str, subtitle: &str) {
         ui.label(egui::RichText::new(subtitle).color(theme::TEXT_2));
         ui.add_space(14.0);
     });
+}
+
+/// Curseur vertical d'égaliseur (−max → +max dB) : remplissage depuis 0, curseur rond,
+/// double-clic pour revenir à 0. Renvoie vrai si la valeur a changé.
+pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max: f32, height: f32) -> bool {
+    let (rect, response) = ui.allocate_exact_size(vec2(28.0, height), Sense::click_and_drag());
+    let id = ui.id().with(id_salt);
+    let track = Rect::from_center_size(rect.center(), vec2(4.0, height - 16.0));
+    let y_of = |v: f32| egui::remap_clamp(v, -max..=max, track.bottom()..=track.top());
+    let mut changed = false;
+    if response.double_clicked() {
+        *value = 0.0;
+        changed = true;
+    } else if let Some(p) = response
+        .interact_pointer_pos()
+        .filter(|_| response.dragged() || response.clicked())
+    {
+        let v = egui::remap_clamp(p.y, track.bottom()..=track.top(), -max..=max);
+        // Crans d'un demi-décibel.
+        let v = (v * 2.0).round() / 2.0;
+        if (v - *value).abs() > f32::EPSILON {
+            *value = v;
+            changed = true;
+        }
+    }
+    let active = response.hovered() || response.dragged();
+    let t = anim::toggle(ui.ctx(), id.with("active"), active, anim::FAST);
+    let painter = ui.painter();
+    painter.rect_filled(track, CornerRadius::same(2), theme::white(0x22));
+    // Repère du 0 dB.
+    painter.hline(
+        track.left() - 5.0..=track.right() + 5.0,
+        y_of(0.0),
+        Stroke::new(1.0_f32, theme::white(0x30)),
+    );
+    let (y0, y1) = (y_of(0.0), y_of(*value));
+    let fill = Rect::from_min_max(pos2(track.left(), y0.min(y1)), pos2(track.right(), y0.max(y1)));
+    if fill.height() > 0.5 {
+        theme::brand_fill(painter, fill, CornerRadius::same(2), 1.0);
+    }
+    let c = pos2(track.center().x, y1);
+    painter.circle_filled(c + vec2(0.0, 1.0), 8.0, Color32::from_black_alpha(60));
+    painter.circle_filled(c, 7.5, theme::glass());
+    painter.circle_stroke(c, 7.5, Stroke::new(1.0_f32, theme::white(0x22)));
+    painter.circle_filled(c, 3.5 + 1.5 * t, theme::accent_light());
+    response
+        .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+        .on_hover_text(format!("{:+.1} dB (double-clic : 0)", value));
+    changed
 }

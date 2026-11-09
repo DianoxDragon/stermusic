@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
-use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions};
+use eframe::egui::{self, Color32, ColorImage, TextureHandle, TextureOptions};
 use image::imageops::FilterType;
 use image::{DynamicImage, RgbaImage};
 use lofty::picture::PictureType;
@@ -26,7 +26,11 @@ enum Job {
 
 enum Done {
     Thumb(PathBuf, Option<ColorImage>),
-    Large(PathBuf, Option<(ColorImage, ColorImage)>, Option<PathBuf>),
+    Large(
+        PathBuf,
+        Option<(ColorImage, ColorImage, Option<[Color32; 3]>)>,
+        Option<PathBuf>,
+    ),
 }
 
 struct Queue {
@@ -41,6 +45,8 @@ pub struct LargeCover {
     pub blurred: Option<TextureHandle>,
     /// Copie PNG sur le disque, pour MPRIS.
     pub file: Option<PathBuf>,
+    /// Couleurs dominantes de la pochette (visualiseur) ; `None` si elle est sans couleur.
+    pub palette: Option<[Color32; 3]>,
 }
 
 pub struct Covers {
@@ -118,11 +124,7 @@ impl Covers {
                 Done::Thumb(path, image) => {
                     self.pending.remove(&path);
                     let tex = image.map(|i| {
-                        ctx.load_texture(
-                            format!("thumb:{}", path.display()),
-                            i,
-                            TextureOptions::LINEAR,
-                        )
+                        ctx.load_texture(format!("thumb:{}", path.display()), i, TextureOptions::LINEAR)
                     });
                     self.thumbs.insert(path, tex);
                 }
@@ -131,18 +133,20 @@ impl Covers {
                         continue;
                     }
                     self.large_pending = None;
-                    let (cover, blurred) = match images {
-                        Some((c, b)) => (
+                    let (cover, blurred, palette) = match images {
+                        Some((c, b, p)) => (
                             Some(ctx.load_texture("large_cover", c, TextureOptions::LINEAR)),
                             Some(ctx.load_texture("large_blur", b, TextureOptions::LINEAR)),
+                            p,
                         ),
-                        None => (None, None),
+                        None => (None, None, None),
                     };
                     self.large = Some(LargeCover {
                         path,
                         cover,
                         blurred,
                         file,
+                        palette,
                     });
                 }
             }
@@ -183,7 +187,8 @@ fn worker(queue: Arc<Queue>, tx: Sender<Done>, ctx: egui::Context) {
                     let small = square(&img, BLUR);
                     let blurred = image::imageops::blur(&small, 4.0);
                     let file = save_png(&path, &img);
-                    Done::Large(path, Some((to_color(&large), to_color(&blurred))), file)
+                    let palette = palette(&small);
+                    Done::Large(path, Some((to_color(&large), to_color(&blurred), palette)), file)
                 }
                 None => Done::Large(path, None, None),
             },
@@ -201,11 +206,7 @@ fn load_source(track: &Path) -> Option<DynamicImage> {
 
 fn embedded(track: &Path) -> Option<DynamicImage> {
     let tagged = Probe::open(track).ok()?.read().ok()?;
-    let pictures: Vec<_> = tagged
-        .tags()
-        .iter()
-        .flat_map(|t| t.pictures().iter())
-        .collect();
+    let pictures: Vec<_> = tagged.tags().iter().flat_map(|t| t.pictures().iter()).collect();
     let pic = pictures
         .iter()
         .find(|p| p.pic_type() == PictureType::CoverFront)
@@ -242,9 +243,7 @@ fn folder_image(track: &Path) -> Option<DynamicImage> {
         })
         .collect();
     candidates.sort();
-    candidates
-        .into_iter()
-        .find_map(|(_, p)| image::open(p).ok())
+    candidates.into_iter().find_map(|(_, p)| image::open(p).ok())
 }
 
 /// Recadrage carré au centre, puis mise à la taille voulue.
@@ -273,4 +272,81 @@ fn save_png(track: &Path, img: &DynamicImage) -> Option<PathBuf> {
         square(img, 512).save(&file).ok()?;
     }
     Some(file)
+}
+
+/// Couleurs dominantes d'une pochette, pour le visualiseur : les pixels sont regroupés par teinte
+/// (pondérés par leur vivacité) ; on garde les deux teintes principales bien distinctes, puis une
+/// troisième pour la lueur. Une pochette presque sans couleur renvoie `None` (couleurs du thème).
+fn palette(img: &RgbaImage) -> Option<[Color32; 3]> {
+    const BINS: usize = 18;
+    let mut weight = [0f32; BINS];
+    let mut sum = [[0f32; 3]; BINS];
+    for p in img.pixels() {
+        let (r, g, b) = (p[0] as f32 / 255.0, p[1] as f32 / 255.0, p[2] as f32 / 255.0);
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let sat = if max > 0.0 { (max - min) / max } else { 0.0 };
+        if max < 0.12 || sat < 0.18 {
+            continue;
+        }
+        let hue = if max == min {
+            0.0
+        } else if max == r {
+            ((g - b) / (max - min)).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / (max - min) + 2.0
+        } else {
+            (r - g) / (max - min) + 4.0
+        } / 6.0;
+        let bin = ((hue * BINS as f32) as usize).min(BINS - 1);
+        let w = sat * sat * (0.4 + max);
+        weight[bin] += w;
+        for (k, c) in [r, g, b].into_iter().enumerate() {
+            sum[bin][k] += c * w;
+        }
+    }
+    let total: f32 = weight.iter().sum();
+    // Moins de ~3 % de pixels colorés : pochette en noir et blanc.
+    if total < img.pixels().len() as f32 * 0.02 {
+        return None;
+    }
+    let mut order: Vec<usize> = (0..BINS).collect();
+    order.sort_by(|&a, &b| weight[b].total_cmp(&weight[a]));
+    let color = |bin: usize| -> Color32 {
+        let w = weight[bin].max(1e-6);
+        vivid(sum[bin][0] / w, sum[bin][1] / w, sum[bin][2] / w)
+    };
+    let first = order[0];
+    let distance = |a: usize, b: usize| {
+        let d = a.abs_diff(b);
+        d.min(BINS - d)
+    };
+    let second = order
+        .iter()
+        .copied()
+        .find(|&b| distance(b, first) >= 3 && weight[b] > total * 0.04);
+    let a = color(first);
+    let b = second.map(color).unwrap_or_else(|| shift(a));
+    let third = order
+        .iter()
+        .copied()
+        .find(|&c| Some(c) != second && distance(c, first) >= 2 && weight[c] > total * 0.02)
+        .map(color)
+        .unwrap_or_else(|| shift(b));
+    Some([a, b, third])
+}
+
+/// Couleur ravivée : saturation et luminosité remontées, pour une lumière sur fond sombre.
+fn vivid(r: f32, g: f32, b: f32) -> Color32 {
+    let max = r.max(g).max(b).max(1e-3);
+    let (r, g, b) = (r / max, g / max, b / max);
+    let l = (r + g + b) / 3.0;
+    let boost = |c: f32| ((l + (c - l) * 1.35).clamp(0.0, 1.0) * 0.92 * 255.0) as u8;
+    Color32::from_rgb(boost(r), boost(g), boost(b))
+}
+
+/// Variante voisine d'une couleur (quand la pochette n'a qu'une teinte).
+fn shift(c: Color32) -> Color32 {
+    let mix = |x: u8, y: u8| ((x as u16 + y as u16) / 2) as u8;
+    Color32::from_rgb(mix(c.r(), c.b()), mix(c.g(), c.r()), mix(c.b(), c.g()))
 }

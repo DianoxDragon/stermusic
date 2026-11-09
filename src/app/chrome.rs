@@ -2,8 +2,7 @@
 
 use eframe::egui::viewport::ResizeDirection;
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind,
-    ViewportCommand,
+    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind, ViewportCommand,
 };
 
 use super::{Action, Dialog, Page, Playlist, PlaylistId, SterMusic, View};
@@ -18,9 +17,7 @@ const SIDEBAR_MIN: f32 = 60.0;
 
 /// Bord de fenêtre sous la souris (fenêtre sans bordure : on gère le redimensionnement).
 pub fn resize_direction(ctx: &egui::Context) -> Option<ResizeDirection> {
-    if ctx.input(|i| {
-        i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)
-    }) {
+    if ctx.input(|i| i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)) {
         return None;
     }
     let pos = ctx.input(|i| i.pointer.hover_pos())?;
@@ -68,40 +65,114 @@ pub fn drag_area(ui: &mut egui::Ui, rect: Rect, id: &str) {
     }
     if response.double_clicked() {
         let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-        ui.ctx()
-            .send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+        ui.ctx().send_viewport_cmd(ViewportCommand::Maximized(!maximized));
     }
 }
 
-/// Bouton de fenêtre (réduire, agrandir, fermer), à la Windows 11 ; fermer rougit au survol.
-fn window_button(
-    ui: &mut egui::Ui,
-    rect: Rect,
-    icon: Icon,
-    close: bool,
-    tooltip: &str,
-) -> egui::Response {
-    let response = ui.interact(rect, ui.id().with(("winbtn", icon as u8)), Sense::click());
-    let t = widgets::hover_t(ui, response.id, response.hovered());
-    if t > 0.0 {
-        let fill = if close {
-            theme::DANGER
+#[derive(Clone, Copy, PartialEq)]
+enum WinBtn {
+    Mini,
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// Bouton de fenêtre. Style Breeze (KDE) : glyphes fins dans un rond qui se remplit au survol,
+/// rouge Breeze pour fermer. Style Fluent : rectangles pleine hauteur, fermer rougit.
+fn window_button(ui: &mut egui::Ui, rect: Rect, kind: WinBtn, tooltip: &str) -> egui::Response {
+    let response = ui.interact(rect, ui.id().with(("winbtn", kind as u8)), Sense::click());
+    // Survol calculé depuis la position du pointeur : il réagit même quand la fenêtre n'a pas
+    // le focus (egui peut alors ne pas considérer le bouton comme survolé).
+    let hovered = ui
+        .ctx()
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| rect.contains(p));
+    let t = widgets::hover_t(ui, response.id, hovered);
+    // Fenêtre inactive : glyphes atténués, comme les décorations de KWin.
+    let focused = ui.ctx().input(|i| i.focused);
+    let idle = if focused { theme::TEXT_2 } else { theme::TEXT_3 };
+    let close = kind == WinBtn::Close;
+    let painter = ui.painter();
+    if theme::breeze() && kind != WinBtn::Mini {
+        const BREEZE_RED: Color32 = Color32::from_rgb(0xDA, 0x44, 0x53);
+        let c = rect.center();
+        let r = 9.0;
+        if t > 0.0 {
+            let fill = if close { BREEZE_RED } else { theme::white(0x30) };
+            painter.circle_filled(c, r, fill.gamma_multiply(t));
+        }
+        let pressed = response.is_pointer_button_down_on();
+        if pressed {
+            painter.circle_filled(c, r, Color32::from_black_alpha(40));
+        }
+        let color = if close {
+            theme::mix(idle, Color32::WHITE, t)
         } else {
-            theme::white(0x14)
+            theme::mix(idle, theme::TEXT, t)
         };
-        ui.painter().rect_filled(rect, 0.0, fill.gamma_multiply(t));
+        let stroke = Stroke::new(1.5_f32, color);
+        let k = 3.6;
+        match kind {
+            WinBtn::Minimize => painter.add(egui::Shape::line(
+                vec![
+                    c + vec2(-k, -k * 0.5),
+                    c + vec2(0.0, k * 0.5),
+                    c + vec2(k, -k * 0.5),
+                ],
+                stroke,
+            )),
+            WinBtn::Maximize => painter.add(egui::Shape::line(
+                vec![
+                    c + vec2(-k, k * 0.5),
+                    c + vec2(0.0, -k * 0.5),
+                    c + vec2(k, k * 0.5),
+                ],
+                stroke,
+            )),
+            WinBtn::Restore => painter.add(egui::Shape::closed_line(
+                vec![
+                    c + vec2(0.0, -k),
+                    c + vec2(k, 0.0),
+                    c + vec2(0.0, k),
+                    c + vec2(-k, 0.0),
+                ],
+                stroke,
+            )),
+            _ => {
+                painter.line_segment([c + vec2(-k, -k), c + vec2(k, k)], stroke);
+                painter.line_segment([c + vec2(k, -k), c + vec2(-k, k)], stroke)
+            }
+        };
+        return response.on_hover_text(tooltip);
+    }
+    if t > 0.0 {
+        let fill = if close { theme::DANGER } else { theme::white(0x14) };
+        // Le bouton fermer touche le coin arrondi de la fenêtre.
+        let radius = if close {
+            CornerRadius {
+                ne: theme::window_radius(),
+                ..Default::default()
+            }
+        } else {
+            CornerRadius::ZERO
+        };
+        painter.rect_filled(rect, radius, fill.gamma_multiply(t));
     }
     let color = if close {
-        theme::mix(theme::TEXT_2, Color32::WHITE, t)
+        theme::mix(idle, Color32::WHITE, t)
     } else {
-        theme::mix(theme::TEXT_2, theme::TEXT, t)
+        theme::mix(idle, theme::TEXT, t)
     };
-    let size = if icon == Icon::WinMaximize || icon == Icon::WinRestore {
-        12.0
-    } else {
-        15.0
+    let (icon, size) = match kind {
+        WinBtn::Mini => (Icon::MiniPlayer, 15.0),
+        WinBtn::Minimize => (Icon::WinMinimize, 15.0),
+        WinBtn::Maximize => (Icon::WinMaximize, 12.0),
+        WinBtn::Restore => (Icon::WinRestore, 12.0),
+        WinBtn::Close => (Icon::Close, 15.0),
     };
-    icons::paint_centered(ui.painter(), icon, rect.center(), size, color);
+    // Glyphes Lucide (pas Breeze) pour les boutons Fluent.
+    icons::paint_lucide(painter, icon, rect.center(), size, color);
     response.on_hover_text(tooltip)
 }
 
@@ -117,15 +188,9 @@ impl SterMusic {
 
                 let mut x = rect.left() + 8.0;
                 let can_back = !self.history.is_empty() || !matches!(self.view, View::Page(_));
-                let t = anim::toggle(
-                    ui.ctx(),
-                    egui::Id::new("back_visible"),
-                    can_back,
-                    anim::NORMAL,
-                );
+                let t = anim::toggle(ui.ctx(), egui::Id::new("back_visible"), can_back, anim::NORMAL);
                 if t > 0.01 {
-                    let r =
-                        Rect::from_center_size(pos2(x + 16.0, rect.center().y), vec2(32.0, 32.0));
+                    let r = Rect::from_center_size(pos2(x + 16.0, rect.center().y), vec2(32.0, 32.0));
                     let resp = ui.put(r, |ui: &mut egui::Ui| {
                         ui.set_opacity(t);
                         widgets::icon_button(ui, Icon::ArrowLeft, "Retour (Échap)", 32.0, 16.0)
@@ -137,16 +202,9 @@ impl SterMusic {
                 }
 
                 // Logo : note de musique sur le dégradé de marque.
-                let logo =
-                    Rect::from_center_size(pos2(x + 12.0, rect.center().y), vec2(20.0, 20.0));
+                let logo = Rect::from_center_size(pos2(x + 12.0, rect.center().y), vec2(20.0, 20.0));
                 theme::brand_fill(ui.painter(), logo, 5, 1.0);
-                icons::paint_centered(
-                    ui.painter(),
-                    Icon::Music,
-                    logo.center(),
-                    13.0,
-                    Color32::WHITE,
-                );
+                icons::paint_centered(ui.painter(), Icon::Music, logo.center(), 13.0, Color32::WHITE);
                 ui.painter().text(
                     pos2(logo.right() + 10.0, rect.center().y),
                     Align2::LEFT_CENTER,
@@ -155,34 +213,71 @@ impl SterMusic {
                     theme::TEXT_2,
                 );
 
-                // Boutons de fenêtre.
-                let bw = 46.0;
-                let close = Rect::from_min_size(
-                    pos2(rect.right() - bw, rect.top()),
-                    vec2(bw, TITLE_HEIGHT),
-                );
+                // Boutons de fenêtre : ronds et resserrés avec Breeze, pleine hauteur avec Fluent.
+                let bw = if theme::breeze() { 30.0 } else { 46.0 };
+                let right = rect.right() - if theme::breeze() { 8.0 } else { 0.0 };
+                let close = Rect::from_min_size(pos2(right - bw, rect.top()), vec2(bw, TITLE_HEIGHT));
                 let max = close.translate(vec2(-bw, 0.0));
                 let min = max.translate(vec2(-bw, 0.0));
-                if window_button(ui, close, Icon::Close, true, "Fermer").clicked() {
+                if window_button(ui, close, WinBtn::Close, "Fermer").clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
                 let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                let (icon, tip) = if maximized {
-                    (Icon::WinRestore, "Restaurer")
+                let (kind, tip) = if maximized {
+                    (WinBtn::Restore, "Restaurer")
                 } else {
-                    (Icon::WinMaximize, "Agrandir")
+                    (WinBtn::Maximize, "Agrandir")
                 };
-                if window_button(ui, max, icon, false, tip).clicked() {
+                if window_button(ui, max, kind, tip).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
                 }
-                if window_button(ui, min, Icon::WinMinimize, false, "Réduire").clicked() {
+                if window_button(ui, min, WinBtn::Minimize, "Réduire").clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                 }
-                let mini = min.translate(vec2(-bw, 0.0));
-                if window_button(ui, mini, Icon::MiniPlayer, false, "Mini lecteur (Ctrl+M)")
-                    .clicked()
-                {
+                let mini = Rect::from_min_size(
+                    min.min - vec2(if theme::breeze() { 40.0 } else { bw }, 0.0),
+                    vec2(if theme::breeze() { 36.0 } else { bw }, TITLE_HEIGHT),
+                );
+                if theme::breeze() {
+                    let r = Rect::from_center_size(mini.center(), vec2(32.0, 32.0));
+                    if ui
+                        .put(r, |ui: &mut egui::Ui| {
+                            widgets::icon_button(ui, Icon::MiniPlayer, "Mini lecteur (Ctrl+M)", 32.0, 16.0)
+                        })
+                        .clicked()
+                    {
+                        self.actions.push(Action::ToggleMini);
+                    }
+                } else if window_button(ui, mini, WinBtn::Mini, "Mini lecteur (Ctrl+M)").clicked() {
                     self.actions.push(Action::ToggleMini);
+                }
+
+                // Breeze : titre de la fenêtre centré, comme les fenêtres décorées par KWin.
+                if theme::breeze() {
+                    let caption = self.window_title.trim_end_matches(" · SterMusic").to_owned();
+                    let caption = if caption == "SterMusic" {
+                        String::new()
+                    } else {
+                        caption
+                    };
+                    let caption_color = if ctx.input(|i| i.focused) {
+                        theme::TEXT_2
+                    } else {
+                        theme::TEXT_3
+                    };
+                    if !caption.is_empty() {
+                        let max_w = (rect.width() - 2.0 * 220.0).max(80.0);
+                        let g =
+                            widgets::galley(ui, &caption, FontId::proportional(13.0), caption_color, max_w);
+                        ui.painter().galley(
+                            pos2(
+                                rect.center().x - g.size().x / 2.0,
+                                rect.center().y - g.size().y / 2.0,
+                            ),
+                            g,
+                            theme::TEXT_2,
+                        );
+                    }
                 }
             });
     }
@@ -228,13 +323,7 @@ impl SterMusic {
                     let r = Rect::from_min_size(pos2(left, y), vec2(48.0, 34.0));
                     if ui
                         .put(r, |ui: &mut egui::Ui| {
-                            widgets::icon_button(
-                                ui,
-                                Icon::Search,
-                                "Rechercher (Ctrl+F)",
-                                40.0,
-                                17.0,
-                            )
+                            widgets::icon_button(ui, Icon::Search, "Rechercher (Ctrl+F)", 40.0, 17.0)
                         })
                         .clicked()
                     {
@@ -260,11 +349,9 @@ impl SterMusic {
                 let mut pill_target = None;
                 for (page, icon, label) in items {
                     let r = Rect::from_min_size(pos2(left, y), vec2(inner_w, 40.0));
-                    let badge =
-                        (page == Page::Queue && queue_badge > 0).then(|| queue_badge.to_string());
+                    let badge = (page == Page::Queue && queue_badge > 0).then(|| queue_badge.to_string());
                     let selected = active_page == Some(page);
-                    if nav_item(ui, r, icon, label, selected, expanded, badge.as_deref()).clicked()
-                    {
+                    if nav_item(ui, r, icon, label, selected, expanded, badge.as_deref()).clicked() {
                         self.actions.push(Action::Go(View::Page(page)));
                     }
                     if selected {
@@ -307,16 +394,13 @@ impl SterMusic {
                             .auto_shrink(false)
                             .show(ui, |ui| {
                                 for (id, name) in entries {
-                                    let (r, _) =
-                                        ui.allocate_exact_size(vec2(inner_w, 34.0), Sense::hover());
+                                    let (r, _) = ui.allocate_exact_size(vec2(inner_w, 34.0), Sense::hover());
                                     let icon = if id == PlaylistId::Favorites {
                                         Icon::Heart
                                     } else {
                                         Icon::ListMusic
                                     };
-                                    if sub_item(ui, r, icon, &name, current_pl == Some(id))
-                                        .clicked()
-                                    {
+                                    if sub_item(ui, r, icon, &name, current_pl == Some(id)).clicked() {
                                         self.actions.push(Action::Go(View::Playlist(id)));
                                     }
                                 }
@@ -327,17 +411,7 @@ impl SterMusic {
                 // Paramètres, en bas.
                 let r = Rect::from_min_size(pos2(left, rect.bottom() - 48.0), vec2(inner_w, 40.0));
                 let selected = active_page == Some(Page::Settings);
-                if nav_item(
-                    ui,
-                    r,
-                    Icon::Settings,
-                    "Paramètres",
-                    selected,
-                    expanded,
-                    None,
-                )
-                .clicked()
-                {
+                if nav_item(ui, r, Icon::Settings, "Paramètres", selected, expanded, None).clicked() {
                     self.actions.push(Action::Go(View::Page(Page::Settings)));
                 }
                 if selected {
@@ -345,7 +419,7 @@ impl SterMusic {
                 }
 
                 // Indicateur de sélection : une pilule qui glisse d'un élément à l'autre (Fluent).
-                if let Some(target) = pill_target {
+                if let (Some(target), false) = (pill_target, theme::breeze()) {
                     let cy = anim::value(
                         ui.ctx(),
                         egui::Id::new("nav_pill"),
@@ -433,7 +507,11 @@ impl SterMusic {
             Dialog::ConfirmDelete(_) => "Supprimer la playlist ?",
         };
         let modal = egui::Modal::new(egui::Id::new("dialog"))
-            .frame(egui::Frame::popup(&ctx.style()).inner_margin(24.0).corner_radius(12))
+            .frame(
+                egui::Frame::popup(&ctx.style())
+                    .inner_margin(24.0)
+                    .corner_radius(12),
+            )
             .show(ctx, |ui| {
                 ui.set_width(380.0);
                 ui.label(egui::RichText::new(title).font(theme::semibold(20.0)));
@@ -454,10 +532,17 @@ impl SterMusic {
                         }
                     }
                     Dialog::ConfirmDelete(i) => {
-                        let name = self.settings.playlists.get(*i).map(|p| p.name.as_str()).unwrap_or("");
+                        let name = self
+                            .settings
+                            .playlists
+                            .get(*i)
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("");
                         ui.label(
-                            egui::RichText::new(format!("« {name} » sera supprimée. Les morceaux restent dans la bibliothèque."))
-                                .color(theme::TEXT_2),
+                            egui::RichText::new(format!(
+                                "« {name} » sera supprimée. Les morceaux restent dans la bibliothèque."
+                            ))
+                            .color(theme::TEXT_2),
                         );
                     }
                 }
@@ -536,10 +621,7 @@ impl SterMusic {
         let text = text.clone();
         egui::Area::new(egui::Id::new("toast"))
             .order(egui::Order::Foreground)
-            .anchor(
-                Align2::RIGHT_BOTTOM,
-                vec2(-20.0, -120.0 + 8.0 * (1.0 - fade)),
-            )
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -120.0 + 8.0 * (1.0 - fade)))
             .interactable(false)
             .show(ctx, |ui| {
                 ui.set_opacity(fade);
@@ -579,11 +661,25 @@ fn nav_item(
     let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::FAST);
     let painter = ui.painter();
     if s > 0.0 {
-        painter.rect_filled(
-            rect,
-            CornerRadius::same(6),
-            theme::white(0x10).gamma_multiply(s),
-        );
+        if theme::breeze() {
+            // Sélection Breeze : fond teinté de l'accent et liseré de l'accent.
+            painter.rect_filled(
+                rect,
+                CornerRadius::same(5),
+                theme::alpha(theme::accent(), (0x40 as f32 * s) as u8),
+            );
+            painter.rect_stroke(
+                rect,
+                CornerRadius::same(5),
+                Stroke::new(
+                    1.0_f32,
+                    theme::alpha(theme::accent_light(), (0x90 as f32 * s) as u8),
+                ),
+                StrokeKind::Inside,
+            );
+        } else {
+            painter.rect_filled(rect, CornerRadius::same(6), theme::white(0x10).gamma_multiply(s));
+        }
     }
     widgets::paint_interaction(ui, rect, 6, &response);
     let color = theme::mix(
@@ -607,8 +703,8 @@ fn nav_item(
             color,
         );
         if let Some(b) = badge {
-            let galley = ui
-                .fonts(|f| f.layout_no_wrap(b.to_owned(), FontId::proportional(11.0), theme::TEXT));
+            let galley =
+                ui.fonts(|f| f.layout_no_wrap(b.to_owned(), FontId::proportional(11.0), theme::TEXT));
             let w = (galley.size().x + 12.0).max(22.0);
             let r = Rect::from_center_size(
                 pos2(rect.right() - 12.0 - w / 2.0, rect.center().y),
@@ -627,13 +723,7 @@ fn nav_item(
     }
 }
 
-fn sub_item(
-    ui: &mut egui::Ui,
-    rect: Rect,
-    icon: Icon,
-    label: &str,
-    selected: bool,
-) -> egui::Response {
+fn sub_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bool) -> egui::Response {
     let response = ui.interact(
         rect,
         ui.id().with(("sub", label, rect.top() as i32)),
@@ -656,13 +746,7 @@ fn sub_item(
             theme::TEXT_3
         },
     );
-    let g = widgets::galley(
-        ui,
-        label,
-        FontId::proportional(13.5),
-        color,
-        rect.width() - 64.0,
-    );
+    let g = widgets::galley(ui, label, FontId::proportional(13.5), color, rect.width() - 64.0);
     ui.painter().galley(
         pos2(rect.left() + 52.0, rect.center().y - g.size().y / 2.0),
         g,

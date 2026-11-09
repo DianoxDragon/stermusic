@@ -1,13 +1,16 @@
 //! Charte visuelle, reprise de SterCode : fonds bleu nuit doux, calques translucides,
 //! dégradé de marque, coins arrondis à la Fluent. Les thèmes changent le fond et le dégradé.
+//!
+//! Style « Breeze » (Kubuntu) : couleurs et accent de KDE (`kdeglobals`), police Noto Sans,
+//! icônes du thème Breeze, boutons de fenêtre ronds.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Rect,
-    Shadow, Stroke, TextStyle,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Margin, Rect, Shadow, Stroke,
+    TextStyle,
 };
 
 pub struct Theme {
@@ -43,58 +46,121 @@ const fn theme(
 
 /// Les mêmes seize thèmes que SterCode.
 pub const THEMES: [Theme; 16] = [
-    theme(
-        "stercode",
-        "SterMusic",
-        0x14151D,
-        0x5468FF,
-        0x9A5CF5,
-        0x8E9BFF,
-    ),
+    theme("stercode", "SterMusic", 0x14151D, 0x5468FF, 0x9A5CF5, 0x8E9BFF),
     theme("ocean", "Océan", 0x0F171C, 0x2BB3C0, 0x3D7BFF, 0x7AD7E0),
     theme("foret", "Forêt", 0x111814, 0x3FB27F, 0x9BCB3C, 0x86D9AE),
-    theme(
-        "couchant", "Couchant", 0x1A1214, 0xFF7A45, 0xFF4F8B, 0xFFAA85,
-    ),
+    theme("couchant", "Couchant", 0x1A1214, 0xFF7A45, 0xFF4F8B, 0xFFAA85),
     theme("sakura", "Sakura", 0x1A1219, 0xF06BA8, 0xB86BF0, 0xF7A6CB),
     theme("lavande", "Lavande", 0x15131E, 0x9D7BFF, 0xE07BFF, 0xC3B0FF),
     theme("ambre", "Ambre", 0x18150F, 0xF2A93B, 0xF26B3B, 0xF7CB86),
     theme("rubis", "Rubis", 0x1A1113, 0xE5484D, 0xF27B3B, 0xF28A8D),
     theme("menthe", "Menthe", 0x0F1918, 0x3DD6B5, 0x3DA0D6, 0x8AE8D4),
     theme("aurore", "Aurore", 0x10161C, 0x5EC4E8, 0xA3E37A, 0x9EDDF2),
-    theme(
-        "graphite", "Graphite", 0x141516, 0xA0A8B8, 0x6E7686, 0xC8CEDA,
-    ),
+    theme("graphite", "Graphite", 0x141516, 0xA0A8B8, 0x6E7686, 0xC8CEDA),
     theme("cosmos", "Cosmos", 0x10101C, 0x6C5CE7, 0x00CEC9, 0xA99FF5),
-    theme(
-        "citron",
-        "Citron vert",
-        0x14170F,
-        0xB5D93C,
-        0x5CC97A,
-        0xD3EC85,
-    ),
+    theme("citron", "Citron vert", 0x14170F, 0xB5D93C, 0x5CC97A, 0xD3EC85),
     theme("corail", "Corail", 0x1B1312, 0xFF6F61, 0xFFB25B, 0xFFA69C),
     theme("glacier", "Glacier", 0x121620, 0x7FB8FF, 0xB8E0FF, 0xB5D6FF),
-    theme(
-        "amethyste",
-        "Améthyste",
-        0x17121F,
-        0xB15CF5,
-        0x5C7CF5,
-        0xD2A3FA,
-    ),
+    theme("amethyste", "Améthyste", 0x17121F, 0xB15CF5, 0x5C7CF5, 0xD2A3FA),
 ];
 
 static CURRENT: AtomicUsize = AtomicUsize::new(0);
+static BREEZE: AtomicBool = AtomicBool::new(false);
+static RADIUS: AtomicU8 = AtomicU8::new(0);
+
+/// Thème « KDE (système) » : couleurs lues dans `~/.config/kdeglobals`.
+pub const KDE_ID: &str = "kde";
+const KDE_INDEX: usize = usize::MAX;
+static KDE: OnceLock<Option<Theme>> = OnceLock::new();
+
+/// Le thème de KDE, s'il y a une configuration KDE.
+pub fn kde_theme() -> Option<&'static Theme> {
+    KDE.get_or_init(load_kde).as_ref()
+}
+
+/// Vrai sous KDE Plasma (Kubuntu…).
+pub fn is_kde_desktop() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_uppercase().contains("KDE"))
+}
+
+fn load_kde() -> Option<Theme> {
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    let text = std::fs::read_to_string(config.join("kdeglobals")).ok()?;
+    let mut group = String::new();
+    let mut values = std::collections::HashMap::new();
+    for line in text.lines().map(str::trim) {
+        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            group = g.to_owned();
+        } else if let Some((k, v)) = line.split_once('=') {
+            values.insert(format!("{group}/{}", k.trim()), v.trim().to_owned());
+        }
+    }
+    let color = |key: &str| -> Option<Color32> {
+        let v = values.get(key)?;
+        let c: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        (c.len() >= 3).then(|| Color32::from_rgb(c[0], c[1], c[2]))
+    };
+    // Breeze sombre par défaut, si le jeu de couleurs ne précise rien.
+    let bg = color("Colors:Window/BackgroundNormal").unwrap_or(Color32::from_rgb(0x20, 0x23, 0x26));
+    let accent = color("General/AccentColor")
+        .or_else(|| color("Colors:Window/DecorationFocus"))
+        .or_else(|| color("Colors:Selection/BackgroundNormal"))
+        .unwrap_or(Color32::from_rgb(0x3D, 0xAE, 0xE9));
+    // Fond clair (jeu de couleurs clair) : SterMusic reste sombre, on assombrit.
+    let bg = if bg.r() as u32 + bg.g() as u32 + bg.b() as u32 > 3 * 110 {
+        mix(bg, Color32::BLACK, 0.85)
+    } else {
+        bg
+    };
+    Some(Theme {
+        id: KDE_ID,
+        name: "KDE (système)",
+        bg,
+        accent,
+        // Breeze est plat : un « dégradé » à peine marqué.
+        accent_2: mix(accent, Color32::WHITE, 0.16),
+        accent_light: mix(accent, Color32::WHITE, 0.45),
+    })
+}
+
+/// Style Breeze (Kubuntu) activé ?
+pub fn breeze() -> bool {
+    BREEZE.load(Ordering::Relaxed)
+}
+
+/// Active ou non le style Breeze (police, icônes, boutons de fenêtre).
+pub fn set_breeze(ctx: &egui::Context, on: bool) {
+    if BREEZE.swap(on, Ordering::Relaxed) != on {
+        install_fonts(ctx);
+    }
+}
+
+/// Rayon des coins de la fenêtre (0 quand elle est agrandie).
+pub fn window_radius() -> u8 {
+    RADIUS.load(Ordering::Relaxed)
+}
+
+pub fn set_window_radius(r: u8) {
+    RADIUS.store(r, Ordering::Relaxed);
+}
 
 pub fn current() -> &'static Theme {
-    &THEMES[CURRENT.load(Ordering::Relaxed).min(THEMES.len() - 1)]
+    match CURRENT.load(Ordering::Relaxed) {
+        KDE_INDEX => kde_theme().unwrap_or(&THEMES[0]),
+        i => &THEMES[i.min(THEMES.len() - 1)],
+    }
 }
 
 /// Change de thème (identifiant inconnu : le premier) et met à jour les couleurs d'egui.
 pub fn set(ctx: &egui::Context, id: &str) {
-    let index = THEMES.iter().position(|t| t.id == id).unwrap_or(0);
+    let index = if id == KDE_ID && kde_theme().is_some() {
+        KDE_INDEX
+    } else {
+        THEMES.iter().position(|t| t.id == id).unwrap_or(0)
+    };
     CURRENT.store(index, Ordering::Relaxed);
     ctx.style_mut_of(egui::Theme::Dark, style);
 }
@@ -131,6 +197,11 @@ pub fn accent_light() -> Color32 {
 
 pub const TEXT: Color32 = Color32::from_rgb(0xEB, 0xEE, 0xFA);
 pub const TEXT_2: Color32 = Color32::from_rgb(0xAC, 0xAF, 0xBC);
+/// Icônes au repos : un peu plus soutenu que `TEXT_2` (les icônes fines paraissaient pâles).
+pub fn icon_idle() -> Color32 {
+    mix(TEXT_2, TEXT, 0.35)
+}
+
 pub const TEXT_3: Color32 = Color32::from_rgb(0x75, 0x78, 0x86);
 pub const DANGER: Color32 = Color32::from_rgb(0xE5, 0x48, 0x4D);
 
@@ -172,36 +243,24 @@ pub fn selection() -> Color32 {
     alpha(accent(), 0x59)
 }
 
-/// Police « semi-gras » des titres.
+/// Police « semi-gras » des titres (les grands titres restent en graisse normale avec Breeze).
 pub fn semibold(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("semibold".into()))
+    let family = if size >= 19.5 { "heading" } else { "semibold" };
+    FontId::new(size, FontFamily::Name(family.into()))
 }
 
 /// Interpolation linéaire entre deux couleurs.
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgba_premultiplied(
-        l(a.r(), b.r()),
-        l(a.g(), b.g()),
-        l(a.b(), b.b()),
-        l(a.a(), b.a()),
-    )
+    Color32::from_rgba_premultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
 }
 
 /// Rectangle arrondi rempli du dégradé de marque (135°).
-pub fn brand_fill(
-    painter: &egui::Painter,
-    rect: Rect,
-    radius: impl Into<CornerRadius>,
-    alpha: f32,
-) {
+pub fn brand_fill(painter: &egui::Painter, rect: Rect, radius: impl Into<CornerRadius>, alpha: f32) {
     // egui ignore la texture des rectangles très fins : dégradé par sommets.
     if rect.height() < 4.0 || rect.width() < 4.0 {
-        let (a, b) = (
-            accent().gamma_multiply(alpha),
-            accent_2().gamma_multiply(alpha),
-        );
+        let (a, b) = (accent().gamma_multiply(alpha), accent_2().gamma_multiply(alpha));
         let mut mesh = egui::Mesh::default();
         let horizontal = rect.width() >= rect.height();
         for (corner, color) in [
@@ -259,7 +318,8 @@ pub fn seeded_colors(seed: &str) -> (Color32, Color32) {
     (dark, other)
 }
 
-pub fn install(ctx: &egui::Context, theme_id: &str) {
+pub fn install(ctx: &egui::Context, theme_id: &str, breeze: bool) {
+    BREEZE.store(breeze, Ordering::Relaxed);
     install_fonts(ctx);
     ctx.set_theme(egui::Theme::Dark);
     set(ctx, theme_id);
@@ -357,7 +417,7 @@ fn style(style: &mut egui::Style) {
 
 /// Polices habituelles des distributions (Ubuntu, Noto, DejaVu, Liberation), dans les dossiers
 /// du système puis de l'utilisateur : interface, semi-gras, code.
-fn system_fonts() -> [Vec<PathBuf>; 3] {
+fn system_fonts(breeze: bool) -> [Vec<PathBuf>; 4] {
     let mut dirs: Vec<PathBuf> = ["/usr/share/fonts", "/usr/local/share/fonts"]
         .iter()
         .map(PathBuf::from)
@@ -372,6 +432,37 @@ fn system_fonts() -> [Vec<PathBuf>; 3] {
             .flat_map(|name| dirs.iter().map(move |d| d.join(name)))
             .collect()
     };
+    if breeze {
+        // Kubuntu : Noto Sans partout ; les grands titres en graisse normale, comme Kirigami.
+        let regular = files(&[
+            "truetype/noto/NotoSans-Regular.ttf",
+            "noto/NotoSans-Regular.ttf",
+            "truetype/dejavu/DejaVuSans.ttf",
+        ]);
+        return [
+            regular.clone(),
+            files(&[
+                "truetype/noto/NotoSans-SemiBold.ttf",
+                "noto/NotoSans-SemiBold.ttf",
+                "truetype/noto/NotoSans-Medium.ttf",
+                "truetype/noto/NotoSans-Bold.ttf",
+                "noto/NotoSans-Bold.ttf",
+            ]),
+            regular,
+            files(&[
+                "truetype/noto/NotoSansMono-Regular.ttf",
+                "truetype/hack/Hack-Regular.ttf",
+                "truetype/dejavu/DejaVuSansMono.ttf",
+            ]),
+        ];
+    }
+    let semibold = files(&[
+        "truetype/ubuntu/Ubuntu-M.ttf",
+        "truetype/noto/NotoSans-SemiBold.ttf",
+        "truetype/noto/NotoSans-Bold.ttf",
+        "truetype/dejavu/DejaVuSans-Bold.ttf",
+        "TTF/DejaVuSans-Bold.ttf",
+    ]);
     [
         files(&[
             "truetype/ubuntu/Ubuntu-R.ttf",
@@ -381,14 +472,8 @@ fn system_fonts() -> [Vec<PathBuf>; 3] {
             "TTF/DejaVuSans.ttf",
             "truetype/liberation/LiberationSans-Regular.ttf",
         ]),
-        files(&[
-            "truetype/ubuntu/Ubuntu-M.ttf",
-            "truetype/noto/NotoSans-SemiBold.ttf",
-            "noto/NotoSans-SemiBold.ttf",
-            "truetype/noto/NotoSans-Bold.ttf",
-            "truetype/dejavu/DejaVuSans-Bold.ttf",
-            "TTF/DejaVuSans-Bold.ttf",
-        ]),
+        semibold.clone(),
+        semibold,
         files(&[
             "truetype/ubuntu/UbuntuMono-R.ttf",
             "truetype/noto/NotoSansMono-Regular.ttf",
@@ -398,6 +483,8 @@ fn system_fonts() -> [Vec<PathBuf>; 3] {
     ]
 }
 
+/// Charge les polices (texte, semi-gras, grands titres, code), en gardant celles d'egui en
+/// secours (symboles, émojis).
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let mut load = |key: &str, files: &[PathBuf]| -> bool {
@@ -411,28 +498,49 @@ fn install_fonts(ctx: &egui::Context) {
         }
         false
     };
-    let [ui, semibold, mono] = system_fonts();
+    let [ui, semibold, heading, mono] = system_fonts(breeze());
     let has_ui = load("ui", &ui);
     let has_semibold = load("ui-semibold", &semibold);
+    let has_heading = load("ui-heading", &heading);
     let has_mono = load("mono", &mono);
 
     let proportional = fonts.families.get_mut(&FontFamily::Proportional).unwrap();
     if has_ui {
         proportional.insert(0, "ui".into());
     }
-    let mut semibold_family = proportional.clone();
-    if has_semibold {
-        semibold_family.insert(0, "ui-semibold".into());
+    let base = proportional.clone();
+    for (family, key, ok) in [
+        ("semibold", "ui-semibold", has_semibold),
+        ("heading", "ui-heading", has_heading),
+    ] {
+        let mut list = base.clone();
+        if ok {
+            list.insert(0, key.into());
+        }
+        fonts.families.insert(FontFamily::Name(family.into()), list);
     }
-    fonts
-        .families
-        .insert(FontFamily::Name("semibold".into()), semibold_family);
     if has_mono {
         fonts
             .families
             .get_mut(&FontFamily::Monospace)
             .unwrap()
             .insert(0, "mono".into());
+    }
+    // Secours pour le japonais, le chinois et le coréen (titres d'animes, de jeux…) : Noto Sans
+    // CJK comme Kubuntu, sinon Droid Sans Fallback.
+    let cjk = [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+    ];
+    if let Some(bytes) = cjk.iter().find_map(|f| std::fs::read(f).ok()) {
+        fonts
+            .font_data
+            .insert("cjk".into(), Arc::new(FontData::from_owned(bytes)));
+        for list in fonts.families.values_mut() {
+            list.push("cjk".into());
+        }
     }
     ctx.set_fonts(fonts);
 }
