@@ -10,6 +10,7 @@ mod lists;
 mod lyrics_view;
 mod mb_import;
 mod nowbar;
+mod radio_globe;
 mod radio_view;
 mod rg_tool;
 mod settings_extra;
@@ -207,6 +208,8 @@ pub struct Settings {
     pub browse_kind: browse::BrowseKind,
     /// Webradios enregistrées (« Mes stations »).
     pub radios: Vec<crate::radio::Station>,
+    /// Page Webradios : vue Globe plutôt que l'annuaire.
+    pub radio_globe: bool,
     /// Sortie audio choisie (nom PipeWire ; vide : celle du système).
     pub audio_output: String,
     /// Notification du bureau au changement de morceau (quand la fenêtre n'est pas au premier plan).
@@ -268,6 +271,7 @@ impl Default for Settings {
             sidebar_collapsed: false,
             browse_kind: Default::default(),
             radios: Vec::new(),
+            radio_globe: false,
             audio_output: String::new(),
             notify_tracks: true,
             scrobble: Default::default(),

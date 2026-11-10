@@ -28,6 +28,14 @@ vraie intégration au bureau Linux.
 - Favoris (le cœur), playlists personnelles avec mosaïque de pochettes
 - Import / export **M3U**
 
+**Webradios**
+- Annuaire [radio-browser.info](https://www.radio-browser.info) : recherche par nom, genre et
+  pays, « Mes stations », ajout d'une station par son adresse (.pls, .m3u)
+- **Globe** : les stations géolocalisées du monde entier sur une Terre en 3D (image satellite
+  de la NASA, domaine public), que l'on fait tourner et zoomer ; un clic sur un lieu liste ses
+  stations
+- Titre diffusé en direct (métadonnées ICY), reconnexion automatique
+
 **Bureau Linux**
 - **MPRIS** : widget lecteur de KDE Plasma / GNOME, touches multimédia, écran de verrouillage
 - **Style Breeze (Kubuntu)**, par défaut sous KDE : couleurs et accent de KDE (`kdeglobals`),
@@ -89,6 +97,9 @@ cargo run --release -- ~/Musique
 - `src/player.rs` : moteur audio (rodio 0.21 ; M4A/AAC compris)
 - `src/mpris.rs` : intégration MPRIS (souvlaki, D-Bus en pur Rust)
 - `src/backdrop.rs` : fond Mica
+- `src/radio.rs`, `src/globe.rs`, `src/app/radio_view.rs`, `src/app/radio_globe.rs` :
+  webradios, annuaire et globe (`assets/earth.jpg` : « Whole world – land and oceans »,
+  NASA Visible Earth, domaine public)
 - `src/theme.rs`, `src/anim.rs`, `src/icons.rs`, `src/widgets.rs` : charte, animations, icônes
   Lucide et widgets, repris de SterCode
 

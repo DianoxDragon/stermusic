@@ -38,6 +38,11 @@ pub struct Station {
     pub homepage: String,
     /// Identifiant dans l'annuaire (vide pour une station ajoutée à la main).
     pub uuid: String,
+    /// Code du pays (« FR ») et région, pour le globe.
+    pub countrycode: String,
+    pub state: String,
+    /// Latitude et longitude (degrés), si l'annuaire les connaît.
+    pub geo: Option<[f32; 2]>,
 }
 
 impl Station {
@@ -52,7 +57,7 @@ impl Station {
             .map(capitalize)
             .collect();
         if !self.country.is_empty() {
-            parts.insert(0, self.country.clone());
+            parts.insert(0, country_name(&self.country));
         }
         if self.bitrate > 0 {
             parts.push(format!("{} kb/s", self.bitrate));
@@ -71,30 +76,63 @@ fn capitalize(s: &str) -> String {
 
 // ---------- Annuaire ----------
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
+#[serde(default)]
 struct ApiStation {
-    #[serde(default)]
     stationuuid: String,
-    #[serde(default)]
     name: String,
-    #[serde(default)]
     url: String,
-    #[serde(default)]
     url_resolved: String,
-    #[serde(default)]
     homepage: String,
-    #[serde(default)]
     favicon: String,
-    #[serde(default)]
     tags: String,
-    #[serde(default)]
     country: String,
-    #[serde(default)]
+    countrycode: String,
+    state: String,
     codec: String,
-    #[serde(default)]
     bitrate: u32,
-    #[serde(default)]
     hls: u8,
+    geo_lat: Option<f64>,
+    geo_long: Option<f64>,
+}
+
+impl ApiStation {
+    fn into_station(self) -> Option<Station> {
+        if !playable(&self.codec, self.hls != 0) {
+            return None;
+        }
+        let url = if self.url_resolved.is_empty() {
+            self.url
+        } else {
+            self.url_resolved
+        };
+        let name = self.name.trim().to_owned();
+        if name.is_empty() || url.is_empty() {
+            return None;
+        }
+        let geo = match (self.geo_lat, self.geo_long) {
+            (Some(lat), Some(lon))
+                if lat.abs() <= 90.0 && lon.abs() <= 180.0 && (lat != 0.0 || lon != 0.0) =>
+            {
+                Some([lat as f32, lon as f32])
+            }
+            _ => None,
+        };
+        Some(Station {
+            name,
+            url,
+            favicon: self.favicon,
+            country: self.country,
+            countrycode: self.countrycode,
+            state: self.state.trim().to_owned(),
+            tags: self.tags,
+            codec: self.codec,
+            bitrate: self.bitrate,
+            homepage: self.homepage,
+            uuid: self.stationuuid,
+            geo,
+        })
+    }
 }
 
 /// Formats que le décodeur sait lire (Opus et HLS ne le sont pas).
@@ -113,64 +151,220 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .build()
 }
 
-/// Ce qu'on demande à l'annuaire.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Query {
-    /// Les stations les plus écoutées d'un pays (code ISO : « FR »).
-    Top(String),
-    /// Recherche par nom.
-    Name(String),
-    /// Recherche par genre.
-    Tag(String),
+/// Ce qu'on demande à l'annuaire : les filtres se combinent ; sans aucun, les stations les plus
+/// écoutées du monde.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Query {
+    /// Morceau du nom de la station.
+    pub name: String,
+    /// Genre (étiquette de l'annuaire : « jazz »).
+    pub tag: String,
+    /// Pays (code ISO : « FR »).
+    pub country: String,
 }
 
-/// Interroge l'annuaire (bloquant : à appeler depuis un thread).
-pub fn search(query: &Query) -> Result<Vec<Station>, String> {
-    let (key, value) = match query {
-        Query::Top(country) => ("countrycode", country.as_str()),
-        Query::Name(name) => ("name", name.as_str()),
-        Query::Tag(tag) => ("tag", tag.as_str()),
-    };
-    let agent = agent(Duration::from_secs(12));
+/// Appel à l'annuaire, sur le premier serveur qui répond.
+fn directory_get(path: &str, params: &[(&str, &str)], timeout: Duration) -> Result<ureq::Response, String> {
+    let agent = agent(timeout);
     let mut last_error = String::new();
     for server in DIRECTORY {
-        let result = agent
-            .get(&format!("{server}/json/stations/search"))
-            .query(key, value)
-            .query("limit", "80")
-            .query("hidebroken", "true")
-            .query("order", "clickcount")
-            .query("reverse", "true")
-            .call();
-        match result {
-            Ok(resp) => {
-                let list: Vec<ApiStation> =
-                    serde_json::from_reader(resp.into_reader()).map_err(|e| e.to_string())?;
-                return Ok(list
-                    .into_iter()
-                    .filter(|s| playable(&s.codec, s.hls != 0))
-                    .map(|s| Station {
-                        name: s.name.trim().to_owned(),
-                        url: if s.url_resolved.is_empty() {
-                            s.url
-                        } else {
-                            s.url_resolved
-                        },
-                        favicon: s.favicon,
-                        country: s.country,
-                        tags: s.tags,
-                        codec: s.codec,
-                        bitrate: s.bitrate,
-                        homepage: s.homepage,
-                        uuid: s.stationuuid,
-                    })
-                    .filter(|s| !s.name.is_empty() && !s.url.is_empty())
-                    .collect());
-            }
+        let mut req = agent.get(&format!("{server}{path}"));
+        for (k, v) in params {
+            req = req.query(k, v);
+        }
+        match req.call() {
+            Ok(resp) => return Ok(resp),
             Err(e) => last_error = e.to_string(),
         }
     }
     Err(last_error)
+}
+
+/// Interroge l'annuaire (bloquant : à appeler depuis un thread).
+pub fn search(query: &Query) -> Result<Vec<Station>, String> {
+    let mut params = vec![
+        ("limit", "100"),
+        ("hidebroken", "true"),
+        ("order", "clickcount"),
+        ("reverse", "true"),
+    ];
+    if !query.name.is_empty() {
+        params.push(("name", &query.name));
+    }
+    if !query.tag.is_empty() {
+        params.push(("tag", &query.tag));
+    }
+    if !query.country.is_empty() {
+        params.push(("countrycode", &query.country));
+    }
+    let resp = directory_get("/json/stations/search", &params, Duration::from_secs(12))?;
+    let list: Vec<ApiStation> = serde_json::from_reader(resp.into_reader()).map_err(|e| e.to_string())?;
+    Ok(list.into_iter().filter_map(ApiStation::into_station).collect())
+}
+
+/// Un pays de l'annuaire.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Country {
+    pub code: String,
+    pub name: String,
+    pub stations: u32,
+}
+
+/// Les pays qui ont des stations, par ordre alphabétique (bloquant).
+pub fn countries() -> Result<Vec<Country>, String> {
+    #[derive(Deserialize)]
+    struct Api {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        iso_3166_1: String,
+        #[serde(default)]
+        stationcount: u32,
+    }
+    let resp = directory_get("/json/countries", &[], Duration::from_secs(12))?;
+    let list: Vec<Api> = serde_json::from_reader(resp.into_reader()).map_err(|e| e.to_string())?;
+    let mut out: Vec<Country> = list
+        .into_iter()
+        .filter(|c| c.stationcount > 0 && c.iso_3166_1.len() == 2)
+        .map(|c| Country {
+            code: c.iso_3166_1.to_ascii_uppercase(),
+            name: country_name(&c.name),
+            stations: c.stationcount,
+        })
+        .collect();
+    out.sort_by_cached_key(|c| crate::library::fold(&c.name));
+    Ok(out)
+}
+
+/// « The United States Of America » → « United States Of America » : l'article gêne le tri.
+fn country_name(name: &str) -> String {
+    name.strip_prefix("The ").unwrap_or(name).trim().to_owned()
+}
+
+// ---------- Stations du monde (globe) ----------
+
+/// Les stations géolocalisées du monde entier, gardées une semaine sur le disque.
+const WORLD_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
+
+fn world_file() -> std::path::PathBuf {
+    crate::library::cache_dir().join("radio-world.json")
+}
+
+/// Stations du cache, et vrai s'il est encore frais ; `None` s'il n'y en a pas.
+pub fn load_world() -> Option<(Vec<Station>, bool)> {
+    let file = world_file();
+    let fresh = std::fs::metadata(&file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < WORLD_MAX_AGE);
+    let list: Vec<Station> = serde_json::from_slice(&std::fs::read(&file).ok()?).ok()?;
+    (!list.is_empty()).then_some((list, fresh))
+}
+
+/// Télécharge toutes les stations géolocalisées (une dizaine de mégaoctets) et les garde en cache.
+pub fn fetch_world() -> Result<Vec<Station>, String> {
+    let params = [
+        ("has_geo_info", "true"),
+        ("hidebroken", "true"),
+        ("order", "clickcount"),
+        ("reverse", "true"),
+        ("limit", "100000"),
+    ];
+    let resp = directory_get("/json/stations/search", &params, Duration::from_secs(60))?;
+    let list: Vec<ApiStation> = serde_json::from_reader(resp.into_reader()).map_err(|e| e.to_string())?;
+    let stations: Vec<Station> = list
+        .into_iter()
+        .filter_map(ApiStation::into_station)
+        .filter(|s| s.geo.is_some())
+        .collect();
+    if stations.is_empty() {
+        return Err(crate::i18n::tr("Réponse de l'annuaire vide").into());
+    }
+    let _ = std::fs::create_dir_all(crate::library::cache_dir());
+    if let Ok(json) = serde_json::to_vec(&stations) {
+        let tmp = world_file().with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(tmp, world_file());
+        }
+    }
+    Ok(stations)
+}
+
+/// Un lieu du globe : les stations d'une même zone (cellule d'un demi-degré, une cinquantaine
+/// de kilomètres), à leur position moyenne.
+#[derive(Clone, Debug)]
+pub struct Place {
+    pub lat: f32,
+    pub lon: f32,
+    /// « Bretagne, France », ou le pays seul.
+    pub name: String,
+    /// Indices dans la liste des stations du monde, les plus écoutées d'abord.
+    pub stations: Vec<usize>,
+}
+
+/// Regroupe les stations en lieux.
+pub fn places(world: &[Station]) -> Vec<Place> {
+    let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> = Default::default();
+    for (i, s) in world.iter().enumerate() {
+        if let Some([lat, lon]) = s.geo {
+            cells
+                .entry(((lat * 2.0).floor() as i32, (lon * 2.0).floor() as i32))
+                .or_default()
+                .push(i);
+        }
+    }
+    let mut out: Vec<Place> = cells
+        .into_values()
+        .map(|stations| {
+            let n = stations.len() as f32;
+            let lat = stations.iter().map(|&i| world[i].geo.unwrap()[0]).sum::<f32>() / n;
+            let lon = stations.iter().map(|&i| world[i].geo.unwrap()[1]).sum::<f32>() / n;
+            let mut names: std::collections::HashMap<String, usize> = Default::default();
+            for &i in &stations {
+                let s = &world[i];
+                let country = country_name(&s.country);
+                let name = if s.state.is_empty() || s.state.eq_ignore_ascii_case(&country) {
+                    country
+                } else {
+                    format!("{}, {country}", s.state)
+                };
+                *names.entry(name).or_default() += 1;
+            }
+            let name = names
+                .into_iter()
+                .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+                .map(|(n, _)| n)
+                .unwrap_or_default();
+            Place {
+                lat,
+                lon,
+                name,
+                stations,
+            }
+        })
+        .collect();
+    // Les gros lieux en dernier : dessinés par-dessus les petits.
+    out.sort_by_key(|p| p.stations.len());
+    out
+}
+
+/// Centre approximatif d'un pays (moyenne de ses stations), pour y tourner le globe.
+pub fn country_center(world: &[Station], code: &str) -> Option<(f32, f32)> {
+    let pts: Vec<[f32; 2]> = world
+        .iter()
+        .filter(|s| s.countrycode.eq_ignore_ascii_case(code))
+        .filter_map(|s| s.geo)
+        .collect();
+    if pts.is_empty() {
+        return None;
+    }
+    // Médiane plutôt que moyenne : quelques territoires lointains ne déplacent pas le centre.
+    let mut lats: Vec<f32> = pts.iter().map(|p| p[0]).collect();
+    let mut lons: Vec<f32> = pts.iter().map(|p| p[1]).collect();
+    lats.sort_by(f32::total_cmp);
+    lons.sort_by(f32::total_cmp);
+    Some((lats[lats.len() / 2], lons[lons.len() / 2]))
 }
 
 /// Signale à l'annuaire qu'une station a été écoutée (son classement en dépend).
@@ -574,7 +768,11 @@ mod tests {
     fn live_radio() {
         use rodio::Source;
         for tag in ["jazz", "aac"] {
-            let list = search(&Query::Tag(tag.into())).expect("annuaire");
+            let query = Query {
+                tag: tag.into(),
+                ..Default::default()
+            };
+            let list = search(&query).expect("annuaire");
             assert!(!list.is_empty());
             let mut ok = false;
             for s in list.iter().take(6) {
@@ -599,6 +797,35 @@ mod tests {
             }
             assert!(ok, "aucune station {tag} lisible");
         }
+    }
+
+    #[test]
+    fn world_places() {
+        let st = |name: &str, cc: &str, state: &str, lat: f32, lon: f32| Station {
+            name: name.into(),
+            country: if cc == "FR" {
+                "France".into()
+            } else {
+                "The United Kingdom".into()
+            },
+            countrycode: cc.into(),
+            state: state.into(),
+            geo: Some([lat, lon]),
+            ..Default::default()
+        };
+        let world = vec![
+            st("A", "FR", "Île-de-France", 48.86, 2.35),
+            st("B", "FR", "Île-de-France", 48.80, 2.30),
+            st("C", "FR", "", 43.30, 5.37),
+            st("D", "GB", "", 51.50, -0.12),
+        ];
+        let places = places(&world);
+        assert_eq!(places.len(), 3);
+        let paris = places.iter().find(|p| p.stations.len() == 2).unwrap();
+        assert_eq!(paris.name, "Île-de-France, France");
+        assert!(places.iter().any(|p| p.name == "United Kingdom"));
+        let (lat, lon) = country_center(&world, "fr").unwrap();
+        assert!((lat - 48.80).abs() < 0.01 && (lon - 2.35).abs() < 0.01);
     }
 
     #[test]

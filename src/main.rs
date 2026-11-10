@@ -4,6 +4,7 @@ mod backdrop;
 mod covers;
 mod dnd;
 mod dsp;
+mod globe;
 mod history;
 mod i18n;
 mod i18n_en;

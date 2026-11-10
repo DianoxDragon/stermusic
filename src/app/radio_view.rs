@@ -52,6 +52,8 @@ pub struct RadioState {
     pub live: Option<Live>,
     pub connecting: Option<(Station, Receiver<Result<Connected, String>>)>,
     query: String,
+    /// Filtres de l'annuaire (nom, genre, pays), et la recherche affichée.
+    filter: Query,
     results: Vec<Station>,
     shown_query: Option<Query>,
     searching: Option<Receiver<Result<Vec<Station>, String>>>,
@@ -61,6 +63,12 @@ pub struct RadioState {
     logo_rx: Receiver<(String, Option<egui::ColorImage>)>,
     /// Ajout d'une station par son adresse : nom et adresse saisis.
     pub add: Option<(String, String)>,
+    /// Pays de l'annuaire (chargés à la première visite), et le filtre du choix de pays.
+    countries: Vec<radio::Country>,
+    countries_rx: Option<Receiver<Result<Vec<radio::Country>, String>>>,
+    country_search: String,
+    /// Globe des stations du monde.
+    pub globe: super::radio_globe::GlobeState,
 }
 
 impl Default for RadioState {
@@ -70,6 +78,10 @@ impl Default for RadioState {
             live: None,
             connecting: None,
             query: String::new(),
+            filter: Query {
+                country: radio::desktop_country(),
+                ..Default::default()
+            },
             results: Vec::new(),
             shown_query: None,
             searching: None,
@@ -78,6 +90,10 @@ impl Default for RadioState {
             logo_tx,
             logo_rx,
             add: None,
+            countries: Vec::new(),
+            countries_rx: None,
+            country_search: String::new(),
+            globe: Default::default(),
         }
     }
 }
@@ -106,6 +122,37 @@ impl RadioState {
             ctx.request_repaint();
         });
         None
+    }
+
+    /// Nom d'un pays d'après son code (« FR » → « France »), une fois la liste chargée.
+    pub fn country_label(&self, code: &str) -> String {
+        self.countries
+            .iter()
+            .find(|c| c.code == code)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| code.to_owned())
+    }
+
+    /// Pays du filtre de l'annuaire (celui du bureau s'il n'y en a pas).
+    pub fn filter_country(&self) -> String {
+        if self.filter.country.is_empty() {
+            radio::desktop_country()
+        } else {
+            self.filter.country.clone()
+        }
+    }
+
+    fn load_countries(&mut self, ctx: &egui::Context) {
+        if !self.countries.is_empty() || self.countries_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(radio::countries());
+            ctx.request_repaint();
+        });
+        self.countries_rx = Some(rx);
     }
 
     fn search(&mut self, ctx: &egui::Context, query: Query) {
@@ -194,6 +241,15 @@ impl SterMusic {
             };
             self.radio.logos.insert(url, logo);
         }
+        if let Some(rx) = &self.radio.countries_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.radio.countries_rx = None;
+                if let Ok(list) = result {
+                    self.radio.countries = list;
+                }
+            }
+        }
+        self.poll_globe(ctx);
         if let Some(rx) = &self.radio.searching {
             if let Ok(result) = rx.try_recv() {
                 self.radio.searching = None;
@@ -315,12 +371,17 @@ impl SterMusic {
 
     pub(super) fn radio_page(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        if self.radio.shown_query.is_none() {
-            let country = radio::desktop_country();
-            self.radio.search(&ctx, Query::Top(country));
-        }
+        self.radio.load_countries(&ctx);
         ui.horizontal(|ui| {
             heading(ui, tr("Webradios"));
+            ui.add_space(18.0);
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if super::views::segment(ui, tr("Annuaire"), !self.settings.radio_globe).clicked() {
+                self.settings.radio_globe = false;
+            }
+            if super::views::segment(ui, tr("Globe"), self.settings.radio_globe).clicked() {
+                self.settings.radio_globe = true;
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
                 if widgets::secondary_button(ui, Some(Icon::Link), tr("Ajouter une adresse…")).clicked() {
@@ -329,6 +390,14 @@ impl SterMusic {
             });
         });
         ui.add_space(14.0);
+        if self.settings.radio_globe {
+            self.globe_view(ui);
+            return;
+        }
+        if self.radio.shown_query.is_none() {
+            let q = self.radio.filter.clone();
+            self.radio.search(&ctx, q);
+        }
         egui::ScrollArea::vertical()
             .id_salt("radio_page")
             .auto_shrink(false)
@@ -353,8 +422,9 @@ impl SterMusic {
 
                 super::lists::section(ui, tr("Trouver une station"), None);
                 ui.add_space(4.0);
+                let mut launch = false;
                 ui.horizontal(|ui| {
-                    let w = (ui.available_width() - 130.0).clamp(160.0, 420.0);
+                    let w = (ui.available_width() - 360.0).clamp(160.0, 420.0);
                     let field = widgets::search_field(
                         ui,
                         egui::Id::new("radio_search"),
@@ -364,34 +434,41 @@ impl SterMusic {
                     );
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let go = widgets::secondary_button(ui, Some(Icon::Search), tr("Chercher")).clicked();
-                    let q = self.radio.query.trim().to_owned();
-                    if (enter || go) && !q.is_empty() {
-                        self.radio.search(&ctx, Query::Name(q));
+                    // Champ vidé : la recherche par nom s'arrête aussi.
+                    let name = self.radio.query.trim().to_owned();
+                    if enter || go || (name.is_empty() && !self.radio.filter.name.is_empty()) {
+                        self.radio.filter.name = name;
+                        launch = true;
+                    }
+                    ui.add_space(8.0);
+                    if self.country_picker(ui) {
+                        launch = true;
                     }
                 });
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                    let country = radio::desktop_country();
-                    let top = Query::Top(country.clone());
-                    if super::views::segment(
-                        ui,
-                        tr("Les plus écoutées"),
-                        self.radio.shown_query == Some(top.clone()),
-                    )
-                    .clicked()
+                    if super::views::segment(ui, tr("Tous les genres"), self.radio.filter.tag.is_empty())
+                        .clicked()
                     {
-                        self.radio.search(&ctx, top);
+                        self.radio.filter.tag.clear();
+                        launch = true;
                     }
                     for (label, tag) in GENRES {
-                        let q = Query::Tag((*tag).into());
-                        if super::views::segment(ui, tr(label), self.radio.shown_query.as_ref() == Some(&q))
-                            .clicked()
-                        {
-                            self.radio.search(&ctx, q);
+                        if super::views::segment(ui, tr(label), self.radio.filter.tag == *tag).clicked() {
+                            self.radio.filter.tag = if self.radio.filter.tag == *tag {
+                                String::new()
+                            } else {
+                                (*tag).to_owned()
+                            };
+                            launch = true;
                         }
                     }
                 });
+                if launch && self.radio.shown_query.as_ref() != Some(&self.radio.filter) {
+                    let q = self.radio.filter.clone();
+                    self.radio.search(&ctx, q);
+                }
                 ui.add_space(12.0);
                 if self.radio.searching.is_some() {
                     ui.horizontal(|ui| {
@@ -415,6 +492,77 @@ impl SterMusic {
                 );
                 ui.add_space(24.0);
             });
+    }
+
+    /// Bouton du pays, avec une liste à filtrer ; vrai si le choix a changé.
+    fn country_picker(&mut self, ui: &mut egui::Ui) -> bool {
+        let code = self.radio.filter.country.clone();
+        let label = if code.is_empty() {
+            tr("Tous les pays").to_owned()
+        } else {
+            self.radio.country_label(&code)
+        };
+        let resp = widgets::secondary_button(ui, Some(Icon::Globe), &label);
+        let popup_id = ui.make_persistent_id("country_popup");
+        if resp.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup_id));
+        }
+        let mut changed = false;
+        egui::popup::popup_below_widget(
+            ui,
+            popup_id,
+            &resp,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_width(280.0);
+                let field = widgets::search_field(
+                    ui,
+                    egui::Id::new("country_search"),
+                    &mut self.radio.country_search,
+                    tr("Chercher un pays"),
+                    270.0,
+                );
+                if !field.has_focus() && ui.memory(|m| m.focused().is_none()) {
+                    field.request_focus();
+                }
+                ui.add_space(4.0);
+                let q = crate::library::fold(self.radio.country_search.trim());
+                egui::ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                    let mut pick = None;
+                    if q.is_empty()
+                        && widgets::menu_item(ui, Some(Icon::Globe), tr("Tous les pays")).clicked()
+                    {
+                        pick = Some(String::new());
+                    }
+                    if self.radio.countries.is_empty() {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new(tr("Chargement des pays…")).color(theme::TEXT_3));
+                        });
+                    }
+                    for c in &self.radio.countries {
+                        if !q.is_empty()
+                            && !crate::library::fold(&c.name).contains(&q)
+                            && c.code.to_ascii_lowercase() != q
+                        {
+                            continue;
+                        }
+                        let text = format!("{} · {}", c.name, c.stations);
+                        let icon = (c.code == code).then_some(Icon::Radio);
+                        if widgets::menu_item(ui, icon, &text).clicked() {
+                            pick = Some(c.code.clone());
+                        }
+                    }
+                    if let Some(p) = pick {
+                        self.radio.filter.country = p;
+                        self.radio.country_search.clear();
+                        changed = true;
+                        ui.memory_mut(|m| m.close_popup());
+                    }
+                });
+            },
+        );
+        changed
     }
 
     /// Vignette de station (logo ou couleur, nom) : un clic lance l'écoute.
@@ -464,7 +612,7 @@ impl SterMusic {
     }
 
     /// Ligne d'un résultat de l'annuaire.
-    fn station_row(&mut self, ui: &mut egui::Ui, s: &Station, i: usize) {
+    pub(super) fn station_row(&mut self, ui: &mut egui::Ui, s: &Station, i: usize) {
         let w = ui.available_width();
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 56.0), Sense::click());
         if !ui.is_rect_visible(rect) {

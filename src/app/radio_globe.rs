@@ -1,0 +1,514 @@
+//! Globe des webradios : les stations du monde entier, à leur place sur la Terre. On fait
+//! tourner le globe à la souris, on zoome à la molette, et un clic sur un point ouvre la liste
+//! des stations de ce lieu.
+
+use std::sync::mpsc::{channel, Receiver};
+
+use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke};
+
+use super::SterMusic;
+use crate::globe::{self, View};
+use crate::i18n::tr;
+use crate::icons::Icon;
+use crate::radio::{self, Place, Station};
+use crate::trf;
+use crate::{theme, widgets};
+
+/// Largeur du panneau des stations d'un lieu.
+const PANEL_W: f32 = 330.0;
+/// Zoom minimal et maximal (1 : le globe tient dans la zone).
+const ZOOM: (f32, f32) = (0.8, 60.0);
+
+pub struct GlobeState {
+    pub world: Vec<Station>,
+    places: Vec<Place>,
+    loading: Option<Receiver<Result<Vec<Station>, String>>>,
+    error: Option<String>,
+    earth: Option<egui::TextureHandle>,
+    earth_rx: Option<Receiver<Option<egui::ColorImage>>>,
+    /// Orientation (radians) et zoom.
+    lon: f32,
+    lat: f32,
+    zoom: f32,
+    /// Élan après un glissé (points par seconde).
+    velocity: egui::Vec2,
+    /// Vrai dès que l'utilisateur a touché au globe (il cesse alors de tourner tout seul).
+    touched: bool,
+    /// Vol vers un point (latitude, longitude en radians, zoom visé).
+    fly_to: Option<(f32, f32, f32)>,
+    selected: Option<usize>,
+    /// Pays vers lequel le globe s'est tourné (il suit le choix de pays de l'annuaire).
+    centered_on: Option<String>,
+}
+
+impl Default for GlobeState {
+    fn default() -> Self {
+        Self {
+            world: Vec::new(),
+            places: Vec::new(),
+            loading: None,
+            error: None,
+            earth: None,
+            earth_rx: None,
+            lon: 10f32.to_radians(),
+            lat: 35f32.to_radians(),
+            zoom: 1.0,
+            velocity: egui::Vec2::ZERO,
+            touched: false,
+            fly_to: None,
+            selected: None,
+            centered_on: None,
+        }
+    }
+}
+
+impl GlobeState {
+    /// Lance le chargement des stations (cache, sinon annuaire) et de l'image de la Terre.
+    fn ensure_loaded(&mut self, ctx: &egui::Context, force_refresh: bool) {
+        if self.earth.is_none() && self.earth_rx.is_none() {
+            let (tx, rx) = channel();
+            let ctx = ctx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(globe::decode_earth());
+                ctx.request_repaint();
+            });
+            self.earth_rx = Some(rx);
+        }
+        if (self.world.is_empty() || force_refresh) && self.loading.is_none() {
+            let (tx, rx) = channel();
+            let ctx = ctx.clone();
+            std::thread::spawn(move || {
+                let cached = radio::load_world();
+                let result = match cached {
+                    Some((list, true)) if !force_refresh => Ok(list),
+                    stale => match radio::fetch_world() {
+                        Ok(list) => Ok(list),
+                        // Pas de réseau : l'ancien cache vaut mieux que rien.
+                        Err(e) => stale.map(|(list, _)| list).ok_or(e),
+                    },
+                };
+                let _ = tx.send(result);
+                ctx.request_repaint();
+            });
+            self.loading = Some(rx);
+            self.error = None;
+        }
+    }
+
+    fn fly(&mut self, lat_deg: f32, lon_deg: f32, zoom: f32) {
+        self.fly_to = Some((
+            lat_deg.to_radians().clamp(-globe::MAX_LAT, globe::MAX_LAT),
+            lon_deg.to_radians(),
+            zoom,
+        ));
+        self.velocity = egui::Vec2::ZERO;
+        self.touched = true;
+    }
+}
+
+impl SterMusic {
+    pub(super) fn poll_globe(&mut self, ctx: &egui::Context) {
+        let g = &mut self.radio.globe;
+        if let Some(rx) = &g.earth_rx {
+            if let Ok(img) = rx.try_recv() {
+                g.earth_rx = None;
+                if let Some(img) = img {
+                    let options = egui::TextureOptions {
+                        magnification: egui::TextureFilter::Linear,
+                        minification: egui::TextureFilter::Linear,
+                        wrap_mode: egui::TextureWrapMode::Repeat,
+                        mipmap_mode: Some(egui::TextureFilter::Linear),
+                    };
+                    g.earth = Some(ctx.load_texture("earth", img, options));
+                }
+            }
+        }
+        if let Some(rx) = &g.loading {
+            if let Ok(result) = rx.try_recv() {
+                g.loading = None;
+                match result {
+                    Ok(world) => {
+                        g.places = radio::places(&world);
+                        g.world = world;
+                        g.selected = None;
+                    }
+                    Err(e) => g.error = Some(trf!("Annuaire injoignable : {e}", e)),
+                }
+            }
+        }
+    }
+
+    /// Vue « Globe » de la page Webradios.
+    pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.radio.globe.ensure_loaded(&ctx, false);
+        let full = ui.available_rect_before_wrap();
+        let full = Rect::from_min_max(full.min, full.max - vec2(16.0, 12.0));
+        let panel_open = self.radio.globe.selected.is_some();
+        let area = if panel_open {
+            Rect::from_min_max(full.min, pos2(full.right() - PANEL_W - 12.0, full.bottom()))
+        } else {
+            full
+        };
+        ui.allocate_rect(full, Sense::hover());
+        let resp = ui.interact(area, ui.id().with("globe"), Sense::click_and_drag());
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+
+        // Le globe se tourne vers le pays choisi dans l'annuaire (au début, celui du bureau).
+        let country = self.radio.filter_country();
+        if self.radio.globe.centered_on.as_ref() != Some(&country) && !self.radio.globe.world.is_empty() {
+            let first = self.radio.globe.centered_on.is_none();
+            self.radio.globe.centered_on = Some(country.clone());
+            if let Some((lat, lon)) = radio::country_center(&self.radio.globe.world, &country) {
+                let g = &mut self.radio.globe;
+                let zoom = if first { g.zoom } else { g.zoom.max(3.0) };
+                g.fly_to = Some((lat.to_radians(), lon.to_radians(), zoom));
+            }
+        }
+
+        let base = area.width().min(area.height()) * 0.44;
+        let g = &mut self.radio.globe;
+        let mut view = View {
+            lon: g.lon,
+            lat: g.lat,
+            center: area.center(),
+            radius: base * g.zoom,
+        };
+
+        // Glisser : le globe suit la souris ; lâché, il garde un peu d'élan.
+        if resp.dragged() {
+            let d = resp.drag_delta();
+            view.drag(d);
+            g.velocity = d / dt.max(1.0 / 240.0);
+            g.touched = true;
+            g.fly_to = None;
+        } else if g.velocity.length() > 5.0 {
+            view.drag(g.velocity * dt);
+            g.velocity *= (-dt * 4.0).exp();
+        } else {
+            g.velocity = egui::Vec2::ZERO;
+        }
+        // Molette : zoom vers le point sous le pointeur.
+        if resp.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll.abs() > 0.0 {
+                let pointer = ui.input(|i| i.pointer.hover_pos());
+                let before = pointer.and_then(|p| view.unproject(p));
+                g.zoom = (g.zoom * (scroll * 0.004).exp()).clamp(ZOOM.0, ZOOM.1);
+                view.radius = base * g.zoom;
+                if let (Some(p), Some((lat0, lon0))) = (pointer, before) {
+                    if let Some((lat1, lon1)) = view.unproject(p) {
+                        view.lat =
+                            (view.lat + (lat0 - lat1).to_radians()).clamp(-globe::MAX_LAT, globe::MAX_LAT);
+                        view.lon = globe::wrap_rad(view.lon + (lon0 - lon1).to_radians());
+                    }
+                }
+                g.touched = true;
+                g.fly_to = None;
+            }
+        }
+        // Vol vers un lieu, en douceur.
+        if let Some((lat, lon, zoom)) = g.fly_to {
+            let k = 1.0 - (-dt * 5.0).exp();
+            let dlon = globe::wrap_rad(lon - view.lon);
+            view.lon = globe::wrap_rad(view.lon + dlon * k);
+            view.lat += (lat - view.lat) * k;
+            g.zoom += (zoom - g.zoom) * k;
+            view.radius = base * g.zoom;
+            if dlon.abs() < 0.001 && (lat - view.lat).abs() < 0.001 && (zoom - g.zoom).abs() < 0.01 {
+                g.fly_to = None;
+            }
+        } else if !g.touched && self.focused {
+            // Tant que personne n'y touche, la Terre tourne doucement.
+            view.lon = globe::wrap_rad(view.lon + dt * 0.08);
+        }
+        g.lon = view.lon;
+        g.lat = view.lat;
+        let moving = g.fly_to.is_some() || g.velocity != egui::Vec2::ZERO || (!g.touched && self.focused);
+        if moving || resp.dragged() {
+            ctx.request_repaint();
+        }
+
+        let painter = ui.painter_at(area);
+        let glow = theme::accent_light();
+        match &g.earth {
+            Some(tex) if globe::available() => globe::paint(&painter, area, view, tex.id(), glow),
+            _ => {
+                painter.circle_filled(view.center, view.radius, Color32::from_rgb(0x0C, 0x16, 0x3A));
+                painter.circle_stroke(
+                    view.center,
+                    view.radius,
+                    Stroke::new(1.5_f32, theme::alpha(glow, 0x80)),
+                );
+            }
+        }
+
+        // Stations : un point par lieu, plus gros quand il y a beaucoup de stations.
+        let live_url = self
+            .radio
+            .live
+            .as_ref()
+            .map(|l| l.station.url.clone())
+            .or_else(|| self.radio.connecting_to().map(|s| s.url.clone()));
+        let g = &self.radio.globe;
+        let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p));
+        let mut nearest: Option<(usize, f32)> = None;
+        let scale = (0.85 + g.zoom.sqrt() * 0.15).min(1.8);
+        let time = ui.input(|i| i.time) as f32;
+        let mut live_place = None;
+        // Points aux couleurs du thème, éclaircies pour ressortir sur la carte.
+        let dot = theme::accent_light().lerp_to_gamma(Color32::WHITE, 0.25);
+        for (k, place) in g.places.iter().enumerate() {
+            let Some((p, z)) = view.project(place.lat, place.lon) else {
+                continue;
+            };
+            if !area.expand(10.0).contains(p) {
+                continue;
+            }
+            // Les points s'effacent en approchant du bord du globe.
+            let fade = ((z - 0.05) / 0.35).clamp(0.0, 1.0);
+            let fade = fade * fade * (3.0 - 2.0 * fade);
+            if fade <= 0.01 {
+                continue;
+            }
+            let n = place.stations.len() as f32;
+            let r = (1.2 + n.sqrt() * 0.6).min(5.0) * scale;
+            if n >= 12.0 {
+                painter.circle_filled(p, r * 1.9, theme::alpha(glow, (14.0 * fade) as u8));
+            }
+            painter.circle_filled(p, r + 0.8, Color32::from_black_alpha((90.0 * fade) as u8));
+            painter.circle_filled(p, r, dot.gamma_multiply(fade));
+            if n >= 12.0 {
+                painter.circle_filled(p, r * 0.45, Color32::WHITE.gamma_multiply(0.8 * fade));
+            }
+            if let Some(ptr) = pointer {
+                let d = ptr.distance(p);
+                if d < (r + 8.0) && nearest.is_none_or(|(_, best)| d < best) {
+                    nearest = Some((k, d));
+                }
+            }
+            if live_url
+                .as_ref()
+                .is_some_and(|u| place.stations.iter().any(|&i| g.world[i].url == *u))
+            {
+                live_place = Some(p);
+            }
+        }
+        if let Some(sel) = g.selected.and_then(|k| g.places.get(k)) {
+            if let Some((p, _)) = view.project(sel.lat, sel.lon) {
+                painter.circle_stroke(p, 11.0, Stroke::new(2.0_f32, Color32::WHITE));
+            }
+        }
+        if let Some(p) = live_place {
+            // Lieu de la station en cours : une onde qui s'élargit.
+            let t = (time * 0.8).fract();
+            painter.circle_stroke(
+                p,
+                6.0 + 18.0 * t,
+                Stroke::new(2.0_f32, Color32::WHITE.gamma_multiply(1.0 - t)),
+            );
+            ctx.request_repaint();
+        }
+
+        // Survol et clic.
+        if let Some((k, _)) = nearest {
+            let place = &g.places[k];
+            let label = format!(
+                "{} · {}",
+                place.name,
+                crate::i18n::plural(place.stations.len(), "station", "stations")
+            );
+            if let Some(ptr) = pointer {
+                let galley = widgets::galley(ui, &label, FontId::proportional(13.0), theme::TEXT, 320.0);
+                let r = Rect::from_min_size(ptr + vec2(14.0, -30.0), galley.size() + vec2(16.0, 10.0));
+                painter.rect_filled(r, CornerRadius::same(6), theme::alpha(theme::bg(), 0xE8));
+                painter.galley(r.min + vec2(8.0, 5.0), galley, theme::TEXT);
+            }
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() {
+            self.radio.globe.selected = nearest.map(|(k, _)| k);
+        }
+        if resp.double_clicked() {
+            if let Some((lat, lon)) = pointer.and_then(|p| view.unproject(p)) {
+                let zoom = (self.radio.globe.zoom * 2.5).min(ZOOM.1);
+                self.radio.globe.fly(lat, lon, zoom);
+            }
+        }
+
+        self.globe_overlay(ui, area);
+        if panel_open {
+            let panel = Rect::from_min_max(pos2(full.right() - PANEL_W, full.top()), full.max);
+            self.place_panel(ui, panel);
+        }
+    }
+
+    /// Boutons et légende posés sur le globe.
+    fn globe_overlay(&mut self, ui: &mut egui::Ui, area: Rect) {
+        let g = &self.radio.globe;
+        let status = if g.loading.is_some() && g.world.is_empty() {
+            tr("Chargement des stations du monde…").to_owned()
+        } else if let Some(e) = &g.error {
+            e.clone()
+        } else {
+            trf!(
+                "{0} dans {1}",
+                crate::i18n::plural(g.world.len(), "station", "stations"),
+                crate::i18n::plural(g.places.len(), "lieu", "lieux")
+            )
+        };
+        let loading = g.loading.is_some();
+        let bar = Rect::from_min_size(area.min + vec2(4.0, 0.0), vec2(area.width() - 8.0, 34.0));
+        let shade = theme::alpha(theme::bg(), 0xB0);
+        let status_w = widgets::galley(ui, &status, FontId::proportional(14.0), theme::TEXT, 600.0)
+            .size()
+            .x;
+        let left_w = status_w + if loading { 40.0 } else { 16.0 };
+        ui.painter().rect_filled(
+            Rect::from_min_size(bar.min - vec2(4.0, 0.0), vec2(left_w, 32.0)),
+            CornerRadius::same(8),
+            shade,
+        );
+        ui.painter().rect_filled(
+            Rect::from_min_max(
+                pos2(bar.right() - 150.0, bar.top()),
+                pos2(bar.right() + 4.0, bar.top() + 32.0),
+            ),
+            CornerRadius::same(8),
+            shade,
+        );
+        widgets::place(ui, bar, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                if loading {
+                    ui.spinner();
+                }
+                ui.label(RichText::new(status).color(theme::TEXT_2));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if widgets::icon_button(ui, Icon::Plus, tr("Zoomer"), 32.0, 16.0).clicked() {
+                        let g = &mut self.radio.globe;
+                        let (lat, lon, z) =
+                            (g.lat.to_degrees(), g.lon.to_degrees(), (g.zoom * 2.0).min(ZOOM.1));
+                        g.fly(lat, lon, z);
+                    }
+                    if widgets::icon_button(ui, Icon::WinMinimize, tr("Dézoomer"), 32.0, 16.0).clicked() {
+                        let g = &mut self.radio.globe;
+                        let (lat, lon, z) =
+                            (g.lat.to_degrees(), g.lon.to_degrees(), (g.zoom / 2.0).max(ZOOM.0));
+                        g.fly(lat, lon, z);
+                    }
+                    if widgets::icon_button(ui, Icon::Home, tr("Revenir sur mon pays"), 32.0, 16.0).clicked()
+                    {
+                        let country = self.radio.filter_country();
+                        if let Some((lat, lon)) = radio::country_center(&self.radio.globe.world, &country) {
+                            self.radio.globe.fly(lat, lon, 4.0);
+                        }
+                    }
+                    if !loading
+                        && widgets::icon_button(
+                            ui,
+                            Icon::Refresh,
+                            tr("Actualiser les stations du monde"),
+                            32.0,
+                            16.0,
+                        )
+                        .clicked()
+                    {
+                        self.radio.globe.ensure_loaded(&ui.ctx().clone(), true);
+                    }
+                });
+            });
+        });
+        for (text, size, align, x) in [
+            (
+                tr("Glisse pour tourner, molette pour zoomer, clique un point pour voir ses stations."),
+                11.5,
+                Align2::LEFT_BOTTOM,
+                area.left() + 8.0,
+            ),
+            (
+                tr("Image : NASA · Stations : radio-browser.info"),
+                10.5,
+                Align2::RIGHT_BOTTOM,
+                area.right() - 8.0,
+            ),
+        ] {
+            // Fenêtre étroite (ou panneau ouvert) : seule la mention des sources reste.
+            if align == Align2::LEFT_BOTTOM && area.width() < 760.0 {
+                continue;
+            }
+            let g = ui
+                .painter()
+                .layout_no_wrap(text.to_owned(), FontId::proportional(size), theme::TEXT_2);
+            let r = align.anchor_size(pos2(x, area.bottom() - 6.0), g.size());
+            ui.painter()
+                .rect_filled(r.expand2(vec2(6.0, 3.0)), CornerRadius::same(5), shade);
+            ui.painter().galley(r.min, g, theme::TEXT_2);
+        }
+    }
+
+    /// Panneau des stations du lieu choisi.
+    fn place_panel(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let Some(place) = self
+            .radio
+            .globe
+            .selected
+            .and_then(|k| self.radio.globe.places.get(k))
+            .cloned()
+        else {
+            return;
+        };
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(10), theme::alpha(theme::bg(), 0xC8));
+        ui.painter().rect_stroke(
+            rect,
+            CornerRadius::same(10),
+            Stroke::new(1.0_f32, theme::white(0x14)),
+            egui::StrokeKind::Inside,
+        );
+        let inner = rect.shrink2(vec2(10.0, 12.0));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        {
+            let ui = &mut child;
+            ui.horizontal_top(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(inner.width() - 40.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&place.name)
+                                .font(theme::semibold(18.0))
+                                .color(theme::TEXT),
+                        )
+                        .wrap(),
+                    );
+                    ui.label(
+                        RichText::new(crate::i18n::plural(place.stations.len(), "station", "stations"))
+                            .small()
+                            .color(theme::TEXT_3),
+                    );
+                });
+                if widgets::icon_button(ui, Icon::Close, tr("Fermer"), 30.0, 15.0).clicked() {
+                    self.radio.globe.selected = None;
+                }
+            });
+            ui.add_space(8.0);
+            let stations: Vec<Station> = place
+                .stations
+                .iter()
+                .map(|&i| self.radio.globe.world[i].clone())
+                .collect();
+            egui::ScrollArea::vertical()
+                .id_salt(("place", &place.name))
+                .auto_shrink(false)
+                .show(ui, |ui| {
+                    for (i, s) in stations.iter().enumerate() {
+                        self.station_row(ui, s, i);
+                    }
+                });
+        }
+    }
+}
