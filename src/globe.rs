@@ -88,7 +88,9 @@ struct Resources {
     srgb_textures: bool,
 }
 
-const UNIFORMS: [&str; 6] = ["u_rect", "u_globe", "u_rot", "u_tex", "u_srgb", "u_glow"];
+const UNIFORMS: [&str; 7] = [
+    "u_rect", "u_globe", "u_rot", "u_tex", "u_srgb", "u_glow", "u_corner",
+];
 
 /// Faux si le pilote a refusé le shader (le globe est alors dessiné sans l'image).
 pub fn available() -> bool {
@@ -102,6 +104,7 @@ pub fn paint(
     view: View,
     texture: egui::TextureId,
     glow_color: egui::Color32,
+    corner: f32,
 ) {
     let glow = egui::Rgba::from(glow_color);
     let callback = egui_glow::CallbackFn::new(move |info, painter| {
@@ -123,6 +126,7 @@ pub fn paint(
                 view,
                 tex,
                 [glow.r(), glow.g(), glow.b()],
+                corner,
             )
         };
     });
@@ -139,6 +143,7 @@ uniform vec2 u_rot;     // longitude, latitude du centre (radians)
 uniform sampler2D u_tex;
 uniform int u_srgb;
 uniform vec3 u_glow;    // couleur de l'atmosphère
+uniform float u_corner; // rayon du coin haut gauche (pixels), celui de la zone de contenu
 out vec4 out_color;
 
 const float PI = 3.14159265;
@@ -147,8 +152,16 @@ vec3 srgb_from_linear(vec3 c) {
     return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, vec3(lessThan(c, vec3(0.0031308))));
 }
 
+float corner_mask(vec2 p) {
+    vec2 q = vec2(p.x, u_rect.w - p.y);  // distance au coin haut gauche
+    if (q.x >= u_corner || q.y >= u_corner) return 1.0;
+    float d = length(vec2(u_corner) - q) - u_corner;
+    return clamp(0.5 - d, 0.0, 1.0);
+}
+
 void main() {
     vec2 p = gl_FragCoord.xy - u_rect.xy;
+    float mask = corner_mask(p);
     vec2 d = (p - u_globe.xy) / u_globe.z;
     float r = length(d);
     float aa = 1.5 / u_globe.z;
@@ -156,7 +169,7 @@ void main() {
     float halo = exp(-max(r - 1.0, 0.0) * 18.0) * smoothstep(1.0 - aa, 1.0 + aa, r);
     vec4 outside = vec4(u_glow * halo * 0.55, halo * 0.55);
     if (r > 1.0 + aa) {
-        out_color = outside;
+        out_color = outside * mask;
         return;
     }
     float z = sqrt(max(1.0 - r * r, 0.0));
@@ -184,7 +197,7 @@ void main() {
     col = mix(col, u_glow, rim * 0.6);
     float edge = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, r);
     vec4 inside = vec4(col, 1.0) * edge;
-    out_color = inside + outside * (1.0 - inside.a);
+    out_color = (inside + outside * (1.0 - inside.a)) * mask;
 }
 "#;
 
@@ -248,6 +261,7 @@ unsafe fn create(gl: &glow::Context) -> Option<Resources> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn draw(
     gl: &glow::Context,
     res: &Resources,
@@ -256,6 +270,7 @@ unsafe fn draw(
     view: View,
     texture: glow::Texture,
     glow_color: [f32; 3],
+    corner: f32,
 ) {
     let vp = info.viewport_in_pixels();
     let ppp = info.pixels_per_point;
@@ -277,6 +292,7 @@ unsafe fn draw(
         gl.uniform_2_f32(l("u_rot"), view.lon, view.lat);
         gl.uniform_1_i32(l("u_srgb"), res.srgb_textures as i32);
         gl.uniform_3_f32(l("u_glow"), glow_color[0], glow_color[1], glow_color[2]);
+        gl.uniform_1_f32(l("u_corner"), corner * ppp);
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(texture));
         gl.uniform_1_i32(l("u_tex"), 0);

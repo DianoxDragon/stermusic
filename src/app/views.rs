@@ -270,6 +270,14 @@ impl SterMusic {
         let view = self.view.clone();
         // Apparition de la page : fondu et léger glissement vers le haut ; ses éléments suivent en cascade.
         let t = lists::page_progress(ui.ctx(), &format!("{view:?}"));
+        // Le globe des webradios occupe toute la zone, d'un bord à l'autre.
+        if view == View::Page(Page::Radio) && self.settings.radio_globe {
+            ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+                ui.set_opacity(t);
+                self.globe_view(ui, rect);
+            });
+            return;
+        }
         let inner = Rect::from_min_max(rect.min + vec2(PAD_X, 24.0), rect.max - vec2(PAD_X * 0.5, 0.0))
             .translate(vec2(0.0, 18.0 * (1.0 - t)));
         ui.scope_builder(UiBuilder::new().max_rect(inner), |ui| {

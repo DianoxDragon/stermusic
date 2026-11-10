@@ -138,21 +138,30 @@ impl SterMusic {
         }
     }
 
-    /// Vue « Globe » de la page Webradios.
-    pub(super) fn globe_view(&mut self, ui: &mut egui::Ui) {
+    /// Vue « Globe » de la page Webradios : la Terre remplit toute la zone de contenu, l'en-tête,
+    /// les commandes et le panneau d'un lieu flottent par-dessus.
+    pub(super) fn globe_view(&mut self, ui: &mut egui::Ui, area: Rect) {
         let ctx = ui.ctx().clone();
         self.radio.globe.ensure_loaded(&ctx, false);
-        let full = ui.available_rect_before_wrap();
-        let full = Rect::from_min_max(full.min, full.max - vec2(16.0, 12.0));
         let panel_open = self.radio.globe.selected.is_some();
-        let area = if panel_open {
-            Rect::from_min_max(full.min, pos2(full.right() - PANEL_W - 12.0, full.bottom()))
-        } else {
-            full
-        };
-        ui.allocate_rect(full, Sense::hover());
+        // Ce qui flotte sur la carte : en-tête, barre de commandes, panneau du lieu.
+        let header = Rect::from_min_size(area.min + vec2(32.0, 24.0), vec2(area.width() - 48.0, 40.0));
+        let toolbar = Rect::from_min_max(
+            pos2(area.left() + 28.0, header.bottom() + 10.0),
+            pos2(area.right() - 16.0, header.bottom() + 44.0),
+        );
+        let panel = Rect::from_min_max(
+            pos2(area.right() - 16.0 - PANEL_W, toolbar.bottom() + 10.0),
+            area.max - vec2(16.0, 16.0),
+        );
+        ui.allocate_rect(area, Sense::hover());
         let resp = ui.interact(area, ui.id().with("globe"), Sense::click_and_drag());
         let dt = ui.input(|i| i.stable_dt).min(0.1);
+        // Pointeur sur la carte, hors de ce qui flotte dessus.
+        let over_ui = |p: egui::Pos2| p.y < toolbar.bottom() || (panel_open && panel.contains(p));
+        let pointer = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| area.contains(*p) && !over_ui(*p));
 
         // Le globe se tourne vers le pays choisi dans l'annuaire (au début, celui du bureau).
         let country = self.radio.filter_country();
@@ -166,12 +175,21 @@ impl SterMusic {
             }
         }
 
-        let base = area.width().min(area.height()) * 0.44;
+        // Zone utile sous l'en-tête ; le globe glisse à gauche quand le panneau s'ouvre.
+        let shift = crate::anim::toggle(
+            &ctx,
+            egui::Id::new("globe_panel_shift"),
+            panel_open,
+            crate::anim::NORMAL,
+        );
+        let usable = Rect::from_min_max(pos2(area.left(), toolbar.bottom()), area.max);
+        let center = usable.center() - vec2((PANEL_W + 16.0) * 0.5 * shift, 0.0);
+        let base = (usable.width() - (PANEL_W + 16.0) * shift).min(usable.height()) * 0.46;
         let g = &mut self.radio.globe;
         let mut view = View {
             lon: g.lon,
             lat: g.lat,
-            center: area.center(),
+            center,
             radius: base * g.zoom,
         };
 
@@ -189,10 +207,9 @@ impl SterMusic {
             g.velocity = egui::Vec2::ZERO;
         }
         // Molette : zoom vers le point sous le pointeur.
-        if resp.hovered() {
+        if pointer.is_some() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                let pointer = ui.input(|i| i.pointer.hover_pos());
                 let before = pointer.and_then(|p| view.unproject(p));
                 g.zoom = (g.zoom * (scroll * 0.004).exp()).clamp(ZOOM.0, ZOOM.1);
                 view.radius = base * g.zoom;
@@ -225,14 +242,14 @@ impl SterMusic {
         g.lon = view.lon;
         g.lat = view.lat;
         let moving = g.fly_to.is_some() || g.velocity != egui::Vec2::ZERO || (!g.touched && self.focused);
-        if moving || resp.dragged() {
+        if moving || resp.dragged() || shift > 0.0 && shift < 1.0 {
             ctx.request_repaint();
         }
 
         let painter = ui.painter_at(area);
         let glow = theme::accent_light();
         match &g.earth {
-            Some(tex) if globe::available() => globe::paint(&painter, area, view, tex.id(), glow),
+            Some(tex) if globe::available() => globe::paint(&painter, area, view, tex.id(), glow, 10.0),
             _ => {
                 painter.circle_filled(view.center, view.radius, Color32::from_rgb(0x0C, 0x16, 0x3A));
                 painter.circle_stroke(
@@ -251,7 +268,6 @@ impl SterMusic {
             .map(|l| l.station.url.clone())
             .or_else(|| self.radio.connecting_to().map(|s| s.url.clone()));
         let g = &self.radio.globe;
-        let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| area.contains(*p));
         let mut nearest: Option<(usize, f32)> = None;
         let scale = (0.85 + g.zoom.sqrt() * 0.15).min(1.8);
         let time = ui.input(|i| i.time) as f32;
@@ -326,7 +342,7 @@ impl SterMusic {
             }
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        if resp.clicked() {
+        if resp.clicked() && pointer.is_some() {
             self.radio.globe.selected = nearest.map(|(k, _)| k);
         }
         if resp.double_clicked() {
@@ -336,15 +352,44 @@ impl SterMusic {
             }
         }
 
-        self.globe_overlay(ui, area);
+        // Voiles dégradés en haut et en bas : l'en-tête et les légendes restent lisibles.
+        let bg = theme::bg();
+        vertical_fade(
+            &painter,
+            Rect::from_min_max(area.min, pos2(area.right(), toolbar.bottom() + 36.0)),
+            theme::alpha(bg, 0xE0),
+            theme::alpha(bg, 0x00),
+        );
+        vertical_fade(
+            &painter,
+            Rect::from_min_max(pos2(area.left(), area.bottom() - 56.0), area.max),
+            theme::alpha(bg, 0x00),
+            theme::alpha(bg, 0xB0),
+        );
+
+        widgets::place(ui, header, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                self.radio_header(ui)
+            });
+        });
+        self.globe_overlay(ui, area, toolbar, panel_open);
         if panel_open {
-            let panel = Rect::from_min_max(pos2(full.right() - PANEL_W, full.top()), full.max);
             self.place_panel(ui, panel);
         }
+        // Liseré de la zone de contenu, par-dessus la carte.
+        ui.painter().rect_stroke(
+            area,
+            CornerRadius {
+                nw: 10,
+                ..Default::default()
+            },
+            Stroke::new(1.0_f32, theme::white(0x0C)),
+            egui::StrokeKind::Inside,
+        );
     }
 
     /// Boutons et légende posés sur le globe.
-    fn globe_overlay(&mut self, ui: &mut egui::Ui, area: Rect) {
+    fn globe_overlay(&mut self, ui: &mut egui::Ui, area: Rect, bar: Rect, panel_open: bool) {
         let g = &self.radio.globe;
         let status = if g.loading.is_some() && g.world.is_empty() {
             tr("Chargement des stations du monde…").to_owned()
@@ -358,7 +403,6 @@ impl SterMusic {
             )
         };
         let loading = g.loading.is_some();
-        let bar = Rect::from_min_size(area.min + vec2(4.0, 0.0), vec2(area.width() - 8.0, 34.0));
         let shade = theme::alpha(theme::bg(), 0xB0);
         let status_w = widgets::galley(ui, &status, FontId::proportional(14.0), theme::TEXT, 600.0)
             .size()
@@ -424,23 +468,27 @@ impl SterMusic {
                 tr("Glisse pour tourner, molette pour zoomer, clique un point pour voir ses stations."),
                 11.5,
                 Align2::LEFT_BOTTOM,
-                area.left() + 8.0,
+                area.left() + 32.0,
             ),
             (
                 tr("Image : NASA · Stations : radio-browser.info"),
                 10.5,
                 Align2::RIGHT_BOTTOM,
-                area.right() - 8.0,
+                if panel_open {
+                    area.right() - PANEL_W - 40.0
+                } else {
+                    area.right() - 24.0
+                },
             ),
         ] {
-            // Fenêtre étroite (ou panneau ouvert) : seule la mention des sources reste.
-            if align == Align2::LEFT_BOTTOM && area.width() < 760.0 {
+            // Place comptée (ou panneau ouvert) : seule la mention des sources reste.
+            if align == Align2::LEFT_BOTTOM && (area.width() < 760.0 || panel_open) {
                 continue;
             }
             let g = ui
                 .painter()
                 .layout_no_wrap(text.to_owned(), FontId::proportional(size), theme::TEXT_2);
-            let r = align.anchor_size(pos2(x, area.bottom() - 6.0), g.size());
+            let r = align.anchor_size(pos2(x, area.bottom() - 12.0), g.size());
             ui.painter()
                 .rect_filled(r.expand2(vec2(6.0, 3.0)), CornerRadius::same(5), shade);
             ui.painter().galley(r.min, g, theme::TEXT_2);
@@ -511,4 +559,16 @@ impl SterMusic {
                 });
         }
     }
+}
+
+/// Rectangle en dégradé vertical (voile au-dessus de la carte).
+fn vertical_fade(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), top);
+    mesh.colored_vertex(rect.right_top(), top);
+    mesh.colored_vertex(rect.left_bottom(), bottom);
+    mesh.colored_vertex(rect.right_bottom(), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    painter.add(mesh);
 }

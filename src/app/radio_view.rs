@@ -369,9 +369,9 @@ impl SterMusic {
 
     // ---------- Page ----------
 
-    pub(super) fn radio_page(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        self.radio.load_countries(&ctx);
+    /// En-tête de la page : titre, bascule Annuaire / Globe, ajout d'une adresse.
+    pub(super) fn radio_header(&mut self, ui: &mut egui::Ui) {
+        self.radio.load_countries(&ui.ctx().clone());
         ui.horizontal(|ui| {
             heading(ui, tr("Webradios"));
             ui.add_space(18.0);
@@ -389,11 +389,13 @@ impl SterMusic {
                 }
             });
         });
+    }
+
+    /// Page Webradios, vue Annuaire (la vue Globe occupe toute la zone : voir `globe_view`).
+    pub(super) fn radio_page(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.radio_header(ui);
         ui.add_space(14.0);
-        if self.settings.radio_globe {
-            self.globe_view(ui);
-            return;
-        }
         if self.radio.shown_query.is_none() {
             let q = self.radio.filter.clone();
             self.radio.search(&ctx, q);
