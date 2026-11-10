@@ -25,6 +25,7 @@ mod tag_editor;
 mod tag_tools;
 mod tools;
 mod views;
+mod viz_view;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -202,6 +203,14 @@ pub struct Settings {
     pub banner_style: usize,
     /// Visualiseurs exclus du mode automatique (par leur nom).
     pub auto_excluded: Vec<String>,
+    /// Mode automatique : un autre visualiseur toutes les `viz_auto_secs` secondes (0 : seulement
+    /// au changement de morceau).
+    pub viz_auto_secs: f32,
+    /// Luminosité (0,4 → 1,6) et vitesse (0,4 → 2) des visualiseurs.
+    pub viz_intensity: f32,
+    pub viz_speed: f32,
+    /// Poussières de lumière par-dessus le visualiseur.
+    pub viz_particles: bool,
     /// Éditeur de tags : ID3v2.3 plutôt que 2.4, et date de modification conservée.
     pub tag_id3v23: bool,
     pub tag_keep_mtime: bool,
@@ -284,6 +293,10 @@ impl Default for Settings {
             viz_style: 0,
             banner_style: 1,
             auto_excluded: Vec::new(),
+            viz_auto_secs: 45.0,
+            viz_intensity: 1.0,
+            viz_speed: 1.0,
+            viz_particles: true,
             tag_id3v23: false,
             tag_keep_mtime: true,
             tag_prefs: Default::default(),
@@ -612,7 +625,14 @@ pub struct SterMusic {
     /// Visualiseurs automatiques, et nom affiché quand le visualiseur change.
     auto_np: crate::viz::AutoViz,
     auto_banner: crate::viz::AutoViz,
-    viz_label: Option<(usize, f64)>,
+    /// Choix du visualiseur : bandeau d'aperçus ouvert (« En cours de lecture ») et défilement
+    /// à faire jusqu'au visualiseur choisi, galerie des paramètres, moment du dernier changement
+    /// (la pastille s'allume), visualiseur à l'écran.
+    viz_strip: bool,
+    viz_strip_scroll: bool,
+    viz_gallery: Option<viz_view::Gallery>,
+    viz_flash: f64,
+    np_shown: usize,
     /// Webradios : station en cours, annuaire.
     radio: radio_view::RadioState,
     /// Genres, années, compositeurs (reconstruit avec la bibliothèque).
@@ -764,6 +784,15 @@ impl SterMusic {
                 }
             }
         }
+        // Visualiseurs v4 : dix de plus ; « Automatique » était le 28.
+        if settings.style_version < 4 {
+            settings.style_version = 4;
+            for style in [&mut settings.viz_style, &mut settings.banner_style] {
+                if *style == 28 {
+                    *style = crate::shader::AUTO;
+                }
+            }
+        }
         theme::install(&cc.egui_ctx, &settings.theme, settings.breeze);
 
         let volume = if settings.muted {
@@ -845,7 +874,11 @@ impl SterMusic {
             aurora: crate::viz::Aurora::default(),
             auto_np: crate::viz::AutoViz::default(),
             auto_banner: crate::viz::AutoViz::default(),
-            viz_label: None,
+            viz_strip: false,
+            viz_strip_scroll: false,
+            viz_gallery: None,
+            viz_flash: f64::NEG_INFINITY,
+            np_shown: 0,
             radio: Default::default(),
             browse_index: None,
             sleep: None,
@@ -1359,17 +1392,19 @@ impl SterMusic {
     /// Visualiseur : analyse le son quand une page qui l'affiche est à l'écran, et redessine en
     /// continu pendant la lecture (ou tant que l'animation retombe).
     fn update_visualizer(&mut self, ctx: &egui::Context) {
+        // Aussi pour les aperçus animés (paramètres, galerie).
         let visible = self.settings.visualizer
             && !self.mini
             && !self.hidden
             && !self.kwin.minimized
-            && matches!(self.view, View::NowPlaying | View::Page(Page::Home));
+            && (matches!(self.view, View::NowPlaying | View::Page(Page::Home) | View::Page(Page::Settings))
+                || self.viz_gallery.is_some());
         if !visible {
             return;
         }
         let playing = self.is_playing();
         let dt = ctx.input(|i| i.stable_dt);
-        self.spectrum.update(&self.tap, dt, playing);
+        self.spectrum.update(&self.tap, dt, playing, self.settings.viz_speed);
         if playing || self.spectrum.alive() {
             ctx.request_repaint();
         }
@@ -2384,9 +2419,11 @@ impl SterMusic {
             || self.lib_tools.open.is_some()
             || self.radio.add.is_some()
             || self.tools.open.is_some()
+            || self.viz_gallery.is_some()
         {
             return;
         }
+        self.viz_keys(ctx);
         let keys = [
             (none, Key::Space, Action::TogglePlay),
             (cmd, Key::ArrowRight, Action::Next),
@@ -2638,6 +2675,7 @@ impl eframe::App for SterMusic {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| self.content(ui));
             self.dialogs(ctx);
+            self.viz_gallery_ui(ctx);
             self.radio_dialog(ctx);
             self.tool_dialogs(ctx);
             self.lib_tool_dialogs(ctx);

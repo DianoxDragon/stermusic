@@ -45,7 +45,7 @@ impl SterMusic {
         cover: (Rect, Option<egui::TextureId>),
     ) {
         let fill = crate::shader::STYLES[style].1;
-        let mut w = crate::viz::waves(&self.spectrum, palette, intensity);
+        let mut w = crate::viz::waves(&self.spectrum, palette, intensity * self.settings.viz_intensity);
         w.mode = style as i32;
         let rect = if fill {
             w.intensity *= 0.6;
@@ -53,7 +53,7 @@ impl SterMusic {
             w.fade_bottom = 0.08;
             area
         } else {
-            w.base = if style == 3 { 0.88 } else { 0.84 };
+            w.base = if style == 3 || style == 34 { 0.88 } else { 0.84 };
             w.amp = if style == 0 { 0.42 } else { 0.8 };
             w.fade_top = 0.55;
             w.fade_bottom = 0.10;
@@ -75,7 +75,11 @@ impl SterMusic {
         cover: (Rect, Option<egui::TextureId>),
     ) {
         let fill = crate::shader::STYLES[style].1;
-        let mut w = crate::viz::waves(&self.spectrum, palette, if fill { 0.5 } else { 0.7 } * alpha);
+        let mut w = crate::viz::waves(
+            &self.spectrum,
+            palette,
+            if fill { 0.5 } else { 0.7 } * alpha * self.settings.viz_intensity,
+        );
         w.mode = style as i32;
         w.scale = 3.0;
         w.base = 0.74;
@@ -456,13 +460,14 @@ impl SterMusic {
                 // Visualiseur du bandeau (Caustiques par défaut : des reflets d'eau sur toute la
                 // largeur), discret et découpé aux coins arrondis.
                 let setting = self.settings.banner_style.min(crate::shader::AUTO);
-                let (style, fading) = if setting == crate::shader::AUTO {
-                    let now = ui.input(|i| i.time);
-                    let allowed = self.auto_allowed();
-                    self.auto_banner.pick(now, self.current(), &allowed)
-                } else {
-                    (setting, None)
-                };
+                let now = ui.input(|i| i.time);
+                let allowed = self.auto_allowed();
+                let (style, fading) =
+                    self.auto_banner
+                        .pick(now, self.current(), setting, &allowed, self.settings.viz_auto_secs);
+                if fading.is_some() {
+                    ui.ctx().request_repaint();
+                }
                 let side = rect.height() - 48.0;
                 let banner_cover = Rect::from_min_size(rect.min + vec2(24.0, 24.0), vec2(side, side));
                 let blur = self.current().and_then(|i| {
@@ -482,14 +487,16 @@ impl SterMusic {
                     style,
                     (banner_cover, blur),
                 );
-                crate::viz::particles(
-                    ui.painter(),
-                    rect.shrink(6.0),
-                    &self.spectrum,
-                    palette[1],
-                    0.6,
-                    18,
-                );
+                if self.settings.viz_particles {
+                    crate::viz::particles(
+                        ui.painter(),
+                        rect.shrink(6.0),
+                        &self.spectrum,
+                        palette[1],
+                        0.6,
+                        18,
+                    );
+                }
             } else {
                 crate::viz::drifting_lights(ui.painter(), rect, &self.spectrum, palette);
             }
@@ -1617,15 +1624,13 @@ impl SterMusic {
             if crate::shader::available() {
                 // Vagues par la carte graphique : une grande zone qui s'estompe longuement vers le
                 // haut (derrière le contenu), les vagues restant sous la pochette.
-                // Visualiseur choisi, ou automatique (au hasard, en fondu enchaîné).
+                // Visualiseur choisi, ou automatique (au hasard) ; chaque changement en fondu.
                 let setting = self.settings.viz_style.min(crate::shader::AUTO);
                 let now = ui.input(|i| i.time);
-                let (style, fading) = if setting == crate::shader::AUTO {
-                    let allowed = self.auto_allowed();
-                    self.auto_np.pick(now, self.current(), &allowed)
-                } else {
-                    (setting, None)
-                };
+                let allowed = self.auto_allowed();
+                let (style, fading) =
+                    self.auto_np
+                        .pick(now, self.current(), setting, &allowed, self.settings.viz_auto_secs);
                 let blur = self
                     .covers
                     .large(&t.path)
@@ -1635,54 +1640,15 @@ impl SterMusic {
                 }
                 let k = fading.map(|(_, f)| f).unwrap_or(1.0);
                 self.paint_np_style(ui, area, palette, intensity * k, style, (cover, blur));
-                let low =
-                    Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.45), area.max);
-                crate::viz::particles(ui.painter(), low, &self.spectrum, palette[1], intensity, 64);
-
-                // Nom du visualiseur, qui apparaît puis s'efface quand il change.
-                if self.viz_label.map(|(s, _)| s) != Some(style) {
-                    self.viz_label = Some((style, now));
+                if fading.is_some() {
+                    ui.ctx().request_repaint();
                 }
-                let r = Rect::from_min_size(pos2(area.right() - 52.0, area.top() + 8.0), vec2(36.0, 36.0));
-                if let Some((s, since)) = self.viz_label {
-                    let age = (now - since) as f32;
-                    let a = (age / 0.3).min(1.0).min((3.0 - age) / 0.6).clamp(0.0, 1.0);
-                    if a > 0.0 {
-                        let name = tr(crate::shader::STYLES[s].0);
-                        let text = if setting == crate::shader::AUTO {
-                            trf!("{name} · automatique", name)
-                        } else {
-                            name.to_owned()
-                        };
-                        ui.painter().text(
-                            pos2(r.left() - 6.0, r.center().y),
-                            Align2::RIGHT_CENTER,
-                            text,
-                            FontId::proportional(13.0),
-                            theme::alpha(theme::TEXT_2, (255.0 * a) as u8),
-                        );
-                        ui.ctx().request_repaint();
-                    }
+                if self.settings.viz_particles {
+                    let low =
+                        Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.45), area.max);
+                    crate::viz::particles(ui.painter(), low, &self.spectrum, palette[1], intensity, 64);
                 }
-
-                // Changer de visualiseur d'un clic (comme le clic droit du lecteur Windows Media).
-                let current = if setting == crate::shader::AUTO {
-                    tr("Automatique").to_owned()
-                } else {
-                    tr(crate::shader::STYLES[style].0).to_owned()
-                };
-                let tip = trf!("Visualiseur : {current} (clic : suivant)", current);
-                if ui
-                    .put(r, |ui: &mut egui::Ui| {
-                        widgets::icon_button(ui, Icon::Sparkles, &tip, 36.0, 18.0)
-                    })
-                    .clicked()
-                {
-                    self.settings.viz_style = (setting + 1) % (crate::shader::AUTO + 1);
-                    if self.settings.viz_style == crate::shader::AUTO {
-                        self.toast(tr("Visualiseur automatique : il change à chaque morceau"));
-                    }
-                }
+                self.np_viz_controls(ui, area, style);
             } else {
                 // Repli (pilote sans shader) : l'Aurore calculée par le processeur.
                 let top = (cover.bottom() - cover.height() * 0.08).max(area.bottom() - area.height() * 0.42);
@@ -2126,58 +2092,7 @@ impl SterMusic {
                     });
                 }
                 separator(ui);
-                let mut visualizer = self.settings.visualizer;
-                card_row(ui, Icon::AudioLines, tr("Visualiseur"), tr("Lumières qui suivent la musique, aux couleurs de la pochette (En cours de lecture, accueil)."), |_, ui| {
-                    widgets::switch(ui, &mut visualizer);
-                }, self);
-                self.settings.visualizer = visualizer;
-                if visualizer && crate::shader::available() {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(52.0);
-                        ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new(tr("Mode automatique")).color(theme::TEXT_2)))
-                            .on_hover_text(tr("Les visualiseurs parmi lesquels le mode automatique choisit au hasard."));
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                            let allowed = self.auto_allowed();
-                            for (i, (name, _)) in crate::shader::STYLES.iter().enumerate() {
-                                let on = allowed.contains(&i);
-                                if segment(ui, tr(name), on).clicked() {
-                                    let excluded = &mut self.settings.auto_excluded;
-                                    if on {
-                                        // Au moins un visualiseur reste dans le tirage.
-                                        if allowed.len() > 1 {
-                                            excluded.push((*name).to_owned());
-                                        }
-                                    } else {
-                                        excluded.retain(|n| n != name);
-                                    }
-                                }
-                            }
-                        });
-                    });
-                    for (label, banner) in [(tr("En cours de lecture"), false), (tr("Bandeau de l'accueil"), true)] {
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(52.0);
-                            ui.add_sized([150.0, 22.0], egui::Label::new(RichText::new(label).color(theme::TEXT_2)));
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                                let names = crate::shader::STYLES.iter().map(|(n, _)| *n).chain([tr("Automatique")]);
-                                for (i, name) in names.enumerate() {
-                                    let current = if banner { self.settings.banner_style } else { self.settings.viz_style };
-                                    if segment(ui, tr(name), current == i).clicked() {
-                                        if banner {
-                                            self.settings.banner_style = i;
-                                        } else {
-                                            self.settings.viz_style = i;
-                                        }
-                                    }
-                                }
-                            });
-                        });
-                    }
-                }
+                self.visualizer_settings(ui);
                 separator(ui);
                 let mut leveling = self.settings.leveling;
                 card_row(ui, Icon::Volume2, tr("Nivellement du volume"), tr("Joue les morceaux à un volume semblable : gain ReplayGain du fichier s'il existe, sinon réglage automatique."), |_, ui| {

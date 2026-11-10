@@ -55,7 +55,7 @@ pub const WAVE: usize = 128;
 /// Choix « Automatique » : un visualiseur au hasard à chaque morceau (et toutes les 45 s).
 pub const AUTO: usize = STYLES.len();
 
-pub const STYLES: [(&str, bool); 28] = [
+pub const STYLES: [(&str, bool); 38] = [
     (crate::i18n::n_("Aurore"), false),
     (crate::i18n::n_("Caustiques"), true),
     (crate::i18n::n_("Nébuleuse"), true),
@@ -84,6 +84,16 @@ pub const STYLES: [(&str, bool); 28] = [
     (crate::i18n::n_("Cristaux"), true),
     (crate::i18n::n_("Lampe à lave"), true),
     (crate::i18n::n_("Diodes"), false),
+    (crate::i18n::n_("Vinyle"), true),
+    (crate::i18n::n_("Ferrofluide"), true),
+    (crate::i18n::n_("Hologramme"), true),
+    (crate::i18n::n_("Soie"), true),
+    (crate::i18n::n_("Irisé"), true),
+    (crate::i18n::n_("Topographie"), true),
+    (crate::i18n::n_("Verre"), false),
+    (crate::i18n::n_("Flux"), true),
+    (crate::i18n::n_("Trame"), true),
+    (crate::i18n::n_("Lissajous"), true),
 ];
 
 struct Resources {
@@ -828,6 +838,306 @@ vec3 leds(vec2 px, float W, float H, float u) {
     return col * dot_ * (on * (0.9 + 0.5 * u_kick) + inside * 0.05);
 }
 
+// ---------- Outils des visualiseurs suivants ----------
+
+// Niveau d'une fréquence, de 0 (graves) à 1 (aigus).
+float band(float f) {
+    float d = clamp(f, 0.0, 1.0) * 15.0;
+    int i = int(floor(d));
+    return mix(u_levels[i], u_levels[min(i + 1, 15)], fract(d));
+}
+mat2 rot(float a) {
+    float c = cos(a);
+    float s = sin(a);
+    return mat2(c, -s, s, c);
+}
+// Couleur de la pochette (floutée) en `uv` (0 → 1), sinon un dégradé de la palette.
+vec3 cover_color(vec2 uv) {
+    if (u_has_tex == 1) {
+        vec3 c = texture(u_tex, clamp(uv, 0.0, 1.0)).rgb;
+        return u_srgb == 1 ? srgb_from_linear(c) : c;
+    }
+    return mix(u_colors[2], u_colors[0], uv.y);
+}
+
+// ---------- 28. Vinyle : un disque qui tourne derrière la pochette, ses sillons scintillent ----------
+
+vec3 vinyl(vec2 px, float W, float H) {
+    float R = u_focus.z * 1.5;
+    vec2 d = px - u_focus.xy;
+    float rr = length(d);
+    float r = rr / R;
+    float a = atan(d.y, d.x);
+    float spin = u_time * 1.4;
+    vec3 acc = u_colors[2] * exp(-pow((r - 1.0) * 2.4, 2.0)) * (0.08 + 0.22 * u_bass + 0.35 * u_kick);
+    float edge = 1.0 - smoothstep(1.0 - 1.5 * u_ppp / R, 1.0, r);
+    if (edge <= 0.0) return acc;
+    // Du bord (graves) vers l'étiquette (aigus).
+    float f = clamp((1.0 - r) / 0.64, 0.0, 1.0);
+    float lv = band(f);
+    float groove = 0.55 + 0.45 * sin(rr / u_ppp * 1.9);
+    float track = smoothstep(0.0, 0.015, abs(fract(r * 7.0 + 0.3) - 0.5) - 0.025);
+    // La lampe est fixe, le disque tourne dessous : les reflets restent, la poussière défile.
+    float hl = pow(abs(cos(a - 0.7)), 22.0) + 0.55 * pow(abs(cos(a + 0.9)), 40.0);
+    float dust = smoothstep(0.82, 1.0, noise(vec2((a - spin) * 40.0, r * 90.0)));
+    vec3 sheen = mix(u_colors[0], u_colors[1], f);
+    vec3 disc = sheen * hl * (0.55 + 1.6 * lv + 0.6 * u_kick) * (0.45 + 0.55 * groove) * track
+              + vec3(1.0) * hl * 0.12 * groove
+              + sheen * (0.07 + 0.16 * lv) * groove * track
+              + vec3(0.14) * dust * (0.3 + hl);
+    disc += mix(sheen, vec3(1.0), 0.5) * exp(-pow((r - 0.993) * R / (1.2 * u_ppp), 2.0)) * 0.45;
+    // Étiquette : la pochette qui tourne (visible quand rien ne la recouvre).
+    float lab = 0.33;
+    if (r < lab + 0.01) {
+        vec2 q = rot(spin) * (d / (R * lab));
+        vec3 lc = cover_color(q * 0.5 + 0.5);
+        float hole = smoothstep(0.03, 0.045, r);
+        float inner = 1.0 - smoothstep(lab - 1.5 * u_ppp / R, lab, r);
+        disc = mix(disc, lc * hole * (0.85 + 0.3 * u_kick), inner)
+             + vec3(0.5) * exp(-pow((r - lab) * R / (1.0 * u_ppp), 2.0));
+    }
+    return acc * (1.0 - edge) + disc * edge;
+}
+
+// ---------- 29. Ferrofluide : un liquide sombre hérissé de pointes qui se dressent sur les graves ----------
+
+vec3 ferrofluid(vec2 px, float W, float H) {
+    vec2 d = px - u_focus.xy;
+    float r = length(d);
+    float a = atan(d.y, d.x) + u_time * 0.04;
+    float base = u_focus.z * 1.16 * (1.0 + 0.04 * u_bass + 0.05 * u_kick);
+    float N = 30.0;
+    float s = a / 6.28318 * N;
+    float idx = floor(s);
+    float local = fract(s) - 0.5;
+    float fi = abs(mod(idx, N) / N * 2.0 - 1.0);
+    float h = (0.05 + 0.60 * band(fi) + 0.25 * u_kick) * u_focus.z * (0.6 + 0.7 * hash(vec2(idx, 3.0)));
+    float tri = max(1.0 - abs(local) * 2.0, 0.0);
+    float profile = pow(tri, 2.4);
+    float edge = base + h * profile + u_focus.z * 0.025 * sin(a * 3.0 + u_time * 0.7);
+    // Distance au bord corrigée par la pente : un trait d'épaisseur régulière sur les pointes.
+    float slope = h * 2.4 * pow(tri, 1.4) * 2.0 * N / 6.28318 / max(r, 1.0);
+    float dd = (r - edge) / sqrt(1.0 + slope * slope);
+    float rim = exp(-pow(dd / (1.6 * u_ppp), 2.0));
+    float refl = 0.5 + 0.5 * sin(a * 2.0 - r / u_focus.z * 3.0 + u_time * 0.5);
+    vec3 col = mix(u_colors[0], u_colors[1], refl);
+    float inside = step(dd, 0.0) * smoothstep(-u_focus.z * 0.5, 0.0, dd);
+    vec3 acc = mix(col, vec3(1.0), 0.35) * rim * (0.55 + 0.8 * u_energy)
+             + col * 0.10 * inside
+             + u_colors[2] * exp(-pow(max(dd, 0.0) / (u_focus.z * 0.4), 2.0)) * (0.08 + 0.4 * u_kick);
+    acc += vec3(1.0) * rim * pow(profile, 8.0) * smoothstep(0.1, 0.45, h / u_focus.z) * 0.7;
+    return acc;
+}
+
+// ---------- 30. Hologramme : une sphère de points qui tourne, ses latitudes suivent le spectre ----------
+
+vec3 hologram(vec2 px, float W, float H) {
+    float R = u_focus.z * 1.9 * (1.0 + 0.04 * u_bass + 0.06 * u_kick);
+    vec2 q = (px - u_focus.xy) / R;
+    float r2 = dot(q, q);
+    vec3 acc = u_colors[2] * exp(-r2 * 1.6) * (0.05 + 0.12 * u_bass);
+    acc += u_colors[1] * exp(-pow((sqrt(r2) - 1.0) * R / (H * 0.015), 2.0)) * (0.10 + 0.35 * u_kick);
+    if (r2 >= 1.0) return acc;
+    float z = sqrt(1.0 - r2);
+    float rows = 15.0;
+    for (int side = 0; side < 2; side++) {
+        vec3 p = vec3(q.x, -q.y, side == 0 ? z : -z);
+        p.xz = rot(u_time * 0.22) * p.xz;
+        p.yz = rot(0.38) * p.yz;
+        float lat = asin(clamp(p.y, -1.0, 1.0));
+        float lon = atan(p.z, p.x);
+        float li = floor(lat / 3.14159 * rows + 0.5);
+        float latc = li / rows * 3.14159;
+        float cols = max(1.0, floor(cos(latc) * rows * 2.0 + 0.5));
+        float lonc = floor(lon / 6.28318 * cols + 0.5) / cols * 6.28318;
+        vec2 dv = vec2((lon - lonc) * cos(lat), lat - latc);
+        float dist = length(dv) * R;
+        float f = abs(li) / (rows * 0.5);
+        float lv = band(f);
+        float size = (1.8 + 3.6 * lv + 1.5 * u_kick) * u_ppp * (side == 0 ? 1.0 : 0.7);
+        float dotv = exp(-pow(dist / size, 2.0));
+        float halo = exp(-pow(dist / (size * 3.0), 2.0)) * 0.25;
+        vec3 col = mix(u_colors[0], u_colors[1], f);
+        float shade = side == 0 ? (0.45 + 0.55 * z) : 0.18;
+        acc += mix(col, vec3(1.0), 0.4 * lv) * (dotv + halo) * shade * (1.1 + 2.2 * lv);
+    }
+    float scan = exp(-pow((q.y - sin(u_time * 0.35)) * R / (2.5 * u_ppp), 2.0));
+    acc += u_colors[1] * scan * 0.10 * z;
+    return acc;
+}
+
+// ---------- 31. Soie : un drapé qui ondule, des reflets qui glissent dessus ----------
+
+float silk_h(vec2 p, float t) {
+    return sin(p.x * 1.6 + 1.7 * sin(p.y * 1.1 + t * 0.45) + 0.6 * sin(p.y * 2.3 - t * 0.31 + p.x * 0.7))
+         + 0.5 * sin(p.y * 0.9 + p.x * 0.4 - t * 0.2);
+}
+vec3 silk(vec2 px, float H) {
+    vec2 p = px / (H * 0.24 * u_scale);
+    float t = u_time * 0.6;
+    float amp = 0.9 + 0.6 * u_bass + 0.4 * u_kick;
+    float e = 0.01;
+    float h = silk_h(p, t);
+    vec2 g = vec2(silk_h(p + vec2(e, 0.0), t) - h, silk_h(p + vec2(0.0, e), t) - h) / e;
+    vec3 n = normalize(vec3(-g * amp * 0.55, 1.0));
+    vec3 l = normalize(vec3(cos(t * 0.3) * 0.6, -0.5 + 0.2 * sin(t * 0.21), 0.7));
+    float diff = max(dot(n, l), 0.0);
+    vec3 hv = normalize(l + vec3(0.0, 0.0, 1.0));
+    float spec = pow(max(dot(n, hv), 0.0), 70.0);
+    float sheen = pow(max(dot(n, hv), 0.0), 12.0);
+    float tone = 0.5 + 0.5 * sin(h * 1.2 + p.x * 0.3);
+    vec3 col = mix(u_colors[2], u_colors[0], tone);
+    col = mix(col, u_colors[1], smoothstep(0.6, 1.0, tone) * 0.5);
+    return col * (0.02 + 0.30 * pow(diff, 4.0) + 0.25 * sheen) * (0.8 + 0.5 * u_energy)
+         + mix(u_colors[1], vec3(1.0), 0.6) * spec * (0.45 + 0.6 * u_kick + 0.3 * u_energy);
+}
+
+// ---------- 32. Irisé : une fine pellicule aux couleurs changeantes, comme une bulle de savon ----------
+
+vec3 iridescence(vec2 px, float H) {
+    vec2 p = px / (H * 0.55 * u_scale);
+    float t = u_time * 0.10;
+    vec2 w = vec2(fbm(p + vec2(t, 0.3)), fbm(p * 1.3 - vec2(0.7, t)));
+    float th = fbm(p * 0.9 + 2.2 * w + vec2(-t * 0.6, t * 0.4)) + 0.25 * u_bass + 0.15 * u_kick;
+    vec3 film = 0.5 + 0.5 * cos(6.28318 * (th * 2.4 + vec3(0.0, 0.33, 0.67)));
+    vec3 tint = mix(u_colors[0], u_colors[1], w.x);
+    vec3 col = mix(film, tint * (0.6 + 0.8 * film), 0.6);
+    float ridge = 1.0 - abs(fract(th * 6.0) - 0.5) * 2.0;
+    float glint = pow(ridge, 10.0);
+    // Une pellicule sombre où seules les nervures brillent vraiment.
+    return col * (0.03 + 0.07 * th) * (0.8 + 0.5 * u_energy) + col * glint * (0.16 + 0.35 * u_kick + 0.2 * u_energy);
+}
+
+// ---------- 33. Topographie : courbes de niveau d'un relief qui se soulève avec la musique ----------
+
+vec3 topography(vec2 px, float W, float H) {
+    vec2 p = px / (H * 0.5 * u_scale);
+    float t = u_time * 0.06;
+    float h = fbm(p * 0.8 + vec2(t, -t * 0.7)) * 1.2;
+    for (int i = 0; i < 6; i++) {
+        float fi = float(i);
+        vec2 c = vec2(hash(vec2(fi, 2.0)) * W / (H * 0.5 * u_scale), hash(vec2(fi, 5.0)) * 2.0 / u_scale)
+               + 0.2 * vec2(sin(u_time * 0.1 + fi), cos(u_time * 0.08 + fi * 2.0));
+        float lv = band(fi / 5.0);
+        h += (0.10 + 0.65 * lv + 0.15 * u_kick) * exp(-dot(p - c, p - c) * 2.5);
+    }
+    float k = h * 14.0;
+    float fw = max(fwidth(k), 1e-4);
+    float d = abs(fract(k + 0.5) - 0.5);
+    float line = 1.0 - smoothstep(0.5 * fw, 1.6 * fw, d);
+    float major = step(mod(floor(k + 0.5), 5.0), 0.5);
+    vec3 col = mix(u_colors[2], u_colors[0], smoothstep(0.3, 1.2, h));
+    col = mix(col, u_colors[1], smoothstep(1.0, 1.7, h));
+    return col * line * (0.30 + 0.45 * major + 0.35 * u_energy + 0.3 * u_kick) + col * 0.03 * h;
+}
+
+// ---------- 34. Verre : colonnes de verre dépoli, un reflet sur leur flanc ----------
+
+vec3 glass(vec2 px, float W, float H, float u) {
+    float n = 24.0;
+    float cell = floor(u * n);
+    float cu = (cell + 0.5) / n;
+    float lv = level(cu) * envelope(cu);
+    float cw = W / n;
+    float bw = cw * 0.62;
+    float base = H * u_shape.x;
+    float h = max(lv * H * 0.55 * u_shape.y, bw);
+    vec2 q = vec2(px.x - (cell + 0.5) * cw, px.y - (base - h * 0.5));
+    float rr = bw * 0.5;
+    vec2 dq = abs(q) - vec2(bw * 0.5, h * 0.5) + rr;
+    float sd = length(max(dq, 0.0)) + min(max(dq.x, dq.y), 0.0) - rr;
+    float inside = 1.0 - smoothstep(-u_ppp, u_ppp, sd);
+    float border = exp(-pow(sd / u_ppp, 2.0));
+    float yy = clamp((base - px.y) / h, 0.0, 1.0);
+    vec3 col = mix(u_colors[0], u_colors[1], yy);
+    float frost = 0.6 + 0.4 * noise(px / (5.0 * u_ppp));
+    float stripe = exp(-pow((q.x + bw * 0.22) / (bw * 0.09), 2.0)) * smoothstep(0.0, 0.6, yy);
+    vec3 acc = col * inside * (0.10 + 0.25 * yy) * frost * (0.7 + 0.6 * u_kick)
+             + mix(col, vec3(1.0), 0.6) * border * 0.55
+             + vec3(1.0) * stripe * inside * 0.18;
+    float below = px.y - base;
+    acc += col * 0.14 * lv * step(abs(q.x), bw * 0.5) * step(0.0, below) * exp(-max(below, 0.0) / (H * 0.035));
+    return acc;
+}
+
+// ---------- 35. Flux : traînées de lumière qui suivent un courant invisible ----------
+
+vec3 flux(vec2 px, float H) {
+    vec2 p = px / (H * 0.6 * u_scale);
+    float t = u_time * 0.15;
+    float ang = fbm(p * 0.45 + vec2(t * 0.3, -t * 0.2)) * 6.28318 * 1.3;
+    vec2 dir = vec2(cos(ang), sin(ang));
+    vec2 nrm = vec2(-dir.y, dir.x);
+    float streak = noise(vec2(dot(p, dir) * 0.6 - u_time * 0.6, dot(p, nrm) * 40.0));
+    streak = pow(streak, 5.0);
+    float fine = pow(noise(vec2(dot(p, dir) * 1.2 - u_time * 1.1, dot(p, nrm) * 110.0)), 7.0);
+    vec3 col = mix(u_colors[0], u_colors[1], 0.5 + 0.5 * sin(ang));
+    float lv = band(fract(ang / 6.28318));
+    return col * (streak * (0.30 + 0.8 * lv + 0.5 * u_kick) + fine * (0.2 + 0.6 * u_energy))
+         + u_colors[2] * 0.025;
+}
+
+// ---------- 36. Trame : une trame de points, comme une affiche imprimée, qui respire ----------
+
+vec3 halftone(vec2 px, float W, float H) {
+    float cell = max(H * u_scale / 34.0, 7.0 * u_ppp);
+    mat2 m = rot(0.52);
+    vec2 q = m * px / cell;
+    vec2 id = floor(q);
+    vec2 f = fract(q) - 0.5;
+    vec2 cpix = rot(-0.52) * ((id + 0.5) * cell);
+    vec2 uv = cpix / H;
+    float t = u_time * 0.2;
+    float field = fbm(uv * 1.6 + vec2(t, -t * 0.5));
+    float dist = length(cpix - u_focus.xy) / H;
+    float pulse = 0.5 + 0.5 * sin(dist * 9.0 - u_time * 2.0);
+    float lv = band(clamp(cpix.x / W, 0.0, 1.0));
+    float v = clamp(field * 0.9 + pulse * (0.12 + 0.35 * u_kick) + 0.35 * lv - 0.25, 0.0, 1.0);
+    float aa = u_ppp / cell;
+    float dotv = 1.0 - smoothstep(-aa, aa, length(f) - v * 0.5);
+    vec3 col = mix(u_colors[0], u_colors[1], clamp(cpix.x / W, 0.0, 1.0));
+    col = mix(col, u_colors[2], 0.35 * (1.0 - v));
+    return col * dotv * (0.25 + 0.55 * v);
+}
+
+// ---------- 37. Lissajous : la forme d'onde tracée contre elle-même, une boucle qui se tord ----------
+
+vec3 lissajous(vec2 px, float W, float H) {
+    float R = u_focus.z * 1.8;
+    vec2 q = (px - u_focus.xy) / R;
+    vec3 acc = u_colors[2] * exp(-dot(q, q) * 1.2) * (0.04 + 0.12 * u_bass);
+    float guide = exp(-pow((length(q) - 1.0) * R / (1.0 * u_ppp), 2.0));
+    acc += u_colors[1] * guide * 0.10;
+    if (dot(q, q) > 2.4) return acc;
+    mat2 m = rot(u_time * 0.08);
+    // Points lissés (moyenne de trois voisins) : une boucle souple plutôt qu'une ligne brisée ;
+    // puis gain automatique, pour que la boucle garde sa taille, son faible ou fort.
+    vec2 pts[64];
+    float peak = 0.05;
+    for (int i = 0; i < 64; i++) {
+        int j = i * 2;
+        int k = j + 37;
+        if (k > 127) k -= 128;
+        float x = (u_wave[max(j - 1, 0)] + 2.0 * u_wave[j] + u_wave[min(j + 1, 127)]) * 0.25;
+        float y = (u_wave[max(k - 1, 0)] + 2.0 * u_wave[k] + u_wave[min(k + 1, 127)]) * 0.25;
+        pts[i] = vec2(x, y);
+        peak = max(peak, max(abs(x), abs(y)));
+    }
+    float gain = 0.95 / peak;
+    float best = 1e9;
+    for (int i = 1; i < 64; i++) {
+        vec2 a = m * pts[i - 1] * gain;
+        vec2 ab = m * pts[i] * gain - a;
+        float h = clamp(dot(q - a, ab) / max(dot(ab, ab), 1e-6), 0.0, 1.0);
+        best = min(best, length(q - a - ab * h));
+    }
+    float d = best * R;
+    float a = 0.55 + 0.8 * u_energy + 0.6 * u_kick;
+    float glow = H * (0.012 + 0.02 * u_energy);
+    return acc + u_colors[0] * a * 0.45 * exp(-d * d / (glow * glow))
+         + mix(u_colors[0], vec3(1.0), 0.55) * a * exp(-d * d / (1.1 * u_ppp * 1.1 * u_ppp));
+}
+
 void main() {
     vec2 p = gl_FragCoord.xy;
     vec2 size = u_rect.zw - u_rect.xy;
@@ -871,6 +1181,16 @@ void main() {
     else if (u_mode == 25) acc = crystals(px, W, H);
     else if (u_mode == 26) acc = lava(px, W, H);
     else if (u_mode == 27) acc = leds(px, W, H, u);
+    else if (u_mode == 28) acc = vinyl(px, W, H);
+    else if (u_mode == 29) acc = ferrofluid(px, W, H);
+    else if (u_mode == 30) acc = hologram(px, W, H);
+    else if (u_mode == 31) acc = silk(px, H);
+    else if (u_mode == 32) acc = iridescence(px, H);
+    else if (u_mode == 33) acc = topography(px, W, H);
+    else if (u_mode == 34) acc = glass(px, W, H, u);
+    else if (u_mode == 35) acc = flux(px, H);
+    else if (u_mode == 36) acc = halftone(px, W, H);
+    else if (u_mode == 37) acc = lissajous(px, W, H);
     else acc = aurora(px, W, H, u);
 
     // Fondus doux : en haut, en bas, et côté texte pour le bandeau.

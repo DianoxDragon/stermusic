@@ -69,7 +69,8 @@ impl Default for Spectrum {
 
 impl Spectrum {
     /// Analyse les derniers échantillons joués. En pause, tout redescend doucement.
-    pub fn update(&mut self, tap: &Tap, dt: f32, playing: bool) {
+    /// `speed` règle l'allure des animations (1 : normale).
+    pub fn update(&mut self, tap: &Tap, dt: f32, playing: bool, speed: f32) {
         let dt = dt.clamp(0.0, 0.1);
         let (rate, written) = tap.latest(FFT_SIZE, &mut self.samples);
         if written != self.last_written {
@@ -124,6 +125,7 @@ impl Spectrum {
         self.bass_slow += (self.bass - self.bass_slow) * (dt * 0.8).min(1.0);
         self.energy_slow += (self.energy - self.energy_slow) * (dt * 0.8).min(1.0);
         self.flow += dt
+            * speed.clamp(0.2, 3.0)
             * if playing {
                 0.25 + 0.7 * self.energy_slow
             } else {
@@ -511,46 +513,110 @@ pub fn particles(
     }
 }
 
-/// Visualiseur automatique, comme Alchemy dans le lecteur Windows Media : un nouveau, au hasard,
-/// à chaque morceau et toutes les 45 secondes, en fondu enchaîné de 2 secondes.
+/// Le visualiseur affiché à un endroit (« En cours de lecture », bandeau de l'accueil) : celui
+/// choisi, ou en mode automatique (comme Alchemy dans le lecteur Windows Media) un nouveau au
+/// hasard à chaque morceau et à intervalles réguliers. Chaque changement se fait en fondu
+/// enchaîné : 2 secondes en automatique, une demi-seconde quand on choisit soi-même.
 #[derive(Default)]
 pub struct AutoViz {
     current: usize,
     previous: Option<usize>,
     since: f64,
+    fade: f64,
     track: Option<usize>,
     started: bool,
+    /// Dernier réglage vu (pour repérer un choix manuel).
+    setting: Option<usize>,
 }
 
 impl AutoViz {
-    /// Le visualiseur à afficher (parmi `allowed`), et l'ancien avec la progression du fondu
-    /// (0 → 1) s'il s'efface.
+    /// Le visualiseur à afficher pour le réglage `setting` (un visualiseur, ou
+    /// [`AUTO`](crate::shader::AUTO) pour tirer parmi `allowed` toutes les `interval` secondes,
+    /// 0 : seulement au changement de morceau), et l'ancien avec la progression du fondu (0 → 1)
+    /// s'il s'efface encore.
     pub fn pick(
         &mut self,
         now: f64,
         track: Option<usize>,
+        setting: usize,
         allowed: &[usize],
+        interval: f32,
     ) -> (usize, Option<(usize, f32)>) {
-        if allowed.is_empty() {
-            return (0, None);
-        }
+        let auto = setting >= crate::shader::AUTO;
         if !self.started {
             self.started = true;
-            self.current = allowed[fastrand::usize(..allowed.len())];
+            self.current = if auto { random(allowed, None) } else { setting };
             self.since = now - 10.0; // pas de fondu au premier affichage
             self.track = track;
+            self.setting = Some(setting);
         }
-        let excluded = !allowed.contains(&self.current);
-        if excluded || track != self.track || now - self.since > 45.0 {
-            self.track = track;
-            self.previous = Some(self.current);
-            // Jamais deux fois le même d'affilée (s'il y a le choix).
-            let others: Vec<usize> = allowed.iter().copied().filter(|&s| s != self.current).collect();
-            let pool = if others.is_empty() { allowed } else { &others[..] };
-            self.current = pool[fastrand::usize(..pool.len())];
-            self.since = now;
+        let changed_setting = self.setting != Some(setting);
+        self.setting = Some(setting);
+        if !auto {
+            if self.current != setting {
+                self.switch(now, setting, 0.5);
+            }
+        } else {
+            let excluded = !allowed.is_empty() && !allowed.contains(&self.current);
+            let timed = interval > 0.0 && now - self.since > interval as f64;
+            if changed_setting || excluded || track != self.track || timed {
+                let next = random(allowed, Some(self.current));
+                self.switch(now, next, if changed_setting { 0.5 } else { 2.0 });
+            }
         }
-        let t = ((now - self.since) / 2.0).clamp(0.0, 1.0) as f32;
+        self.track = track;
+        let t = ((now - self.since) / self.fade.max(0.01)).clamp(0.0, 1.0) as f32;
+        // Courbe douce : le nouveau monte lentement au début, l'ancien s'efface sans à-coup.
+        let t = t * t * (3.0 - 2.0 * t);
         (self.current, self.previous.filter(|_| t < 1.0).map(|p| (p, t)))
+    }
+
+    /// Passe à `style` en fondu de `fade` secondes.
+    fn switch(&mut self, now: f64, style: usize, fade: f64) {
+        if style == self.current {
+            return;
+        }
+        // Un fondu pas fini : l'ancien part tout de suite, sans saut visible du nouveau.
+        self.previous = Some(self.current);
+        self.current = style;
+        self.since = now;
+        self.fade = fade;
+    }
+}
+
+/// Un visualiseur au hasard parmi `allowed`, jamais `not` s'il y a le choix.
+fn random(allowed: &[usize], not: Option<usize>) -> usize {
+    if allowed.is_empty() {
+        return 0;
+    }
+    let others: Vec<usize> = allowed.iter().copied().filter(|&s| Some(s) != not).collect();
+    let pool = if others.is_empty() { allowed } else { &others[..] };
+    pool[fastrand::usize(..pool.len())]
+}
+
+#[cfg(test)]
+mod auto_tests {
+    use super::AutoViz;
+    use crate::shader::AUTO;
+
+    /// Un choix manuel passe au nouveau en fondu court ; l'automatique change à chaque morceau,
+    /// jamais pour le même, et seulement parmi le tirage.
+    #[test]
+    fn picks_and_fades() {
+        let mut v = AutoViz::default();
+        assert_eq!(v.pick(0.0, Some(1), 3, &[], 45.0), (3, None));
+        let (s, fade) = v.pick(1.0, Some(1), 5, &[], 45.0);
+        assert_eq!(s, 5);
+        assert_eq!(fade.map(|(old, _)| old), Some(3));
+        assert_eq!(v.pick(2.0, Some(1), 5, &[], 45.0), (5, None));
+        // Automatique : un autre que celui à l'écran, pris dans le tirage.
+        let pool = [7, 9];
+        let (a, _) = v.pick(3.0, Some(1), AUTO, &pool, 0.0);
+        assert!(pool.contains(&a));
+        let (b, fade) = v.pick(10.0, Some(2), AUTO, &pool, 0.0);
+        assert!(pool.contains(&b) && b != a);
+        assert_eq!(fade.map(|(old, _)| old), Some(a));
+        // Sans changement de morceau ni minuterie (0), il reste.
+        assert_eq!(v.pick(100.0, Some(2), AUTO, &pool, 0.0).0, b);
     }
 }
