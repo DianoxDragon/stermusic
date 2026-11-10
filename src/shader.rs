@@ -55,7 +55,7 @@ pub const WAVE: usize = 128;
 /// Choix « Automatique » : un visualiseur au hasard à chaque morceau (et toutes les 45 s).
 pub const AUTO: usize = STYLES.len();
 
-pub const STYLES: [(&str, bool); 38] = [
+pub const STYLES: [(&str, bool); 50] = [
     (crate::i18n::n_("Aurore"), false),
     (crate::i18n::n_("Caustiques"), true),
     (crate::i18n::n_("Nébuleuse"), true),
@@ -94,6 +94,18 @@ pub const STYLES: [(&str, bool); 38] = [
     (crate::i18n::n_("Flux"), true),
     (crate::i18n::n_("Trame"), true),
     (crate::i18n::n_("Lissajous"), true),
+    (crate::i18n::n_("Rétro"), true),
+    (crate::i18n::n_("Mosaïque"), true),
+    (crate::i18n::n_("Vitrail"), true),
+    (crate::i18n::n_("Radar"), true),
+    (crate::i18n::n_("Hélice"), true),
+    (crate::i18n::n_("Pendules"), true),
+    (crate::i18n::n_("Constellation"), true),
+    (crate::i18n::n_("Dunes"), true),
+    (crate::i18n::n_("Bulles"), true),
+    (crate::i18n::n_("Éclipse"), true),
+    (crate::i18n::n_("Moiré"), true),
+    (crate::i18n::n_("Néon"), true),
 ];
 
 struct Resources {
@@ -1138,6 +1150,364 @@ vec3 lissajous(vec2 px, float W, float H) {
          + mix(u_colors[0], vec3(1.0), 0.55) * a * exp(-d * d / (1.1 * u_ppp * 1.1 * u_ppp));
 }
 
+// ---------- 38. Rétro : soleil rayé, montagnes du spectre et sol quadrillé qui défile ----------
+
+vec3 retro(vec2 px, float W, float H) {
+    float hy = H * 0.60;
+    vec3 acc = u_colors[0] * exp(-abs(px.y - hy) / (H * 0.012)) * (0.5 + 0.4 * u_kick);
+    if (px.y < hy) {
+        vec2 sc = vec2(W * 0.5, hy - H * 0.20);
+        float sr = H * (0.20 + 0.015 * u_bass + 0.025 * u_kick);
+        float d = length(px - sc);
+        float yy = (px.y - (sc.y - sr)) / (2.0 * sr);
+        float sun = 1.0 - smoothstep(sr - u_ppp, sr + u_ppp, d);
+        // Bandes du soleil, de plus en plus larges vers le bas, qui descendent lentement.
+        float band_w = mix(0.0, 0.5, smoothstep(0.42, 1.0, yy));
+        float stripes = step(band_w, fract(px.y / (H * 0.035) + u_time * 0.3));
+        vec3 sunc = mix(u_colors[1], u_colors[0], clamp(yy, 0.0, 1.0));
+        acc += mix(sunc, vec3(1.0), 0.2) * sun * stripes * (0.9 + 0.4 * u_energy);
+        acc += u_colors[0] * exp(-pow(max(d - sr, 0.0) / (H * 0.10), 2.0)) * 0.22 * (1.0 - sun);
+        // Montagnes : leur crête suit le spectre.
+        float u = px.x / W;
+        float ridge = hy - H * (0.015 + 0.11 * level(u) * envelope(u) + 0.03 * noise(vec2(u * 14.0, 1.0)));
+        float inside = smoothstep(ridge - u_ppp, ridge + u_ppp, px.y);
+        acc *= 1.0 - inside * 0.92;
+        acc += u_colors[1] * exp(-pow((px.y - ridge) / (1.3 * u_ppp), 2.0)) * 0.9;
+        acc += u_colors[2] * inside * 0.05;
+    } else {
+        float depth = (H * 0.5) / max(px.y - hy, 1.0);
+        float gx = (px.x - W * 0.5) / W * depth * 7.0;
+        float gz = depth * 1.4 + u_time * 1.4;
+        float dx = 0.5 - abs(fract(gx) - 0.5);
+        float dz = 0.5 - abs(fract(gz) - 0.5);
+        float lx = 1.0 - smoothstep(0.0, fwidth(gx) * 1.5, dx);
+        float lz = 1.0 - smoothstep(0.0, fwidth(gz) * 1.5, dz);
+        float fade = smoothstep(0.0, H * 0.10, px.y - hy);
+        float line = max(lx, lz) * (1.0 - smoothstep(0.0, 1.0, fwidth(gz) * 2.0));
+        acc += mix(u_colors[0], u_colors[1], 0.35) * line * fade * (0.55 + 0.4 * u_energy + 0.5 * u_kick);
+        acc += u_colors[2] * 0.06 * fade;
+    }
+    return acc;
+}
+
+// ---------- 39. Mosaïque : la pochette en carreaux qui pivotent et s'allument sur le rythme ----------
+
+vec3 mosaic(vec2 px, float W, float H) {
+    float cs = max(H * u_scale / 13.0, 10.0 * u_ppp);
+    vec2 id = floor(px / cs);
+    vec2 f = px / cs - id - 0.5;
+    vec2 center = (id + 0.5) * cs;
+    float h = hash(id);
+    // Les carreaux pivotent à tour de rôle (vus de côté, ils s'amincissent).
+    float flip = abs(cos(u_time * 0.5 + h * 6.28318 + id.x * 0.15));
+    float lv = band(h);
+    float size = 0.40 * (0.80 + 0.25 * lv);
+    vec2 q = abs(f) - vec2(size * flip, size);
+    float r = 0.08;
+    float sd = length(max(q + r, 0.0)) - r + min(max(q.x, q.y), 0.0);
+    float tile = 1.0 - smoothstep(-u_ppp / cs, u_ppp / cs, sd);
+    vec2 uv = (center - vec2(W, H) * 0.5) / (H * 1.1) + 0.5;
+    uv = 1.0 - abs(1.0 - mod(uv, 2.0));
+    vec3 col = cover_color(uv);
+    float l = dot(col, vec3(0.299, 0.587, 0.114));
+    col = max(mix(vec3(l), col, 1.4), 0.0);
+    float flash = u_kick * step(0.82, hash(id + floor(u_time * 2.0)));
+    float shade = 0.45 + 0.55 * flip;
+    return col * tile * shade * (0.45 + 0.6 * lv) + mix(col, vec3(1.0), 0.6) * tile * flash * 0.6;
+}
+
+// ---------- 40. Vitrail : des éclats de verre colorés que la musique éclaire par derrière ----------
+
+vec3 stained(vec2 px, float W, float H) {
+    vec2 p = px / (H * 0.20 * u_scale);
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float d1 = 8.0;
+    float d2 = 8.0;
+    vec2 id = vec2(0.0);
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 g = vec2(float(x), float(y));
+            vec2 o = 0.5 + 0.35 * sin(u_time * 0.12 + 6.28318 * hash2(i + g));
+            float d = length(g + o - f);
+            if (d < d1) { d2 = d1; d1 = d; id = i + g; } else if (d < d2) { d2 = d; }
+        }
+    }
+    float lead = smoothstep(0.04, 0.10, d2 - d1);
+    float h = hash(id);
+    float lv = band(h);
+    vec3 glassc = mix(mix(u_colors[0], u_colors[1], h), u_colors[2], hash(id + 3.1) * 0.6);
+    float light = 0.25 + 0.7 * lv + 0.5 * u_kick * step(0.7, hash(id + 7.0));
+    float center = exp(-d1 * d1 * 2.2);
+    float grain = 0.85 + 0.15 * noise(px / (3.0 * u_ppp));
+    return glassc * lead * light * (0.30 + 0.70 * center) * grain * 0.8
+         + mix(glassc, vec3(1.0), 0.5) * exp(-pow((d2 - d1 - 0.07) / 0.02, 2.0)) * 0.06;
+}
+
+// ---------- 41. Radar : un balayage qui révèle les fréquences comme des échos ----------
+
+vec3 radar(vec2 px, float W, float H) {
+    float R = u_focus.z * 2.1;
+    vec2 d = px - u_focus.xy;
+    float r = length(d) / R;
+    float a = atan(d.y, d.x);
+    float sweep = u_time * 1.3;
+    float behind = mod(sweep - a, 6.28318);
+    vec3 acc = vec3(0.0);
+    if (r < 1.0) {
+        acc += u_colors[0] * exp(-behind * 2.5) * (0.35 + 0.35 * u_energy) * (0.3 + 0.7 * r);
+        float edge_line = exp(-pow(min(behind, 6.28318 - behind) * length(px - u_focus.xy) / (1.2 * u_ppp), 2.0));
+        acc += mix(u_colors[0], vec3(1.0), 0.5) * edge_line * 0.8;
+        float rings = exp(-pow((fract(r * 4.0 + 0.5) - 0.5) * R / 4.0 / (0.9 * u_ppp), 2.0));
+        acc += u_colors[1] * rings * 0.25;
+    }
+    acc += u_colors[1] * exp(-pow((r - 1.0) * R / (1.2 * u_ppp), 2.0)) * 0.35;
+    // Échos : seize fréquences à des places fixes, ravivées au passage du faisceau.
+    for (int i = 0; i < 16; i++) {
+        float fi = float(i);
+        float ba = fi / 16.0 * 6.28318 + hash(vec2(fi, 4.0)) * 0.8;
+        float br = 0.28 + 0.62 * hash(vec2(fi, 9.0));
+        vec2 bp = u_focus.xy + vec2(cos(ba), sin(ba)) * br * R;
+        float lv = u_levels[i];
+        float since = mod(sweep - ba, 6.28318);
+        float glow = exp(-since * 0.7) * (0.6 + 1.8 * lv);
+        float dist = length(px - bp);
+        float size = (3.0 + 8.0 * lv) * u_ppp;
+        acc += mix(u_colors[0], vec3(1.0), 0.4) * glow * (exp(-pow(dist / size, 2.0)) + 0.25 * exp(-dist / (size * 4.0)));
+    }
+    return acc;
+}
+
+// ---------- 42. Hélice : une double hélice qui tourne, ses barreaux suivent le spectre ----------
+
+vec3 helix(vec2 px, float W, float H) {
+    float cy = H * 0.5;
+    float A = H * (0.16 + 0.04 * u_bass + 0.03 * u_kick);
+    float k = 6.28318 / (H * 0.55);
+    float ph = px.x * k + u_time * 0.9;
+    vec3 acc = vec3(0.0);
+    for (int s = 0; s < 2; s++) {
+        float sgn = s == 0 ? 1.0 : -1.0;
+        float y = cy + sgn * A * sin(ph);
+        float z = sgn * cos(ph);
+        float slope = sgn * A * k * cos(ph);
+        float dist = abs(px.y - y) / sqrt(1.0 + slope * slope);
+        float w = (1.4 + 1.0 * (z * 0.5 + 0.5)) * u_ppp;
+        float bright = 0.35 + 0.65 * (z * 0.5 + 0.5);
+        vec3 col = s == 0 ? u_colors[0] : u_colors[1];
+        acc += mix(col, vec3(1.0), 0.3) * exp(-pow(dist / w, 2.0)) * bright
+             + col * exp(-pow(dist / (w * 6.0), 2.0)) * 0.15 * bright;
+    }
+    // Barreaux : un tous les 2,6 % de la largeur ; leur éclat suit le spectre.
+    float sp = W / 38.0;
+    float xr = (floor(px.x / sp) + 0.5) * sp;
+    float phr = xr * k + u_time * 0.9;
+    float y1 = cy + A * sin(phr);
+    float y2 = cy - A * sin(phr);
+    float lv = level(xr / W);
+    float inr = step(min(y1, y2), px.y) * step(px.y, max(y1, y2));
+    float bar = exp(-pow((px.x - xr) / (1.1 * u_ppp), 2.0)) * inr;
+    float depth = 0.4 + 0.6 * abs(sin(phr));
+    acc += mix(u_colors[2], u_colors[0], (px.y - min(y1, y2)) / max(abs(y1 - y2), 1.0))
+         * bar * (0.2 + 1.3 * lv + 0.4 * u_kick) * depth;
+    return acc;
+}
+
+// ---------- 43. Pendules : une vague de pendules qui se défait et se reforme ----------
+
+vec3 pendulums(vec2 px, float W, float H) {
+    float n = 28.0;
+    float cw = W / n;
+    float ci = floor(px.x / cw);
+    vec3 acc = vec3(0.0);
+    for (int o = -1; o <= 1; o++) {
+        float i = ci + float(o);
+        if (i < 0.0 || i >= n) continue;
+        float cx = (i + 0.5) * cw;
+        float lv = level((i + 0.5) / n);
+        float A = H * (0.20 + 0.16 * lv);
+        float freq = 0.55 * (1.0 + i / n * 0.6);
+        // La boule et sa traînée (quatre positions passées).
+        for (int k = 0; k < 4; k++) {
+            float t = u_time - float(k) * 0.05;
+            vec2 bp = vec2(cx, H * 0.52 + A * sin(t * freq * 6.28318 * 0.35));
+            float r = (3.5 + 3.0 * lv + 2.0 * u_kick) * u_ppp * (1.0 - float(k) * 0.18);
+            float d = length(px - bp);
+            float wgt = k == 0 ? 1.0 : 0.25;
+            vec3 col = mix(u_colors[0], u_colors[1], i / n);
+            acc += mix(col, vec3(1.0), 0.35 * float(k == 0)) * wgt * (exp(-pow(d / r, 2.0)) + 0.18 * exp(-d / (r * 3.0)));
+        }
+    }
+    acc += u_colors[2] * exp(-abs(px.y - H * 0.52) / (0.8 * u_ppp)) * 0.08;
+    return acc;
+}
+
+// ---------- 44. Constellation : des étoiles reliées quand elles se rapprochent ----------
+
+vec3 constellation(vec2 px, float W, float H) {
+    float cs = H * 0.17 * u_scale;
+    vec2 p = px / cs;
+    vec2 i = floor(p);
+    vec2 pts[9];
+    float lvs[9];
+    int n = 0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            vec2 g = i + vec2(float(x), float(y));
+            vec2 h = hash2(g);
+            pts[n] = g + 0.5 + 0.40 * vec2(sin(u_time * 0.25 * (0.5 + h.x) + h.y * 6.28318),
+                                           cos(u_time * 0.22 * (0.5 + h.y) + h.x * 6.28318));
+            lvs[n] = band(hash(g + 1.7));
+            n++;
+        }
+    }
+    vec3 acc = vec3(0.0);
+    for (int a = 0; a < 9; a++) {
+        float d = length(p - pts[a]) * cs;
+        float size = (1.4 + 2.6 * lvs[a] + 1.2 * u_kick) * u_ppp;
+        vec3 col = mix(u_colors[0], u_colors[1], fract(pts[a].x * 0.37));
+        acc += mix(col, vec3(1.0), 0.5) * (exp(-pow(d / size, 2.0)) + 0.12 * exp(-d / (size * 4.0))) * (0.6 + lvs[a]);
+        for (int b = a + 1; b < 9; b++) {
+            vec2 ab = pts[b] - pts[a];
+            float len = length(ab);
+            if (len > 1.35) continue;
+            float hh = clamp(dot(p - pts[a], ab) / dot(ab, ab), 0.0, 1.0);
+            float dl = length(p - pts[a] - ab * hh) * cs;
+            float strength = (1.0 - len / 1.35) * (0.25 + 0.6 * (lvs[a] + lvs[b]) * 0.5 + 0.3 * u_kick);
+            acc += mix(u_colors[0], u_colors[1], 0.3) * exp(-pow(dl / (1.0 * u_ppp), 2.0)) * strength * 1.6;
+        }
+    }
+    return acc;
+}
+
+// ---------- 45. Dunes : des crêtes de sable au soleil couchant, le premier plan danse ----------
+
+vec3 dunes(vec2 px, float W, float H) {
+    vec3 acc = u_colors[0] * exp(-pow((px.y - H * 0.42) / (H * 0.12), 2.0)) * (0.22 + 0.2 * u_bass);
+    float u = px.x / W;
+    for (int l = 0; l < 5; l++) {
+        float fl = float(l);
+        float depth = fl / 4.0;
+        float base = H * (0.45 + 0.11 * fl);
+        float lambda = W * (0.55 - 0.08 * fl);
+        float s = fract(px.x / lambda + u_time * 0.015 * (1.0 + fl) + hash(vec2(fl, 2.0)));
+        float prof = s < 0.72 ? smoothstep(0.0, 0.72, s) : 1.0 - smoothstep(0.72, 1.0, s);
+        float amp = H * (0.05 + 0.025 * fl) * (1.0 + (l == 4 ? 1.4 * level(u) * envelope(u) : 0.0));
+        float ridge = base - prof * amp - H * 0.01 * noise(vec2(px.x / (H * 0.1), fl));
+        float inside = smoothstep(ridge - u_ppp, ridge + u_ppp, px.y);
+        vec3 sand = mix(u_colors[2], u_colors[1], 0.25 + 0.15 * fl) * (0.08 + 0.06 * fl);
+        // Le versant au vent est éclairé, l'autre reste dans l'ombre.
+        float lit = s < 0.72 ? 1.0 : 0.25;
+        acc = mix(acc, sand * (0.6 + 0.6 * lit), inside);
+        float crest = exp(-pow((px.y - ridge) / ((1.0 + depth) * u_ppp), 2.0));
+        acc += mix(u_colors[0], vec3(1.0), 0.3) * crest * (0.5 + 0.6 * depth + (l == 4 ? 0.7 * u_kick : 0.0)) * lit;
+    }
+    return acc;
+}
+
+// ---------- 46. Bulles : des bulles de savon qui montent, irisées, et brillent sur les coups ----------
+
+vec3 bubbles(vec2 px, float W, float H) {
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 18; i++) {
+        float fi = float(i);
+        vec2 h = vec2(hash(vec2(fi, 1.1)), hash(vec2(fi, 8.3)));
+        float r = H * (0.03 + 0.07 * hash(vec2(fi, 5.5))) * (1.0 + 0.15 * u_bass);
+        float speed = 0.04 + 0.05 * h.y;
+        float y = H + r - fract(u_time * speed + h.x) * (H + 2.0 * r);
+        float x = W * h.x + sin(u_time * 0.6 + fi) * H * 0.04;
+        vec2 d = px - vec2(x, y);
+        float dist = length(d);
+        float rim = exp(-pow((dist - r) / (1.2 * u_ppp + r * 0.04), 2.0));
+        float inner = smoothstep(r, r * 0.6, dist) * 0.05;
+        float ang = atan(d.y, d.x);
+        vec3 film = 0.5 + 0.5 * cos(6.28318 * (ang / 6.28318 * 2.0 + u_time * 0.1 + fi * 0.3 + vec3(0.0, 0.33, 0.67)));
+        vec3 col = mix(u_colors[i - (i / 3) * 3], film, 0.55);
+        float lv = u_levels[i - (i / 16) * 16];
+        vec2 spot = vec2(x, y) + vec2(-0.35, -0.4) * r;
+        float spec = exp(-pow(length(px - spot) / (r * 0.18), 2.0));
+        acc += col * (rim * (0.45 + 0.9 * lv + 0.6 * u_kick) + inner) + vec3(1.0) * spec * 0.35;
+    }
+    return acc;
+}
+
+// ---------- 47. Éclipse : la pochette en lune noire, la couronne du soleil autour ----------
+
+vec3 eclipse(vec2 px, float W, float H) {
+    vec2 d = px - u_focus.xy;
+    float r = length(d);
+    float a = atan(d.y, d.x);
+    float r0 = u_focus.z * 1.12;
+    float out_r = max(r - r0, 0.0) / H;
+    float u = fract(a / 6.28318 + 0.25);
+    float lv = level(u);
+    // Filets de la couronne, qui s'étirent vers l'extérieur.
+    float fil = fbm(vec2(a * 5.0, out_r * 6.0 - u_time * 0.25)) ;
+    float fil2 = fbm(vec2(a * 11.0 + 3.0, out_r * 10.0 - u_time * 0.4));
+    float reach = 0.10 + 0.20 * lv + 0.10 * u_kick;
+    float corona = exp(-out_r / (reach * (0.5 + fil))) * (0.5 + 0.8 * fil2);
+    vec3 acc = mix(u_colors[0], vec3(1.0), 0.25) * corona * step(r0, r) * (0.45 + 0.4 * u_energy);
+    acc += u_colors[1] * exp(-out_r / 0.35) * 0.12;
+    // Le bord éclairé, et un « diamant » qui en fait le tour.
+    float rim = exp(-pow((r - r0) / (1.4 * u_ppp), 2.0));
+    acc += mix(u_colors[1], vec3(1.0), 0.6) * rim * 0.9;
+    float da = mod(a - u_time * 0.2 + 3.14159, 6.28318) - 3.14159;
+    float diamond = exp(-pow(da * r0 / (H * 0.02), 2.0)) * exp(-pow((r - r0) / (H * 0.02), 2.0));
+    acc += vec3(1.0) * diamond * (0.5 + 1.2 * u_kick);
+    return acc;
+}
+
+// ---------- 48. Moiré : deux trames de cercles qui glissent l'une sur l'autre ----------
+
+vec3 moire(vec2 px, float W, float H) {
+    float sp = (6.0 + 2.0 * u_bass) * u_ppp;
+    vec2 c1 = vec2(W * (0.5 + 0.18 * sin(u_time * 0.21)), H * (0.5 + 0.15 * cos(u_time * 0.17)));
+    vec2 c2 = vec2(W * (0.5 + 0.18 * sin(u_time * 0.19 + 2.0)), H * (0.5 + 0.15 * cos(u_time * 0.23 + 1.0)));
+    float l1 = 0.5 + 0.5 * cos(length(px - c1) / sp * 6.28318);
+    float l2 = 0.5 + 0.5 * cos(length(px - c2) / sp * 6.28318);
+    float m = pow(l1 * l2, 3.0);
+    // La figure de moiré elle-même (basse fréquence), qui porte la couleur.
+    float beat = 0.5 + 0.5 * cos((length(px - c1) - length(px - c2)) / sp * 6.28318 * 0.5);
+    float lv = band(beat);
+    vec3 col = mix(u_colors[0], u_colors[1], beat);
+    return col * m * (0.35 + 0.7 * lv + 0.4 * u_kick) + u_colors[2] * beat * 0.06;
+}
+
+// ---------- 49. Néon : des tubes de néon qui tournent autour de la pochette et grésillent ----------
+
+float neon_tri(vec2 p, float r) {
+    const float k = 1.7320508;
+    p.x = abs(p.x) - r;
+    p.y = p.y + r / k;
+    if (p.x + k * p.y > 0.0) p = vec2(p.x - k * p.y, -k * p.x - p.y) / 2.0;
+    p.x -= clamp(p.x, -2.0 * r, 0.0);
+    return -length(p) * sign(p.y);
+}
+vec3 neon(vec2 px, float W, float H) {
+    vec2 q = px - u_focus.xy;
+    float s = u_focus.z;
+    float pulse = 1.0 + 0.05 * u_bass + 0.06 * u_kick;
+    float d0 = abs(length(q) - s * 1.32 * pulse);
+    vec2 qt = rot(u_time * 0.15) * q;
+    float d1 = abs(neon_tri(vec2(qt.x, -qt.y), s * 1.75 * pulse));
+    vec2 qb = rot(-u_time * 0.11 + 0.4) * q;
+    vec2 bq = abs(qb) - vec2(s * 1.9 * pulse);
+    float d2 = abs(length(max(bq, 0.0)) + min(max(bq.x, bq.y), 0.0));
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < 3; i++) {
+        float d = i == 0 ? d0 : (i == 1 ? d1 : d2);
+        float lv = band(float(i) / 2.0);
+        // Grésillement : de temps en temps, un tube vacille.
+        float tick = floor(u_time * 9.0);
+        float flicker = step(0.06, hash(vec2(tick, float(i)))) * (0.75 + 0.25 * hash(vec2(tick, float(i) + 9.0)));
+        vec3 col = u_colors[i];
+        float core = exp(-pow(d / (1.6 * u_ppp), 2.0));
+        float halo = exp(-d / (H * 0.018));
+        acc += (mix(col, vec3(1.0), 0.55) * core + col * halo * 0.35) * flicker * (0.45 + 1.0 * lv);
+    }
+    return acc;
+}
+
 void main() {
     vec2 p = gl_FragCoord.xy;
     vec2 size = u_rect.zw - u_rect.xy;
@@ -1191,6 +1561,18 @@ void main() {
     else if (u_mode == 35) acc = flux(px, H);
     else if (u_mode == 36) acc = halftone(px, W, H);
     else if (u_mode == 37) acc = lissajous(px, W, H);
+    else if (u_mode == 38) acc = retro(px, W, H);
+    else if (u_mode == 39) acc = mosaic(px, W, H);
+    else if (u_mode == 40) acc = stained(px, W, H);
+    else if (u_mode == 41) acc = radar(px, W, H);
+    else if (u_mode == 42) acc = helix(px, W, H);
+    else if (u_mode == 43) acc = pendulums(px, W, H);
+    else if (u_mode == 44) acc = constellation(px, W, H);
+    else if (u_mode == 45) acc = dunes(px, W, H);
+    else if (u_mode == 46) acc = bubbles(px, W, H);
+    else if (u_mode == 47) acc = eclipse(px, W, H);
+    else if (u_mode == 48) acc = moire(px, W, H);
+    else if (u_mode == 49) acc = neon(px, W, H);
     else acc = aurora(px, W, H, u);
 
     // Fondus doux : en haut, en bas, et côté texte pour le bandeau.

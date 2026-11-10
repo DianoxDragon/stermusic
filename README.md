@@ -21,8 +21,8 @@ vraie intégration au bureau Linux.
   « Enregistrer comme playlist »
 - Aléatoire réversible (couper l'aléatoire rend l'ordre d'origine) et répétition (file / morceau)
 - Page **En cours de lecture** : grande pochette sur fond flouté, « À suivre »
-- **38 visualiseurs** dessinés par la carte graphique (Aurore, Vinyle, Hologramme, Ferrofluide,
-  Topographie, Lissajous…), choisis d'après leurs aperçus animés, ou tirés au hasard en fondu
+- **50 visualiseurs** dessinés par la carte graphique (Aurore, Vinyle, Hologramme, Rétro,
+  Éclipse, Vitrail, Lissajous…), choisis d'après leurs aperçus animés, ou tirés au hasard en fondu
   enchaîné (mode automatique)
 - **Mini lecteur** toujours au premier plan (Ctrl+M)
 - Reprise au lancement : file d'attente et position restaurées (en pause)

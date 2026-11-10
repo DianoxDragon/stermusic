@@ -793,6 +793,15 @@ impl SterMusic {
                 }
             }
         }
+        // Visualiseurs v5 : douze de plus (cinquante) ; « Automatique » était le 38.
+        if settings.style_version < 5 {
+            settings.style_version = 5;
+            for style in [&mut settings.viz_style, &mut settings.banner_style] {
+                if *style == 38 {
+                    *style = crate::shader::AUTO;
+                }
+            }
+        }
         theme::install(&cc.egui_ctx, &settings.theme, settings.breeze);
 
         let volume = if settings.muted {
