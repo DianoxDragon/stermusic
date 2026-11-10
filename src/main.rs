@@ -33,6 +33,7 @@ mod shader;
 mod tags;
 mod tagtools;
 mod theme;
+mod tray;
 mod viz;
 mod watch;
 mod widgets;
@@ -99,6 +100,11 @@ fn main() -> eframe::Result<()> {
     }
     let options = eframe::NativeOptions {
         viewport,
+        // Pas de synchronisation verticale : sous Wayland, une fenêtre réduite (ou cachée dans
+        // la zone de notification) ne reçoit plus d'images du compositeur, et la présentation
+        // d'une image bloquerait toute l'application, lecture comprise (plus de morceau
+        // suivant). La cadence est tenue par `app::pace` à la fréquence de l'écran.
+        vsync: false,
         ..Default::default()
     };
 

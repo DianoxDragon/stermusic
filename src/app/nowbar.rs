@@ -458,13 +458,16 @@ impl SterMusic {
 
     /// Bouton muet + barre de volume (mise en page de droite à gauche).
     fn volume(&mut self, ui: &mut egui::Ui, width: f32) {
+        let exact = self.settings.bit_perfect;
         let vol = if self.settings.muted {
             0.0
+        } else if exact {
+            1.0
         } else {
             self.settings.volume
         };
-        let seek = widgets::seek_bar(ui, "volume", vol, width, true);
-        if let Some(v) = seek.preview.or(seek.commit) {
+        let seek = widgets::seek_bar(ui, "volume", vol, width, !exact);
+        if let Some(v) = seek.preview.or(seek.commit).filter(|_| !exact) {
             if (v - self.settings.volume).abs() > f32::EPSILON || self.settings.muted {
                 self.actions.push(Action::SetVolume(v));
             }
@@ -475,10 +478,14 @@ impl SterMusic {
             v if v < 0.67 => Icon::Volume1,
             _ => Icon::Volume2,
         };
-        let tip = trf!(
-            "Volume : {0} % (clic : couper le son)",
-            format!("{:.0}", vol * 100.0)
-        );
+        let tip = if exact {
+            tr("Sortie bit-perfect : le son part tel quel, le volume se règle dans le système (clic : couper le son)").to_owned()
+        } else {
+            trf!(
+                "Volume : {0} % (clic : couper le son)",
+                format!("{:.0}", vol * 100.0)
+            )
+        };
         let resp = widgets::icon_button(ui, icon, &tip, 34.0, 17.0);
         if resp.clicked() {
             self.actions.push(Action::ToggleMute);

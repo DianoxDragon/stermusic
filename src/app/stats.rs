@@ -941,6 +941,7 @@ mod tests {
             composer: String::new(),
             schema: 0,
             cue: None,
+            rating: None,
             remote: None,
         }
     }

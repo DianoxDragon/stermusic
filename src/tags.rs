@@ -387,7 +387,6 @@ pub fn read_replaygain(path: &Path) -> Option<ReplayGain> {
 /// Ouvre le fichier, laisse `change` modifier chacun de ses tags, puis le réécrit.
 fn modify(path: &Path, opts: WriteOpts, change: impl Fn(&mut Tag)) -> Result<(), String> {
     let err = |e: &dyn std::fmt::Display| e.to_string();
-    let mtime: Option<SystemTime> = std::fs::metadata(path).and_then(|m| m.modified()).ok();
     let mut tagged = Probe::open(path).and_then(|p| p.read()).map_err(|e| err(&e))?;
 
     // Le tag principal est créé s'il manque ; les autres tags présents reçoivent aussi les changements.
@@ -405,6 +404,54 @@ fn modify(path: &Path, opts: WriteOpts, change: impl Fn(&mut Tag)) -> Result<(),
 
     let mut options = WriteOptions::default();
     let options = options.use_id3v23(opts.id3v23);
+    save_safely(path, opts, |target| {
+        let mut result = tagged.save_to_path(target, options).map_err(|e| err(&e));
+        // Filet de sécurité : lofty écrit parfois en ID3v2.3 une trame qu'il ne sait plus relire
+        // (texte UTF-16 vide). Le fichier est alors réécrit en ID3v2.4, toujours lisible.
+        if opts.id3v23 && result.is_ok() && Probe::open(target).and_then(|p| p.read()).is_err() {
+            let mut v24 = WriteOptions::default();
+            result = tagged
+                .save_to_path(target, v24.use_id3v23(false))
+                .map_err(|e| err(&e));
+        }
+        result
+    })
+}
+
+fn is_mp3(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mp3"))
+}
+
+/// Réécrit un MP3 (voir [`save_safely`]).
+fn save_mp3(path: &Path, mp3: &lofty::mpeg::MpegFile, opts: WriteOpts) -> Result<(), String> {
+    let err = |e: &dyn std::fmt::Display| e.to_string();
+    save_safely(path, opts, |target| {
+        let mut options = WriteOptions::default();
+        let mut result = mp3
+            .save_to_path(target, options.use_id3v23(opts.id3v23))
+            .map_err(|e| err(&e));
+        // Même filet de sécurité qu'en général : ID3v2.4 si l'ID3v2.3 ne se relit pas.
+        if opts.id3v23 && result.is_ok() && Probe::open(target).and_then(|p| p.read()).is_err() {
+            let mut v24 = WriteOptions::default();
+            result = mp3
+                .save_to_path(target, v24.use_id3v23(false))
+                .map_err(|e| err(&e));
+        }
+        result
+    })
+}
+
+/// Écrit le fichier par `save` : dans une copie qui remplace l'original si `via_copy`, en
+/// gardant sa date de modification si `keep_mtime`.
+fn save_safely(
+    path: &Path,
+    opts: WriteOpts,
+    save: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let err = |e: &dyn std::fmt::Display| e.to_string();
+    let mtime: Option<SystemTime> = std::fs::metadata(path).and_then(|m| m.modified()).ok();
     let target = if opts.via_copy {
         let name = path
             .file_name()
@@ -416,15 +463,7 @@ fn modify(path: &Path, opts: WriteOpts, change: impl Fn(&mut Tag)) -> Result<(),
     } else {
         path.to_path_buf()
     };
-    let mut result = tagged.save_to_path(&target, options).map_err(|e| err(&e));
-    // Filet de sécurité : lofty écrit parfois en ID3v2.3 une trame qu'il ne sait plus relire
-    // (texte UTF-16 vide). Le fichier est alors réécrit en ID3v2.4, toujours lisible.
-    if opts.id3v23 && result.is_ok() && Probe::open(&target).and_then(|p| p.read()).is_err() {
-        let mut v24 = WriteOptions::default();
-        result = tagged
-            .save_to_path(&target, v24.use_id3v23(false))
-            .map_err(|e| err(&e));
-    }
+    let result = save(&target);
     if let (true, Some(t)) = (opts.keep_mtime && result.is_ok(), mtime) {
         if let Ok(f) = std::fs::File::options().write(true).open(&target) {
             let _ = f.set_modified(t);
@@ -438,6 +477,169 @@ fn modify(path: &Path, opts: WriteOpts, change: impl Fn(&mut Tag)) -> Result<(),
         }
     }
     result
+}
+
+// ---------- Notes (étoiles) ----------
+//
+// Les notes sont écrites dans les fichiers, comme le font les autres lecteurs : elles suivent
+// le morceau d'un logiciel à l'autre et survivent à une réinstallation.
+// - MP3 (ID3v2) : trame POPM, sur l'échelle de Windows et de MusicBee (1, 64, 128, 196, 255) ;
+//   les trames POPM d'autres logiciels sont mises à jour, une est ajoutée s'il n'y en a pas.
+// - FLAC, Ogg, Opus, APE, MP4 : FMPS_RATING (0,2 à 1,0, spécification freedesktop « FMPS »,
+//   comme Strawberry, Clementine ou Amarok). Un RATING déjà présent (foobar2000, MusicBee) est
+//   mis à jour dans son échelle (1 à 5, ou 0 à 100) ; en MP4, l'atome « rate » (0 à 100) aussi.
+
+/// Note d'une trame POPM (0 à 255) en étoiles.
+fn popm_stars(byte: u8) -> Option<u8> {
+    match byte {
+        0 => None,
+        1..=31 => Some(1),
+        32..=95 => Some(2),
+        96..=159 => Some(3),
+        160..=223 => Some(4),
+        _ => Some(5),
+    }
+}
+
+/// Étoiles en note POPM (échelle de Windows Media Player, reprise par MusicBee).
+fn popm_byte(stars: u8) -> u8 {
+    [0, 1, 64, 128, 196, 255][stars.min(5) as usize]
+}
+
+/// Texte d'une note (FMPS 0–1, ou RATING 1–5 / 0–100) en étoiles.
+fn text_stars(text: &str, fmps: bool) -> Option<u8> {
+    let v: f32 = text.trim().replace(',', ".").parse().ok()?;
+    let stars = if fmps {
+        v * 5.0
+    } else if v <= 5.0 {
+        v
+    } else {
+        v / 20.0
+    };
+    let stars = stars.round();
+    (stars >= 1.0).then(|| stars.min(5.0) as u8)
+}
+
+fn is_fmps(key: &ItemKey) -> bool {
+    match key {
+        ItemKey::Unknown(k) => {
+            let k = k.rsplit(':').next().unwrap_or(k);
+            k.eq_ignore_ascii_case("FMPS_RATING")
+        }
+        _ => false,
+    }
+}
+
+/// Note lue dans un tag (sauf POPM, que seul l'ID3v2 concret connaît).
+pub fn tag_rating(tag: &Tag) -> Option<u8> {
+    let fmps = tag
+        .items()
+        .find(|i| is_fmps(i.key()))
+        .and_then(|i| i.value().text())
+        .and_then(|t| text_stars(t, true));
+    fmps.or_else(|| {
+        tag.get_string(&ItemKey::Popularimeter)
+            .and_then(|t| text_stars(t, false))
+    })
+}
+
+/// Note des trames POPM d'un tag ID3v2 (la première qui en a une).
+pub fn id3v2_rating(tag: &lofty::id3::v2::Id3v2Tag) -> Option<u8> {
+    tag.into_iter().find_map(|f| match f {
+        lofty::id3::v2::Frame::Popularimeter(p) => popm_stars(p.rating),
+        _ => None,
+    })
+}
+
+/// Note du fichier (`None` : aucune).
+#[cfg(test)]
+pub fn read_rating(path: &Path) -> Option<u8> {
+    if is_mp3(path) {
+        let mut f = std::fs::File::open(path).ok()?;
+        let mp3 = lofty::mpeg::MpegFile::read_from(
+            &mut f,
+            lofty::config::ParseOptions::new().read_properties(false),
+        )
+        .ok()?;
+        return mp3.id3v2().and_then(id3v2_rating);
+    }
+    let tagged = Probe::open(path).and_then(|p| p.read()).ok()?;
+    tagged.tags().iter().find_map(tag_rating)
+}
+
+/// Inscrit la note `stars` (1 à 5 ; 0 : la retire) dans le fichier.
+pub fn write_rating(path: &Path, stars: u8, opts: WriteOpts) -> Result<(), String> {
+    let stars = stars.min(5);
+    if is_mp3(path) {
+        return write_mp3_rating(path, stars, opts);
+    }
+    modify(path, opts, |tag| set_text_rating(tag, stars))
+}
+
+/// Note des tags texte (Vorbis, APE, MP4).
+fn set_text_rating(tag: &mut Tag, stars: u8) {
+    let tag_type = tag.tag_type();
+    if !matches!(tag_type, TagType::VorbisComments | TagType::Ape | TagType::Mp4Ilst) {
+        return;
+    }
+    // RATING (ou « rate » en MP4) déjà là : mis à jour dans l'échelle qu'il utilise.
+    let old_scale_5 = tag
+        .get_string(&ItemKey::Popularimeter)
+        .and_then(|t| t.trim().replace(',', ".").parse::<f32>().ok())
+        .map(|v| v <= 5.0 && tag_type != TagType::Mp4Ilst);
+    let fmps_key = match tag.items().find(|i| is_fmps(i.key())) {
+        Some(i) => i.key().clone(),
+        None if tag_type == TagType::Mp4Ilst => ItemKey::Unknown("----:com.apple.iTunes:FMPS_Rating".into()),
+        None => ItemKey::Unknown("FMPS_RATING".into()),
+    };
+    tag.retain(|i| !is_fmps(i.key()));
+    tag.remove_key(&ItemKey::Popularimeter);
+    if stars == 0 {
+        return;
+    }
+    tag.insert_unchecked(lofty::tag::TagItem::new(
+        fmps_key,
+        lofty::tag::ItemValue::Text(format!("{:.1}", stars as f32 / 5.0)),
+    ));
+    let rating = match old_scale_5 {
+        Some(true) => Some(stars.to_string()),
+        Some(false) => Some((stars as u32 * 20).to_string()),
+        None if tag_type == TagType::Mp4Ilst => Some((stars as u32 * 20).to_string()),
+        None => None,
+    };
+    if let Some(r) = rating {
+        tag.insert_text(ItemKey::Popularimeter, r);
+    }
+}
+
+fn write_mp3_rating(path: &Path, stars: u8, opts: WriteOpts) -> Result<(), String> {
+    use lofty::id3::v2::{Frame, PopularimeterFrame};
+    let err = |e: &dyn std::fmt::Display| e.to_string();
+    let mut mp3 = {
+        let mut f = std::fs::File::open(path).map_err(|e| err(&e))?;
+        lofty::mpeg::MpegFile::read_from(&mut f, lofty::config::ParseOptions::new()).map_err(|e| err(&e))?
+    };
+    let mut tag = mp3.remove_id3v2().unwrap_or_default();
+    let mut popm: Vec<PopularimeterFrame<'static>> = (&tag)
+        .into_iter()
+        .filter_map(|f| match f {
+            Frame::Popularimeter(p) => Some(p.clone()),
+            _ => None,
+        })
+        .collect();
+    tag.retain(|f| !matches!(f, Frame::Popularimeter(_)));
+    if popm.is_empty() && stars > 0 {
+        popm.push(PopularimeterFrame::new("Windows Media Player 9 Series".into(), 0, 0));
+    }
+    for mut p in popm {
+        p.rating = popm_byte(stars);
+        // Sans note ni compteur d'écoutes, la trame n'a plus de raison d'être.
+        if p.rating > 0 || p.counter > 0 {
+            tag.insert(Frame::Popularimeter(p));
+        }
+    }
+    mp3.set_id3v2(tag);
+    save_mp3(path, &mp3, opts)
 }
 
 /// Fichiers audio d'une liste de chemins (les dossiers sont parcourus), triés. Le parcours
@@ -561,11 +763,77 @@ mod tests {
                 assert!(read_replaygain(&dst).is_none());
                 write_replaygain(&dst, &rg, opts).unwrap();
                 assert_eq!(read_replaygain(&dst), Some(rg), "{}", dst.display());
-                assert_eq!(crate::dsp::replaygain(&dst), Some(-7.25));
+                assert_eq!(crate::dsp::replaygain(&dst, false), Some(-7.25));
                 assert_eq!(read(&dst).values[Field::Title.index()], fields[0].1);
                 println!("ok {} ({})", dst.display(), back.kind);
             }
         }
+    }
+
+    /// Notes écrites puis relues dans chaque format, et gardées quand l'éditeur de tags
+    /// réécrit le fichier (fichiers d'essai fabriqués par ffmpeg ; sauté sans lui).
+    #[test]
+    fn ratings_round_trip() {
+        if !crate::ffdecode::available() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("stermusic-rating-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for ext in ["mp3", "flac", "ogg", "opus", "m4a"] {
+            let path = dir.join(format!("essai.{ext}"));
+            let ok = std::process::Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=1"])
+                .arg(&path)
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok, "ffmpeg {ext}");
+            let opts = WriteOpts { id3v23: ext == "mp3", keep_mtime: true, via_copy: false };
+            assert_eq!(read_rating(&path), None, "{ext}");
+            write_rating(&path, 4, opts).unwrap();
+            assert_eq!(read_rating(&path), Some(4), "{ext}");
+            // Une autre trame inconnue de lofty (MP3) doit survivre, elle aussi.
+            if ext == "mp3" {
+                let mut f = std::fs::File::open(&path).unwrap();
+                let mut mp3 = lofty::mpeg::MpegFile::read_from(&mut f, lofty::config::ParseOptions::new()).unwrap();
+                let mut tag = mp3.remove_id3v2().unwrap();
+                tag.insert(lofty::id3::v2::Frame::Private(lofty::id3::v2::PrivateFrame::new(
+                    "stermusic-test".into(),
+                    vec![1, 2, 3],
+                )));
+                mp3.set_id3v2(tag);
+                save_mp3(&path, &mp3, opts).unwrap();
+            }
+            // L'éditeur de tags réécrit le fichier : la note reste.
+            write(&path, &[(Field::Title, "Titre".into())], None, opts).unwrap();
+            assert_eq!(read_rating(&path), Some(4), "{ext} après l'éditeur");
+            assert_eq!(read(&path).values[Field::Title.index()], "Titre", "{ext}");
+            if ext == "mp3" {
+                let mut f = std::fs::File::open(&path).unwrap();
+                let mp3 = lofty::mpeg::MpegFile::read_from(&mut f, lofty::config::ParseOptions::new()).unwrap();
+                let private = mp3.id3v2().unwrap().into_iter().any(|f| matches!(f, lofty::id3::v2::Frame::Private(_)));
+                assert!(private, "trame PRIV perdue");
+            }
+            write_rating(&path, 2, WriteOpts { via_copy: true, ..opts }).unwrap();
+            assert_eq!(read_rating(&path), Some(2), "{ext} par copie");
+            write_rating(&path, 0, opts).unwrap();
+            assert_eq!(read_rating(&path), None, "{ext} retirée");
+            let t = crate::library::read_track(&path);
+            assert!(t.duration_ms > 900, "{ext} : {} ms", t.duration_ms);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rating_scales() {
+        assert_eq!(popm_stars(popm_byte(3)), Some(3));
+        for n in 1..=5 {
+            assert_eq!(popm_stars(popm_byte(n)), Some(n));
+        }
+        assert_eq!(popm_stars(0), None);
+        assert_eq!(text_stars("0.6", true), Some(3));
+        assert_eq!(text_stars("3", false), Some(3));
+        assert_eq!(text_stars("80", false), Some(4));
+        assert_eq!(text_stars("0", false), None);
     }
 
     #[test]

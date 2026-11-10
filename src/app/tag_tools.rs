@@ -566,6 +566,9 @@ impl SterMusic {
             if let Some(stat) = s.plays.remove(&old) {
                 s.plays.insert(new.clone(), stat);
             }
+            if let Some(stars) = s.ratings.remove(&old) {
+                s.ratings.insert(new.clone(), stars);
+            }
             for p in s.playlists.iter_mut().flat_map(|pl| pl.tracks.iter_mut()) {
                 if *p == old {
                     *p = new.clone();

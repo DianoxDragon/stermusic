@@ -6,7 +6,10 @@
 //! ainsi montrer la portion du fond d'écran qui est vraiment derrière la fenêtre.
 //!
 //! Le même script garde le mini lecteur au premier plan (Wayland ne laisse pas les applications
-//! le demander elles-mêmes). Il est déchargé à la fermeture de SterMusic.
+//! le demander elles-mêmes), et cache la fenêtre dans la zone de notification (Wayland ne sait
+//! pas non plus cacher une fenêtre) : réduite, hors de la barre des tâches et du sélecteur de
+//! fenêtres, puis rendue et activée. Les demandes passent par une marque à la fin du titre de
+//! la fenêtre. Le script est déchargé à la fermeture de SterMusic.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -22,6 +25,8 @@ pub struct Geometry {
 
 /// Suffixe du titre de la fenêtre qui demande au script de la garder au premier plan.
 pub const KEEP_ABOVE_MARK: &str = " · Mini lecteur";
+/// Suffixe du titre qui demande au script de cacher la fenêtre (zone de notification).
+pub const HIDDEN_MARK: &str = " · Zone de notification";
 
 const SERVICE: &str = "org.stermusic.SterMusic";
 const SCRIPT_NAME: &str = "stermusic";
@@ -48,23 +53,58 @@ function syncAbove(w) {
     }
 }
 
+const hiddenState = {};
+
+function syncHidden(w) {
+    const hidden = w.caption.endsWith("HIDDEN_MARK");
+    const id = String(w.internalId);
+    const was = hiddenState[id];
+    if (was === hidden) {
+        return;
+    }
+    hiddenState[id] = hidden;
+    if (hidden) {
+        w.skipTaskbar = true;
+        w.skipSwitcher = true;
+        w.skipPager = true;
+        w.minimized = true;
+    } else if (was) {
+        w.skipTaskbar = false;
+        w.skipSwitcher = false;
+        w.skipPager = false;
+        w.minimized = false;
+        workspace.activeWindow = w;
+    }
+}
+
+function sendMinimized(w) {
+    callDBus("org.stermusic.SterMusic", "/Geometry", "org.stermusic.Geometry", "Minimized", w.minimized);
+}
+
 function hook(w) {
     if (!w || w.resourceClass !== "stermusic") {
         return;
     }
+    w.minimizedChanged.connect(function () { sendMinimized(w); });
     w.frameGeometryChanged.connect(function () { send(w); });
     w.outputChanged.connect(function () { send(w); });
-    w.captionChanged.connect(function () { syncAbove(w); });
+    w.captionChanged.connect(function () { syncAbove(w); syncHidden(w); });
     send(w);
     syncAbove(w);
+    syncHidden(w);
 }
 
 workspace.windowList().forEach(hook);
 workspace.windowAdded.connect(hook);
 "#;
 
+enum Msg {
+    Geometry(Geometry),
+    Minimized(bool),
+}
+
 struct Iface {
-    tx: Sender<Geometry>,
+    tx: Sender<Msg>,
     ctx: egui::Context,
 }
 
@@ -73,9 +113,16 @@ impl Iface {
     /// Appelé par le script : « x;y;largeur;hauteur;écran x;écran y;écran largeur;écran hauteur;nom ».
     fn update(&self, data: String) {
         if let Some(g) = parse(&data) {
-            let _ = self.tx.send(g);
+            let _ = self.tx.send(Msg::Geometry(g));
             self.ctx.request_repaint();
         }
+    }
+
+    /// Appelé par le script quand la fenêtre est réduite ou rendue (Wayland ne le dit pas aux
+    /// applications) : réduite, elle n'anime plus rien.
+    fn minimized(&self, on: bool) {
+        let _ = self.tx.send(Msg::Minimized(on));
+        self.ctx.request_repaint();
     }
 }
 
@@ -97,9 +144,11 @@ fn parse(data: &str) -> Option<Geometry> {
 
 pub struct KWin {
     conn: Option<zbus::blocking::Connection>,
-    rx: Receiver<Geometry>,
+    rx: Receiver<Msg>,
     /// Dernière position connue de la fenêtre.
     pub geometry: Option<Geometry>,
+    /// La fenêtre est réduite (ou cachée dans la zone de notification).
+    pub minimized: bool,
 }
 
 impl KWin {
@@ -114,6 +163,7 @@ impl KWin {
             conn,
             rx,
             geometry: None,
+            minimized: false,
         }
     }
 
@@ -123,8 +173,11 @@ impl KWin {
     }
 
     pub fn poll(&mut self) {
-        while let Ok(g) = self.rx.try_recv() {
-            self.geometry = Some(g);
+        while let Ok(m) = self.rx.try_recv() {
+            match m {
+                Msg::Geometry(g) => self.geometry = Some(g),
+                Msg::Minimized(on) => self.minimized = on,
+            }
         }
     }
 
@@ -155,7 +208,7 @@ where
     )
 }
 
-fn start(tx: Sender<Geometry>, ctx: egui::Context) -> zbus::Result<zbus::blocking::Connection> {
+fn start(tx: Sender<Msg>, ctx: egui::Context) -> zbus::Result<zbus::blocking::Connection> {
     let conn = zbus::blocking::connection::Builder::session()?
         .name(SERVICE)?
         .serve_at("/Geometry", Iface { tx, ctx })?
@@ -163,7 +216,10 @@ fn start(tx: Sender<Geometry>, ctx: egui::Context) -> zbus::Result<zbus::blockin
     let dir = crate::library::cache_dir();
     std::fs::create_dir_all(&dir).map_err(|e| zbus::Error::Failure(e.to_string()))?;
     let path = dir.join("kwin-script.js");
-    std::fs::write(&path, SCRIPT.replace("KEEP_ABOVE_MARK", KEEP_ABOVE_MARK))
+    let script = SCRIPT
+        .replace("KEEP_ABOVE_MARK", KEEP_ABOVE_MARK)
+        .replace("HIDDEN_MARK", HIDDEN_MARK);
+    std::fs::write(&path, script)
         .map_err(|e| zbus::Error::Failure(e.to_string()))?;
     // Un script resté chargé (SterMusic fermé brutalement) est remplacé.
     let _ = call(&conn, "unloadScript", &(SCRIPT_NAME,));

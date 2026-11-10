@@ -1,7 +1,8 @@
 //! Second moteur de décodage : `ffmpeg`, pour ce que Symphonia ne sait pas lire (Opus, WMA,
 //! APE, WavPack, DSD, Musepack…) et pour les morceaux lus à distance (serveurs, podcasts).
 //!
-//! `ffmpeg` décode vers du son brut (flottants 32 bits, stéréo, 44,1 kHz) sur sa sortie ; un
+//! `ffmpeg` décode vers du son brut (flottants 32 bits, stéréo, 44,1 kHz ; au format du fichier
+//! en bit-perfect) sur sa sortie ; un
 //! thread le lit et le passe au lecteur par paquets, pour que le son ne dépende jamais d'une
 //! lecture bloquante. Un déplacement dans le morceau relance `ffmpeg` au bon endroit (`-ss`).
 
@@ -41,6 +42,8 @@ pub fn available() -> bool {
 /// Le son d'un fichier ou d'une adresse, décodé par `ffmpeg`.
 pub struct FfmpegSource {
     input: String,
+    rate: u32,
+    channels: u16,
     /// Début du morceau dans le fichier (morceau d'un fichier CUE), et sa durée.
     start: Duration,
     total: Option<Duration>,
@@ -54,12 +57,25 @@ pub struct FfmpegSource {
 impl FfmpegSource {
     /// Ouvre `input` (chemin ou adresse), à partir de `start`.
     pub fn open(input: &str, start: Duration, total: Option<Duration>) -> Result<Self, String> {
+        Self::open_as(input, start, total, RATE, CHANNELS)
+    }
+
+    /// Comme [`open`](Self::open), mais à la fréquence et avec les canaux du fichier (sortie
+    /// bit-perfect) : rien n'est rééchantillonné ni mélangé.
+    pub fn open_native(input: &str, start: Duration, total: Option<Duration>) -> Result<Self, String> {
+        let (rate, channels) = native_format(input).unwrap_or((RATE, CHANNELS));
+        Self::open_as(input, start, total, rate, channels)
+    }
+
+    fn open_as(input: &str, start: Duration, total: Option<Duration>, rate: u32, channels: u16) -> Result<Self, String> {
         if !available() {
             return Err(crate::i18n::tr("Ce format demande ffmpeg (paquet « ffmpeg »)").into());
         }
-        let (child, rx) = spawn(input, start)?;
+        let (child, rx) = spawn(input, start, rate, channels)?;
         Ok(Self {
             input: input.to_owned(),
+            rate,
+            channels,
             start,
             total,
             child: Some(child),
@@ -78,7 +94,34 @@ impl FfmpegSource {
     }
 }
 
-fn spawn(input: &str, at: Duration) -> Result<(Child, Receiver<Vec<f32>>), String> {
+/// Fréquence et canaux du premier flux audio (`ffprobe`). Le DSD, décodé en PCM par ffmpeg, est
+/// ramené à 352,8 kHz au plus ; au-delà de huit canaux, le son est mélangé en stéréo.
+fn native_format(input: &str) -> Option<(u32, u16)> {
+    let out = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=sample_rate,channels",
+            "-of",
+            "json",
+        ])
+        .arg(input)
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let stream = v.get("streams")?.as_array()?.first()?;
+    let rate: u32 = stream.get("sample_rate")?.as_str()?.parse().ok()?;
+    let channels = stream.get("channels")?.as_u64()? as u16;
+    let rate = if rate > 384_000 { 352_800 } else { rate };
+    let channels = if channels == 0 || channels > 8 { 2 } else { channels };
+    (rate > 0).then_some((rate, channels))
+}
+
+fn spawn(input: &str, at: Duration, rate: u32, channels: u16) -> Result<(Child, Receiver<Vec<f32>>), String> {
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-nostdin", "-hide_banner", "-v", "error"]);
     if input.starts_with("http") {
@@ -95,7 +138,8 @@ fn spawn(input: &str, at: Duration) -> Result<(Child, Receiver<Vec<f32>>), Strin
     if !at.is_zero() {
         cmd.args(["-ss", &format!("{:.3}", at.as_secs_f64())]);
     }
-    cmd.args(["-i", input, "-vn", "-f", "f32le", "-ac", "2", "-ar", "44100", "-"]);
+    let (rate, channels) = (rate.to_string(), channels.to_string());
+    cmd.args(["-i", input, "-vn", "-f", "f32le", "-ac", &channels, "-ar", &rate, "-"]);
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -162,11 +206,11 @@ impl rodio::Source for FfmpegSource {
     }
 
     fn channels(&self) -> rodio::ChannelCount {
-        CHANNELS
+        self.channels
     }
 
     fn sample_rate(&self) -> rodio::SampleRate {
-        RATE
+        self.rate
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -176,7 +220,7 @@ impl rodio::Source for FfmpegSource {
     fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
         self.stop();
         let (child, rx) =
-            spawn(&self.input, self.start + pos).map_err(|_| rodio::source::SeekError::NotSupported {
+            spawn(&self.input, self.start + pos, self.rate, self.channels).map_err(|_| rodio::source::SeekError::NotSupported {
                 underlying_source: "ffmpeg",
             })?;
         self.child = Some(child);

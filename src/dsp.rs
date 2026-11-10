@@ -5,6 +5,8 @@
 //!   doux (baisse vite, remonte lentement) ;
 //! - limiteur doux, pour que ni l'égaliseur ni le nivellement ne fassent saturer.
 //!
+//! En sortie bit-perfect, rien de tout cela : le son passe tel quel.
+//!
 //! Les réglages sont partagés avec l'interface (atomiques) : on les entend changer en direct.
 
 use std::collections::VecDeque;
@@ -70,6 +72,12 @@ pub struct AudioSettings {
     gains: [AtomicU32; 10],
     preamp: AtomicU32,
     leveling: AtomicBool,
+    /// Sortie bit-perfect : aucun traitement.
+    exact: AtomicBool,
+    /// Nivellement automatique : dernier état (gain, puissance moyenne), repris par le morceau
+    /// suivant pour que le volume ne saute pas d'un morceau à l'autre.
+    last_gain: AtomicU32,
+    last_power: AtomicU32,
     version: AtomicU64,
 }
 
@@ -82,6 +90,9 @@ impl AudioSettings {
             gains: Default::default(),
             preamp: AtomicU32::new(0f32.to_bits()),
             leveling: AtomicBool::new(false),
+            exact: AtomicBool::new(false),
+            last_gain: AtomicU32::new(1f32.to_bits()),
+            last_power: AtomicU32::new((TARGET_RMS * TARGET_RMS).to_bits()),
             version: AtomicU64::new(1),
         })
     }
@@ -97,6 +108,12 @@ impl AudioSettings {
         self.version.fetch_add(1, Ordering::Release);
     }
 
+    /// Sortie bit-perfect : le son ne passe plus par aucun traitement.
+    pub fn set_exact(&self, exact: bool) {
+        self.exact.store(exact, Ordering::Relaxed);
+        self.version.fetch_add(1, Ordering::Release);
+    }
+
     fn snapshot(&self) -> (bool, [f32; 10], f32, bool) {
         let gains = std::array::from_fn(|i| f32::from_bits(self.gains[i].load(Ordering::Relaxed)));
         (
@@ -108,18 +125,26 @@ impl AudioSettings {
     }
 }
 
-/// Gain ReplayGain du morceau (en dB), s'il est dans ses tags.
-pub fn replaygain(path: &Path) -> Option<f32> {
+/// Gain ReplayGain (en dB), s'il est dans les tags : celui de l'album si `album` (et qu'il
+/// existe), sinon celui du morceau. Le gain d'album garde les écarts voulus entre les morceaux
+/// d'un album écouté à la suite.
+pub fn replaygain(path: &Path, album: bool) -> Option<f32> {
     use lofty::prelude::*;
     let tagged = lofty::probe::Probe::open(path).ok()?.read().ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
-    let text = tag.get_string(&ItemKey::ReplayGainTrackGain)?;
-    text.trim()
-        .trim_end_matches("dB")
-        .trim()
-        .replace(',', ".")
-        .parse()
-        .ok()
+    let parse = |key: &ItemKey| -> Option<f32> {
+        tag.get_string(key)?
+            .trim()
+            .trim_end_matches("dB")
+            .trim()
+            .replace(',', ".")
+            .parse()
+            .ok()
+    };
+    album
+        .then(|| parse(&ItemKey::ReplayGainAlbumGain))
+        .flatten()
+        .or_else(|| parse(&ItemKey::ReplayGainTrackGain))
 }
 
 fn db(gain_db: f32) -> f32 {
@@ -175,6 +200,7 @@ pub struct Processor<S: Source> {
     preamp: f32,
     eq_on: bool,
     leveling: bool,
+    exact: bool,
     replaygain: Option<f32>,
     /// Nivellement automatique : puissance moyenne et gain courant.
     mean_square: f32,
@@ -190,6 +216,8 @@ const TARGET_RMS: f32 = 0.125;
 
 impl<S: Source> Processor<S> {
     pub fn new(inner: S, settings: Shared, replaygain: Option<f32>, tap: Option<SharedTap>) -> Self {
+        let mean_square = f32::from_bits(settings.last_power.load(Ordering::Relaxed));
+        let level_gain = f32::from_bits(settings.last_gain.load(Ordering::Relaxed));
         let mut p = Self {
             channels: inner.channels().max(1) as usize,
             rate: inner.sample_rate(),
@@ -203,9 +231,10 @@ impl<S: Source> Processor<S> {
             preamp: 1.0,
             eq_on: false,
             leveling: false,
+            exact: false,
             replaygain,
-            mean_square: TARGET_RMS * TARGET_RMS,
-            level_gain: 1.0,
+            mean_square,
+            level_gain,
             tap,
             mono: 0.0,
             chunk: Vec::with_capacity(TAP_CHUNK),
@@ -219,9 +248,14 @@ impl<S: Source> Processor<S> {
         let version = self.settings.version.load(Ordering::Acquire);
         let channels = self.inner.channels().max(1) as usize;
         let rate = self.inner.sample_rate();
+        if self.leveling && self.replaygain.is_none() {
+            self.settings.last_gain.store(self.level_gain.to_bits(), Ordering::Relaxed);
+            self.settings.last_power.store(self.mean_square.to_bits(), Ordering::Relaxed);
+        }
         if !force && version == self.version && channels == self.channels && rate == self.rate {
             return;
         }
+        self.exact = self.settings.exact.load(Ordering::Relaxed);
         self.version = version;
         let (eq_on, gains, preamp, leveling) = self.settings.snapshot();
         self.eq_on = eq_on;
@@ -264,6 +298,24 @@ impl<S: Source> Processor<S> {
     }
 }
 
+impl<S: Source> Processor<S> {
+    /// Copie pour le visualiseur : mélange mono, envoyé par paquets (jamais bloquant pour le
+    /// son). À appeler après avoir avancé `channel`.
+    fn feed_tap(&mut self, y: f32) {
+        if let Some(tap) = &self.tap {
+            self.mono += y;
+            if self.channel == 0 {
+                self.chunk.push(self.mono / self.channels as f32);
+                self.mono = 0.0;
+                if self.chunk.len() >= TAP_CHUNK {
+                    tap.push(&self.chunk, self.rate);
+                    self.chunk.clear();
+                }
+            }
+        }
+    }
+}
+
 /// Limiteur doux : rien ne change sous 0,9, au-delà la courbe s'arrondit jusqu'à 1.
 fn soft_clip(x: f32) -> f32 {
     let a = x.abs();
@@ -284,6 +336,11 @@ impl<S: Source> Iterator for Processor<S> {
         }
         self.countdown = self.countdown.saturating_sub(1);
         let mut x = self.inner.next()?;
+        if self.exact {
+            self.channel = (self.channel + 1) % self.channels;
+            self.feed_tap(x);
+            return Some(x);
+        }
         let n = self.filters.len();
         if n > 0 {
             x *= self.preamp;
@@ -300,18 +357,7 @@ impl<S: Source> Iterator for Processor<S> {
         x = self.level(x);
         let y = soft_clip(x);
         self.channel = (self.channel + 1) % self.channels;
-        if let Some(tap) = &self.tap {
-            // Mélange mono, envoyé par paquets (jamais bloquant pour le son).
-            self.mono += y;
-            if self.channel == 0 {
-                self.chunk.push(self.mono / self.channels as f32);
-                self.mono = 0.0;
-                if self.chunk.len() >= TAP_CHUNK {
-                    tap.push(&self.chunk, self.rate);
-                    self.chunk.clear();
-                }
-            }
-        }
+        self.feed_tap(y);
         Some(y)
     }
 

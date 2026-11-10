@@ -102,6 +102,9 @@ impl SterMusic {
                     .font(theme::semibold(15.0))
                     .color(theme::TEXT),
             );
+            if self.settings.bit_perfect {
+                ui.label(RichText::new(tr("(sans effet en sortie bit-perfect)")).small().color(theme::TEXT_3));
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if widgets::icon_button(ui, Icon::Refresh, tr("Tout remettre à 0"), 30.0, 15.0).clicked() {
                     self.settings.eq_gains = [0.0; 10];
@@ -2092,7 +2095,12 @@ impl SterMusic {
                 });
                 separator(ui);
                 let mut crossfade = self.settings.crossfade;
-                card_row(ui, Icon::Shuffle, tr("Fondu enchaîné"), tr("Le morceau suivant commence en fondu pendant que le précédent s'efface."), |_, ui| {
+                let desc = if self.settings.bit_perfect {
+                    tr("Le morceau suivant commence en fondu pendant que le précédent s'efface. Sans effet en sortie bit-perfect.")
+                } else {
+                    tr("Le morceau suivant commence en fondu pendant que le précédent s'efface. Sans fondu, les morceaux s'enchaînent sans le moindre blanc.")
+                };
+                card_row(ui, Icon::Shuffle, tr("Fondu enchaîné"), desc, |_, ui| {
                     widgets::switch(ui, &mut crossfade);
                 }, self);
                 self.settings.crossfade = crossfade;
@@ -2106,6 +2114,15 @@ impl SterMusic {
                             self.settings.crossfade_secs = (1.0 + v * 11.0).round();
                         }
                         ui.label(RichText::new(format!("{:.0} s", self.settings.crossfade_secs)).small().color(theme::TEXT_3));
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(52.0);
+                        let mut albums = self.settings.crossfade_albums;
+                        widgets::switch(ui, &mut albums);
+                        self.settings.crossfade_albums = albums;
+                        ui.label(RichText::new(tr("Aussi entre deux morceaux d'un même album")).color(theme::TEXT_2))
+                            .on_hover_text(tr("Désactivé, les morceaux d'un album s'enchaînent sans blanc, comme sur le disque (albums live, mixés, concept)."));
                     });
                 }
                 separator(ui);
@@ -2172,6 +2189,19 @@ impl SterMusic {
                 }
                 separator(ui);
                 self.output_setting(ui);
+                separator(ui);
+                let mut exact = self.settings.bit_perfect;
+                let desc = if crate::outputs::can_force_rate() {
+                    tr("Le son du fichier part tel quel, à sa fréquence (44,1 kHz, 96 kHz…) : PipeWire la suit pendant la lecture au lieu de tout convertir en 48 kHz. Égaliseur, nivellement, fondu et volume de SterMusic sont mis de côté : le volume se règle dans le système.")
+                } else {
+                    tr("Le son du fichier part tel quel : égaliseur, nivellement, fondu et volume de SterMusic sont mis de côté. pw-metadata (PipeWire) est introuvable : le système peut encore convertir la fréquence.")
+                };
+                card_row(ui, Icon::AudioLines, tr("Sortie bit-perfect"), desc, |_, ui| {
+                    widgets::switch(ui, &mut exact);
+                }, self);
+                if exact != self.settings.bit_perfect {
+                    self.set_bit_perfect(exact);
+                }
             });
 
             subtitle(ui, tr("Lecture"));
@@ -2199,6 +2229,24 @@ impl SterMusic {
                 card_row(ui, Icon::AudioLines, tr("Intégration au bureau"), desc, |_, ui| {
                     ui.label(RichText::new(state).color(if state == tr("Actif") { theme::accent_light() } else { theme::TEXT_3 }));
                 }, self);
+                separator(ui);
+                let mut tray = self.settings.tray;
+                let desc = if self.kwin.active() {
+                    tr("Lecture, morceau suivant ou précédent depuis la barre des tâches (clic du milieu : lecture / pause, molette : morceaux). Fermer la fenêtre la cache alors dans la zone de notification, la musique continue : pour quitter, « Quitter » dans le menu de l'icône.")
+                } else {
+                    tr("Lecture, morceau suivant ou précédent depuis la barre des tâches (clic du milieu : lecture / pause, molette : morceaux). Hors de KDE Plasma, fermer la fenêtre quitte quand même SterMusic.")
+                };
+                card_row(ui, Icon::Bell, tr("Icône dans la zone de notification"), desc, |_, ui| {
+                    widgets::switch(ui, &mut tray);
+                }, self);
+                if tray != self.settings.tray {
+                    self.settings.tray = tray;
+                    if tray {
+                        self.start_tray();
+                    } else {
+                        self.stop_tray();
+                    }
+                }
                 self.playback_extra_settings(ui);
             });
 

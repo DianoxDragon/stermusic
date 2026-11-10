@@ -55,6 +55,9 @@ pub struct Track {
     /// Morceau d'un serveur de musique : où le lire, sa pochette.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<Remote>,
+    /// Note (1 à 5 étoiles) inscrite dans le fichier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -122,7 +125,7 @@ pub fn cover_url(path: &Path) -> Option<String> {
 }
 
 /// Voir `Track::schema`.
-pub const TRACK_SCHEMA: u8 = 1;
+pub const TRACK_SCHEMA: u8 = 2;
 
 /// Genres d'un morceau : le champ peut en contenir plusieurs (« Rock; Pop »).
 pub fn split_genres(genre: &str) -> impl Iterator<Item = &str> {
@@ -489,9 +492,31 @@ pub fn read_track(path: &Path) -> Track {
         composer: String::new(),
         schema: TRACK_SCHEMA,
         cue: None,
+        rating: None,
         remote: None,
     };
-    if let Ok(tagged) = Probe::open(path).and_then(|p| p.read()) {
+    // MP3 : la note (trame POPM) ne passe pas par le tag générique de lofty ; le fichier est lu
+    // une seule fois, sous sa forme ID3v2, puis converti.
+    let tagged = if path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("mp3"))
+    {
+        std::fs::File::open(path)
+            .ok()
+            .and_then(|mut f| lofty::mpeg::MpegFile::read_from(&mut f, lofty::config::ParseOptions::new()).ok())
+            .map(|mp3| {
+                track.rating = mp3.id3v2().and_then(crate::tags::id3v2_rating);
+                lofty::file::TaggedFile::from(mp3)
+            })
+            .ok_or(())
+    } else {
+        Probe::open(path).and_then(|p| p.read()).map_err(|_| ())
+    };
+    if let Ok(tagged) = tagged {
+        if track.rating.is_none() {
+            track.rating = tagged.tags().iter().find_map(crate::tags::tag_rating);
+        }
         track.duration_ms = tagged.properties().duration().as_millis() as u64;
         if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
             if let Some(t) = tag.title().filter(|t| !t.trim().is_empty()) {
@@ -671,6 +696,7 @@ fn parse_cue(text: &str, dir: &Path, mtime: u64) -> Vec<Track> {
                 start_ms: r.start,
                 end_ms: end,
             }),
+            rating: None,
             remote: None,
         });
     }

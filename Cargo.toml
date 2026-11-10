@@ -34,6 +34,8 @@ smithay-clipboard = "0.7"
 notify = { version = "8", default-features = false }
 # Diffusion vers un Chromecast (connexion TLS au protocole Cast) ; déjà utilisé par ureq.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+# Icône dans la zone de notification (StatusNotifierItem de KDE, sur D-Bus).
+ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
 # Presse-papiers Wayland d'egui, modifié pour accepter les fichiers glissés sur la fenêtre (voir
 # vendor/smithay-clipboard/README.md).

@@ -65,6 +65,34 @@ pub fn route_to(name: &str) {
     }
 }
 
+/// Impose à PipeWire la fréquence `rate` (0 : rend la main à sa fréquence habituelle).
+///
+/// PipeWire fait tourner tout le son à une seule fréquence (48 kHz d'ordinaire) et
+/// rééchantillonne le reste ; la sortie bit-perfect lui demande de suivre celle du morceau.
+/// Le réglage (`clock.force-rate`) ne dure que le temps de la session PipeWire.
+pub fn force_rate(rate: u32) {
+    let _ = std::process::Command::new("pw-metadata")
+        .args(["-n", "settings", "0", "clock.force-rate", &rate.to_string()])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Vrai si `pw-metadata` (PipeWire) est là : sans lui, la sortie bit-perfect ne peut pas
+/// empêcher le rééchantillonnage.
+pub fn can_force_rate() -> bool {
+    static OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OK.get_or_init(|| {
+        std::process::Command::new("pw-metadata")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

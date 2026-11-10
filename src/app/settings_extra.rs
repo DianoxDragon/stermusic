@@ -200,6 +200,72 @@ impl SterMusic {
         }
     }
 
+    // ---------- Zone de notification ----------
+
+    /// Place l'icône dans la zone de notification ; sans zone compatible, l'option se décoche.
+    pub(super) fn start_tray(&mut self) {
+        if self.tray.is_some() {
+            return;
+        }
+        self.tray = crate::tray::Tray::start(&self.egui_ctx, Default::default());
+        if self.tray.is_none() {
+            self.settings.tray = false;
+            self.toast(tr("Pas de zone de notification compatible sur ce bureau"));
+        }
+    }
+
+    pub(super) fn stop_tray(&mut self) {
+        self.tray = None;
+        if self.hidden {
+            self.show_window();
+        }
+    }
+
+    /// Vrai si fermer la fenêtre la cache dans la zone de notification (il faut KWin pour
+    /// cacher une fenêtre sous Wayland).
+    pub(super) fn closes_to_tray(&self) -> bool {
+        self.tray.is_some() && self.kwin.active() && !self.quitting
+    }
+
+    pub(super) fn hide_window(&mut self) {
+        if self.kwin.active() {
+            self.hidden = true;
+        } else {
+            self.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+    }
+
+    pub(super) fn show_window(&mut self) {
+        self.hidden = false;
+        self.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        self.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    /// Commandes venues de l'icône, et fermeture de la fenêtre interceptée.
+    pub(super) fn poll_tray(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) && self.closes_to_tray() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_window();
+        }
+        let Some(tray) = &self.tray else { return };
+        for c in tray.poll() {
+            use crate::tray::Command;
+            match c {
+                Command::Toggle if self.hidden => self.show_window(),
+                Command::Toggle => self.hide_window(),
+                Command::Show => self.show_window(),
+                Command::PlayPause => self.actions.push(Action::TogglePlay),
+                Command::Next => self.actions.push(Action::Next),
+                Command::Previous => self.actions.push(Action::Previous),
+                Command::Quit => {
+                    self.quitting = true;
+                    self.hidden = false;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
     // ---------- Sortie audio ----------
 
     pub(super) fn refresh_outputs(&mut self) {

@@ -11,9 +11,11 @@ mod lists;
 mod lyrics_view;
 mod mb_import;
 mod nowbar;
+mod pace;
 mod podcasts_view;
 mod radio_globe;
 mod radio_view;
+mod ratings;
 mod servers_view;
 mod rg_tool;
 mod settings_extra;
@@ -185,6 +187,12 @@ pub struct Settings {
     /// Fondu enchaîné entre les morceaux, et sa durée (s).
     pub crossfade: bool,
     pub crossfade_secs: f32,
+    /// Fondu aussi entre deux morceaux d'un même album (d'ordinaire, ils s'enchaînent sans blanc).
+    pub crossfade_albums: bool,
+    /// Sortie bit-perfect : le son du fichier part tel quel, à sa fréquence.
+    pub bit_perfect: bool,
+    /// Icône dans la zone de notification ; fermer la fenêtre y garde alors SterMusic.
+    pub tray: bool,
     /// Nivellement du volume (ReplayGain, sinon automatique).
     pub leveling: bool,
     /// Visualiseur (animations qui suivent la musique).
@@ -268,6 +276,9 @@ impl Default for Settings {
             eq_preset: "Plat".into(),
             crossfade: false,
             crossfade_secs: 5.0,
+            crossfade_albums: false,
+            bit_perfect: false,
+            tray: false,
             leveling: false,
             visualizer: true,
             viz_style: 0,
@@ -612,6 +623,15 @@ pub struct SterMusic {
     notifier: crate::notify::Notifier,
     /// Notification à envoyer quand la pochette du morceau sera prête (ou au plus tard à l'heure dite).
     pending_note: Option<(PathBuf, f64)>,
+    /// Notes inscrites dans les fichiers (thread à part).
+    ratings: ratings::RatingWriter,
+    /// Icône dans la zone de notification, et fenêtre cachée dedans.
+    tray: Option<crate::tray::Tray>,
+    hidden: bool,
+    /// Cadence des images (pas de synchronisation verticale).
+    pacer: pace::Pacer,
+    /// « Quitter » demandé : la fermeture de la fenêtre n'est plus interceptée.
+    quitting: bool,
     /// La fenêtre est au premier plan (pas de notification alors).
     focused: bool,
     scrobbler: crate::scrobble::Scrobbler,
@@ -758,10 +778,15 @@ impl SterMusic {
             settings.eq_preamp,
             settings.leveling,
         );
+        audio.set_exact(settings.bit_perfect);
+        let volume = if settings.bit_perfect && !settings.muted { 1.0 } else { volume };
         let tap = crate::dsp::Tap::new();
         crate::outputs::route_to(&settings.audio_output);
         let (player, toast) = match Player::new(volume, audio.clone(), tap.clone()) {
-            Ok(p) => (Some(p), None),
+            Ok(mut p) => {
+                let _ = p.set_exact(settings.bit_perfect);
+                (Some(p), None)
+            }
             Err(e) => (None, Some((e, 0.0))),
         };
 
@@ -827,6 +852,11 @@ impl SterMusic {
             sleep_gain: 1.0,
             notifier: Default::default(),
             pending_note: None,
+            ratings: ratings::RatingWriter::new(&cc.egui_ctx),
+            tray: None,
+            hidden: false,
+            pacer: Default::default(),
+            quitting: false,
             focused: true,
             scrobbler: crate::scrobble::Scrobbler::new(settings.scrobble.clone()),
             outputs: Vec::new(),
@@ -862,6 +892,9 @@ impl SterMusic {
             app.set_library(tracks);
         }
         app.restore_queue();
+        if app.settings.tray {
+            app.start_tray();
+        }
         app.start_scan();
         if !tag_files.is_empty() {
             app.open_tag_editor(&cc.egui_ctx, tag_files);
@@ -1025,6 +1058,7 @@ impl SterMusic {
         self.songs_sorted = None;
         self.selected.clear();
         self.refresh_search();
+        self.sync_ratings();
     }
 
     /// Reprend la file d'attente et la position du dernier lancement (en pause).
@@ -1123,8 +1157,10 @@ impl SterMusic {
             return;
         }
         let meta = self.cast_meta(idx);
+        let album = self.queue_pos.is_some_and(|p| self.album_run(p));
         let Some(player) = &mut self.player else { return };
         player.set_meta(meta);
+        player.set_album_gain(album);
         let track = &self.lib.tracks[idx];
         let result = if self.crossfading {
             let duration = Duration::from_secs_f32(self.settings.crossfade_secs.clamp(1.0, 12.0));
@@ -1133,28 +1169,7 @@ impl SterMusic {
             player.load(&library::media(track), false)
         };
         match result {
-            // L'écoute n'est comptée qu'au bout de 30 secondes (voir `track_listen`).
-            Ok(()) => {
-                let path = track.path.clone();
-                let song = scrobble_song(track);
-                self.finish_listen();
-                if let Some(song) = song {
-                    if self.settings.scrobble.any() {
-                        self.scrobbler.now_playing(song);
-                    }
-                }
-                let now = self.egui_ctx.input(|i| i.time);
-                self.pending_note = Some((path.clone(), now + 1.5));
-                self.listening = Some(Listening {
-                    scrobbled: false,
-                    path,
-                    started: now_secs(),
-                    heard: 0.0,
-                    last_pos: 0.0,
-                    last_tick: std::time::Instant::now(),
-                    counted: false,
-                });
-            }
+            Ok(()) => self.track_started(idx),
             Err(e) => {
                 let msg = format!("{} — {e}", track.title);
                 self.toast(msg);
@@ -1163,10 +1178,35 @@ impl SterMusic {
         self.seeked = true;
     }
 
+    /// Un morceau vient de démarrer : écoute, scrobbling, notification.
+    fn track_started(&mut self, idx: usize) {
+        let track = &self.lib.tracks[idx];
+        let path = track.path.clone();
+        let song = scrobble_song(track);
+        self.finish_listen();
+        if let Some(song) = song {
+            if self.settings.scrobble.any() {
+                self.scrobbler.now_playing(song);
+            }
+        }
+        let now = self.egui_ctx.input(|i| i.time);
+        self.pending_note = Some((path.clone(), now + 1.5));
+        // L'écoute n'est comptée qu'au bout de 30 secondes (voir `track_listen`).
+        self.listening = Some(Listening {
+            scrobbled: false,
+            path,
+            started: now_secs(),
+            heard: 0.0,
+            last_pos: 0.0,
+            last_tick: std::time::Instant::now(),
+            counted: false,
+        });
+    }
+
     /// Fondu enchaîné : quelques secondes avant la fin du morceau, le suivant démarre en fondu.
     fn maybe_crossfade(&mut self) {
         // La minuterie « fin du morceau » arrête la lecture : pas de morceau suivant.
-        if !self.settings.crossfade || self.sleep.as_ref().is_some_and(|s| s.kind == SleepKind::EndOfTrack) {
+        if !self.settings.crossfade || self.settings.bit_perfect || self.sleep_at_end() {
             return;
         }
         let Some(p) = &self.player else { return };
@@ -1185,9 +1225,135 @@ impl SterMusic {
         if !has_next {
             return;
         }
+        // Deux morceaux d'un même album s'enchaînent sans blanc, pas en fondu.
+        if let Some(next) = self.upcoming() {
+            if !self.will_crossfade(cur, self.queue[next]) {
+                return;
+            }
+        }
         self.crossfading = true;
         self.next(true);
         self.crossfading = false;
+    }
+
+    fn sleep_at_end(&self) -> bool {
+        self.sleep.as_ref().is_some_and(|s| s.kind == SleepKind::EndOfTrack)
+    }
+
+    /// Position dans la file du morceau qui suivra tout seul celui en cours ; `None` s'il n'y
+    /// en a pas, ou s'il n'est pas encore connu (fin de la file en aléatoire : elle sera remélangée).
+    fn upcoming(&self) -> Option<usize> {
+        let pos = self.queue_pos?;
+        if self.settings.repeat == Repeat::One {
+            return Some(pos);
+        }
+        if pos + 1 < self.queue.len() {
+            return Some(pos + 1);
+        }
+        let reshuffled = self.settings.shuffle && self.queue.len() > 1;
+        (self.settings.repeat == Repeat::All && !reshuffled).then_some(0)
+    }
+
+    /// Vrai si les morceaux `a` et `b` (indices de la bibliothèque) sont du même album, ou du
+    /// même fichier découpé par une feuille CUE.
+    fn same_album(&self, a: usize, b: usize) -> bool {
+        let (a, b) = (&self.lib.tracks[a], &self.lib.tracks[b]);
+        if let (Some(x), Some(y)) = (&a.cue, &b.cue) {
+            if x.file == y.file {
+                return true;
+            }
+        }
+        !a.album.trim().is_empty()
+            && library::fold(&a.album) == library::fold(&b.album)
+            && library::fold(a.album_artist_or_artist()) == library::fold(b.album_artist_or_artist())
+    }
+
+    /// Vrai si le morceau de la file en position `pos` est écouté au milieu de son album (le
+    /// précédent ou le suivant de la file en est aussi) : ReplayGain prend alors le gain d'album.
+    fn album_run(&self, pos: usize) -> bool {
+        let Some(&idx) = self.queue.get(pos) else { return false };
+        let neighbor = |p: Option<usize>| p.and_then(|p| self.queue.get(p)).is_some_and(|&n| n != idx && self.same_album(idx, n));
+        neighbor(pos.checked_sub(1)) || neighbor(Some(pos + 1))
+    }
+
+    /// Vrai si le passage de `cur` à `next` se fera en fondu enchaîné.
+    fn will_crossfade(&self, cur: usize, next: usize) -> bool {
+        let fade = self.settings.crossfade_secs.clamp(1.0, 12.0);
+        self.settings.crossfade
+            && !self.settings.bit_perfect
+            && (self.settings.crossfade_albums || !self.same_album(cur, next))
+            && self.lib.tracks[cur].duration().as_secs_f32() >= fade * 3.0
+    }
+
+    /// Lecture sans blanc : quelques secondes avant la fin du morceau, le suivant est mis à sa
+    /// suite dans la sortie audio (sauf s'il doit venir en fondu enchaîné). La file d'attente
+    /// peut changer d'ici là : ce qui est mis à la suite est revérifié à chaque image.
+    fn keep_next_queued(&mut self) {
+        /// Avance avec laquelle le morceau suivant est ouvert.
+        const AHEAD: f32 = 15.0;
+        let Some(cur) = self.current() else { return };
+        let Some(p) = &self.player else { return };
+        if !p.is_playing() || p.casting().is_some() || p.is_fading() || p.is_live() {
+            return;
+        }
+        let remaining = self.lib.tracks[cur].duration().as_secs_f32() - p.position().as_secs_f32();
+        let next = self
+            .upcoming()
+            .filter(|_| !self.sleep_at_end() && remaining < AHEAD)
+            .filter(|&pos| !self.will_crossfade(cur, self.queue[pos]));
+        let want = next.map(|pos| (library::media(&self.lib.tracks[self.queue[pos]]), self.album_run(pos)));
+        let Some(p) = &mut self.player else { return };
+        match want {
+            Some((media, album)) => {
+                if p.queued() != Some(&media) {
+                    p.set_album_gain(album);
+                    p.queue_next(&media);
+                }
+            }
+            None => {
+                if p.queued().is_some() {
+                    p.clear_next();
+                }
+            }
+        }
+    }
+
+    /// Le morceau mis à la suite vient de démarrer, sans blanc : la file avance avec lui.
+    fn gapless_advanced(&mut self, media: crate::media::Media) {
+        let matches = |s: &Self, pos: usize| s.queue.get(pos).is_some_and(|&i| library::media(&s.lib.tracks[i]) == media);
+        let pos = match self.upcoming().filter(|&p| matches(self, p)) {
+            Some(p) => p,
+            // La file a changé au dernier moment : on retrouve le morceau.
+            None => match (0..self.queue.len()).find(|&p| matches(self, p)) {
+                Some(p) => p,
+                None => return,
+            },
+        };
+        self.queue_pos = Some(pos);
+        let idx = self.queue[pos];
+        self.track_started(idx);
+        self.seeked = true;
+    }
+
+    /// Sortie bit-perfect activée ou coupée.
+    pub(super) fn set_bit_perfect(&mut self, on: bool) {
+        if on == self.settings.bit_perfect {
+            return;
+        }
+        self.settings.bit_perfect = on;
+        self.audio.set_exact(on);
+        let live = self.radio.live.as_ref().filter(|l| !l.paused).map(|l| l.station.clone());
+        if let Some(p) = &mut self.player {
+            if let Err(e) = p.set_exact(on) {
+                self.toast(e);
+            }
+        }
+        self.apply_volume();
+        if let Some(station) = live {
+            let ctx = self.egui_ctx.clone();
+            self.play_station(&ctx, station);
+        }
+        self.seeked = true;
     }
 
     /// Visualiseur : analyse le son quand une page qui l'affiche est à l'écran, et redessine en
@@ -1195,6 +1361,8 @@ impl SterMusic {
     fn update_visualizer(&mut self, ctx: &egui::Context) {
         let visible = self.settings.visualizer
             && !self.mini
+            && !self.hidden
+            && !self.kwin.minimized
             && matches!(self.view, View::NowPlaying | View::Page(Page::Home));
         if !visible {
             return;
@@ -1399,6 +1567,10 @@ impl SterMusic {
     fn apply_volume(&mut self) {
         let v = if self.settings.muted {
             0.0
+        } else if self.settings.bit_perfect {
+            // Le son part tel quel : le volume se règle dans le système (seule la minuterie de
+            // sommeil fait son fondu).
+            self.sleep_gain
         } else {
             perceptual(self.settings.volume) * self.sleep_gain
         };
@@ -1949,16 +2121,7 @@ impl SterMusic {
                 let tracks = self.lib.tracks.clone();
                 self.set_library(tracks);
             }
-            Action::SetRating(i, n) => {
-                if let Some(t) = self.lib.tracks.get(i) {
-                    let path = t.path.clone();
-                    if n == 0 {
-                        self.settings.ratings.remove(&path);
-                    } else {
-                        self.settings.ratings.insert(path, n.min(5));
-                    }
-                }
-            }
+            Action::SetRating(i, n) => self.set_rating(i, n),
             Action::Next if self.radio.live.is_some() => self.step_station(ctx, 1),
             Action::Previous if self.radio.live.is_some() => self.step_station(ctx, -1),
             // Podcast : Suivant avance de 30 s, Précédent recule de 15 s.
@@ -2290,6 +2453,7 @@ impl SterMusic {
             composer: String::new(),
             schema: 0,
             cue: None,
+            rating: None,
             remote: None,
         });
         // Épisode de podcast : le titre de l'épisode, le podcast en artiste.
@@ -2309,6 +2473,7 @@ impl SterMusic {
                 composer: String::new(),
                 schema: 0,
                 cue: None,
+                rating: None,
                 remote: None,
             })
         });
@@ -2336,8 +2501,23 @@ impl SterMusic {
             (Some(t), None) => format!("{} — {} · SterMusic", t.title, t.artist_or_unknown()),
             (None, None) => "SterMusic".to_owned(),
         };
-        // Le script KWin garde au premier plan la fenêtre dont le titre porte cette marque.
-        let title = if self.mini {
+        if let Some(tray) = &mut self.tray {
+            let track = match (current.map(|i| &self.lib.tracks[i]), &radio_track) {
+                (_, Some(t)) => format!("{} — {}", t.title, t.artist),
+                (Some(t), None) => format!("{} — {}", t.title, t.artist_or_unknown()),
+                (None, None) => String::new(),
+            };
+            tray.set_state(crate::tray::State {
+                playing: state == mpris::State::Playing,
+                track,
+                hidden: self.hidden,
+            });
+        }
+        // Le script KWin garde au premier plan la fenêtre dont le titre porte cette marque, et
+        // cache celle qui porte l'autre.
+        let title = if self.hidden {
+            format!("{title}{}", crate::kwin::HIDDEN_MARK)
+        } else if self.mini {
             format!("{title}{}", crate::kwin::KEEP_ABOVE_MARK)
         } else {
             title
@@ -2366,6 +2546,8 @@ impl SterMusic {
 
 impl eframe::App for SterMusic {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let unseen = self.hidden || self.kwin.minimized;
+        self.pacer.wait(self.kwin.geometry.as_ref().map(|g| g.output.as_str()), unseen);
         self.poll_scan();
         self.poll_tag_editor(ctx);
         self.poll_lib_tools(ctx);
@@ -2379,10 +2561,13 @@ impl eframe::App for SterMusic {
         self.poll_podcasts(ctx);
         self.poll_tools(ctx);
         self.poll_cast(ctx);
+        self.poll_ratings();
         self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         self.send_pending_note(ctx);
         self.sleep_tick(ctx);
+        self.poll_tray(ctx);
         for request in self.ipc.poll() {
+            self.hidden = false;
             ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(ViewportCommand::Focus);
             match request {
@@ -2395,6 +2580,10 @@ impl eframe::App for SterMusic {
         self.kwin.poll();
         self.apply_pending_size(ctx);
         self.handle_remote(ctx);
+        // Lecture sans blanc : le morceau mis à la suite a démarré.
+        if let Some(media) = self.player.as_mut().and_then(Player::take_started) {
+            self.gapless_advanced(media);
+        }
         // Fin d'un morceau (une webradio coupée est relancée par `poll_radio`).
         if self.radio.live.is_none() && self.player.as_ref().is_some_and(Player::finished) {
             if self.podcasts.playing.is_some() {
@@ -2406,6 +2595,7 @@ impl eframe::App for SterMusic {
             }
         }
         self.maybe_crossfade();
+        self.keep_next_queued();
         if let Some(p) = &mut self.player {
             p.tick();
             if p.is_fading() {

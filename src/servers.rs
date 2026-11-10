@@ -265,6 +265,7 @@ fn subsonic_track(server: &Server, s: &serde_json::Value) -> Option<Track> {
         composer: text("displayComposer"),
         schema: TRACK_SCHEMA,
         cue: None,
+        rating: None,
         remote: Some(Remote {
             stream: format!(
                 "{}/rest/stream?id={}&{}",
@@ -365,6 +366,7 @@ fn jellyfin_track(server: &Server, i: &serde_json::Value) -> Option<Track> {
         composer: String::new(),
         schema: TRACK_SCHEMA,
         cue: None,
+        rating: None,
         remote: Some(Remote {
             stream: format!(
                 "{}/Audio/{id}/stream?static=true&api_key={}",

@@ -451,6 +451,7 @@ mod tests {
             composer: composer.into(),
             schema: 0,
             cue: None,
+            rating: None,
             remote: None,
         }
     }
