@@ -174,7 +174,8 @@ impl SterMusic {
         }
         tool.groups.clear();
         tool.confirm = false;
-        let tracks = self.lib.tracks.clone();
+        // Doublons à mettre à la corbeille : de vrais fichiers seulement.
+        let tracks: Vec<_> = self.lib.tracks.iter().filter(|t| t.is_plain_file()).cloned().collect();
         let (tx, rx) = channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -588,6 +589,8 @@ mod tests {
             mtime: 0,
             composer: String::new(),
             schema: 0,
+            cue: None,
+            remote: None,
         }
     }
 

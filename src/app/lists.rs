@@ -271,7 +271,53 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         let g = widgets::galley(ui, s, font, color, col.1);
         ui.painter().galley(pos2(col.0, y - g.size().y / 2.0), g, color);
     };
-    text(ui, &t.title, cols.title, FontId::proportional(14.0), title_color);
+    // Note : rien pour un morceau sans note, ses étoiles en petit sinon ; les cinq, cliquables,
+    // au survol de la ligne. Les listes trop étroites n'en montrent pas.
+    let rating = c.settings.ratings.get(&t.path).copied().unwrap_or(0);
+    let row_hovered = ui.rect_contains_pointer(row) && opts.queue_pos.is_none();
+    let stars_w = 5.0 * 13.0;
+    let mut title_col = cols.title;
+    if (rating > 0 || row_hovered) && title_col.1 > 220.0 {
+        title_col.1 -= stars_w + 10.0;
+        let x0 = title_col.0 + title_col.1 + 8.0;
+        let mut preview = None;
+        if row_hovered {
+            for k in 0..5u8 {
+                let r = Rect::from_center_size(pos2(x0 + 6.5 + 13.0 * k as f32, y), vec2(13.0, 18.0));
+                let s = ui.interact(r, ui.id().with(("star", i, idx, k)), Sense::click());
+                if s.hovered() {
+                    preview = Some(k + 1);
+                }
+                if s.clicked() {
+                    // Recliquer sur la note actuelle la retire.
+                    let n = if rating == k + 1 { 0 } else { k + 1 };
+                    c.actions.push(Action::SetRating(idx, n));
+                }
+            }
+        }
+        let shown = preview.unwrap_or(rating);
+        for k in 0..5u8 {
+            let filled = k < shown;
+            if !filled && !row_hovered {
+                continue;
+            }
+            let color = if preview.is_some() {
+                theme::accent_light()
+            } else if filled {
+                theme::alpha(theme::accent_light(), 0xC0)
+            } else {
+                theme::TEXT_3
+            };
+            icons::paint_centered(
+                ui.painter(),
+                if filled { Icon::StarFilled } else { Icon::Star },
+                pos2(x0 + 6.5 + 13.0 * k as f32, y),
+                11.0,
+                color,
+            );
+        }
+    }
+    text(ui, &t.title, title_col, FontId::proportional(14.0), title_color);
     text(
         ui,
         t.artist_or_unknown(),
@@ -398,6 +444,25 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         }
     }
     add_to_menu(ui, c, vec![idx]);
+    // Note, en une ligne d'étoiles.
+    let rating = c.settings.ratings.get(&t.path).copied().unwrap_or(0);
+    ui.horizontal(|ui| {
+        ui.add_space(6.0);
+        let (r, _) = ui.allocate_exact_size(vec2(18.0, 24.0), Sense::hover());
+        icons::paint_centered(ui.painter(), Icon::Star, r.center(), 15.0, theme::TEXT_2);
+        ui.label(egui::RichText::new(tr("Note")).color(theme::TEXT));
+        ui.add_space(8.0);
+        for k in 1..=5u8 {
+            let (r, s) = ui.allocate_exact_size(vec2(20.0, 24.0), Sense::click());
+            let on = k <= rating;
+            let col = if s.hovered() { theme::accent_light() } else if on { theme::alpha(theme::accent_light(), 0xC0) } else { theme::TEXT_3 };
+            icons::paint_centered(ui.painter(), if on { Icon::StarFilled } else { Icon::Star }, r.center(), 14.0, col);
+            if s.clicked() {
+                c.actions.push(Action::SetRating(idx, if rating == k { 0 } else { k }));
+                ui.close_menu();
+            }
+        }
+    });
     ui.separator();
     let fav = c.settings.favorites.contains(&t.path);
     if widgets::menu_item(
@@ -428,6 +493,10 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
     ui.separator();
     if widgets::menu_item(ui, Some(Icon::Tag), tr("Modifier les infos…")).clicked() {
         c.actions.push(Action::EditTags(vec![t.path.clone()]));
+    }
+    if widgets::menu_item(ui, Some(Icon::Refresh), tr("Convertir…")).clicked() {
+        let targets = c.selected.targets(idx);
+        c.actions.push(Action::Convert(targets));
     }
     if widgets::menu_item(ui, Some(Icon::Disc), tr("Modifier les infos de l'album…")).clicked() {
         c.actions
@@ -721,6 +790,9 @@ pub fn album_menu(ui: &mut Ui, c: &mut Ctx, a: usize) {
             paths(c, &tracks),
             c.lib.albums[a].title.clone(),
         ));
+    }
+    if widgets::menu_item(ui, Some(Icon::Refresh), tr("Convertir l'album…")).clicked() {
+        c.actions.push(Action::Convert(tracks.clone()));
     }
 }
 

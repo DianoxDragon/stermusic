@@ -303,3 +303,50 @@ mod tests {
         println!("pochette : {:?} octets", c.map(|c| c.len()));
     }
 }
+
+/// Un disque reconnu d'après sa table des matières : titre, artiste, année, titres des pistes.
+#[derive(Clone, Debug, Default)]
+pub struct Disc {
+    pub album: String,
+    pub artist: String,
+    pub year: Option<u32>,
+    pub titles: Vec<(String, String)>,
+}
+
+/// Cherche un CD d'après sa table des matières : `offsets` = début de chaque piste et
+/// `leadout` = fin du disque, en secteurs (1/75 s, 150 de prégap compris). Bloquant.
+pub fn disc_by_toc(offsets: &[u32], leadout: u32) -> Result<Option<Disc>, String> {
+    let toc: Vec<String> = [1, offsets.len() as u32, leadout]
+        .into_iter()
+        .chain(offsets.iter().copied())
+        .map(|n| n.to_string())
+        .collect();
+    let url = format!(
+        "https://musicbrainz.org/ws/2/discid/-?toc={}&inc=artist-credits+recordings&fmt=json",
+        toc.join("+")
+    );
+    let json = get_json(&url)?;
+    let Some(release) = json["releases"].as_array().and_then(|r| r.first()) else {
+        return Ok(None);
+    };
+    // Le support dont le nombre de pistes correspond.
+    let medium = release["media"]
+        .as_array()
+        .and_then(|m| {
+            m.iter()
+                .find(|m| m["tracks"].as_array().map(|t| t.len()) == Some(offsets.len()))
+                .or_else(|| m.first())
+        })
+        .cloned()
+        .unwrap_or_default();
+    let titles = medium["tracks"]
+        .as_array()
+        .map(|t| t.iter().map(|t| (text(t, "title"), credit(t))).collect())
+        .unwrap_or_default();
+    Ok(Some(Disc {
+        album: text(release, "title"),
+        artist: credit(release),
+        year: release["date"].as_str().and_then(|d| d.get(..4)).and_then(|y| y.parse().ok()),
+        titles,
+    }))
+}

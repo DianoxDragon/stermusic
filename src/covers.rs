@@ -213,7 +213,37 @@ fn worker(queue: Arc<Queue>, tx: Sender<Done>, ctx: egui::Context) {
 }
 
 fn load_source(track: &Path) -> Option<DynamicImage> {
-    embedded(track).or_else(|| folder_image(track))
+    // Morceau d'un serveur : sa pochette est en ligne ; morceau CUE : celle de son vrai fichier.
+    if let Some(url) = crate::library::cover_url(track) {
+        return remote_image(&url);
+    }
+    let file = crate::library::real_file(track)?;
+    embedded(&file).or_else(|| folder_image(&file))
+}
+
+/// Pochette téléchargée (gardée dans le cache : elle ne change pas d'un lancement à l'autre).
+fn remote_image(url: &str) -> Option<DynamicImage> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut h);
+    let file = crate::library::cache_dir()
+        .join("remote-covers")
+        .join(format!("{:016x}", h.finish()));
+    if let Ok(img) = image::open(&file) {
+        return Some(img);
+    }
+    let resp = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .get(url)
+        .call()
+        .ok()?;
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 8 << 20), &mut bytes).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?;
+    let _ = std::fs::create_dir_all(file.parent()?);
+    let _ = img.save_with_format(&file, image::ImageFormat::Png);
+    Some(img)
 }
 
 fn embedded(track: &Path) -> Option<DynamicImage> {
@@ -228,6 +258,13 @@ fn embedded(track: &Path) -> Option<DynamicImage> {
 
 /// Vrai si le morceau a une pochette à montrer : intégrée à ses tags, ou image de son dossier.
 pub fn has_cover(track: &Path) -> bool {
+    if crate::library::cover_url(track).is_some() {
+        return true;
+    }
+    let Some(file) = crate::library::real_file(track) else {
+        return false;
+    };
+    let track = file.as_path();
     let embedded = Probe::open(track)
         .ok()
         .and_then(|p| p.read().ok())

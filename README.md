@@ -36,6 +36,23 @@ vraie intégration au bureau Linux.
   tourner et zoomer, un clic sur une ville liste ses stations
 - Titre diffusé en direct (métadonnées ICY), reconnexion automatique
 
+**Au-delà des fichiers**
+- **Formats** : en plus de Symphonia, ffmpeg lit l'Opus, le WMA, l'APE, le WavPack, le DSD, le
+  Musepack… ; les **feuilles CUE** découpent un album en un seul fichier en vrais morceaux
+- **Serveurs de musique** : Navidrome / Subsonic et Jellyfin, mélangés à la bibliothèque, lus
+  en flux
+- **Podcasts** : recherche (annuaire d'Apple) ou flux RSS, reprise là où on s'était arrêté,
+  téléchargement pour l'écoute hors ligne
+- **Diffusion** vers un Chromecast ou un appareil DLNA / UPnP (TV, enceinte, ampli) ; ce que
+  l'appareil ne lit pas est converti à la volée
+- **Notes** de 1 à 5 étoiles (discrètes : au survol), Ctrl+1 à Ctrl+5 pour le morceau en cours
+
+**Outils** (page à part dans la barre latérale)
+- Éditeur de tags, pochettes manquantes, ReplayGain, doublons
+- **Convertir** (MP3, Opus, AAC, Vorbis, FLAC), **extraire un CD** (titres trouvés sur
+  MusicBrainz), **synchroniser** des playlists vers une clé, une carte ou un téléphone (MTP,
+  via KDE)
+
 **Bureau Linux**
 - **MPRIS** : widget lecteur de KDE Plasma / GNOME, touches multimédia, écran de verrouillage
 - **Style Breeze (Kubuntu)**, par défaut sous KDE : couleurs et accent de KDE (`kdeglobals`),

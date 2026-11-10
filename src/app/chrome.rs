@@ -348,6 +348,7 @@ impl SterMusic {
                     (Page::Queue, Icon::ListMusic, tr("File d'attente")),
                     (Page::Playlists, Icon::Library, tr("Playlists")),
                     (Page::Radio, Icon::Radio, tr("Webradios")),
+                    (Page::Podcasts, Icon::Podcast, tr("Podcasts")),
                     (Page::Stats, Icon::Chart, tr("Statistiques")),
                 ];
                 let active_page = match &self.view {
@@ -355,6 +356,7 @@ impl SterMusic {
                     View::Album(_) | View::Artist(_) | View::Browse(..) => Some(Page::Library),
                     View::Playlist(_) => Some(Page::Playlists),
                     View::Recap(_) => Some(Page::Stats),
+                    View::Podcast(_) => Some(Page::Podcasts),
                     _ => None,
                 };
                 let mut pill_target = None;
@@ -442,17 +444,18 @@ impl SterMusic {
                     });
                 }
 
-                // Éditeur de tags, juste au-dessus des paramètres (avec le nombre de fichiers à enregistrer).
+                // Outils (éditeur de tags compris), juste au-dessus des paramètres, avec le nombre
+                // de fichiers dont les tags attendent d'être enregistrés.
                 let r = Rect::from_min_size(pos2(left, rect.bottom() - 90.0), vec2(inner_w, 40.0));
-                let selected = active_page == Some(Page::Tags);
+                let selected = matches!(active_page, Some(Page::Tags | Page::Tools));
                 let pending = self.tag_editor.dirty_count();
                 let badge = (pending > 0).then(|| pending.to_string());
-                let busy = self.tag_editor.busy() || self.lib_tools.busy();
+                let busy = self.tag_editor.busy() || self.lib_tools.busy() || self.tools.busy();
                 let nav = nav_item(
                     ui,
                     r,
-                    Icon::Tag,
-                    tr("Éditeur de tags"),
+                    Icon::Wrench,
+                    tr("Outils"),
                     selected,
                     expanded,
                     badge.as_deref().filter(|_| !busy),
@@ -478,7 +481,7 @@ impl SterMusic {
                 };
                 let nav = if busy { nav.on_hover_text(tip) } else { nav };
                 if nav.clicked() {
-                    self.actions.push(Action::Go(View::Page(Page::Tags)));
+                    self.actions.push(Action::Go(View::Page(Page::Tools)));
                 }
                 if selected {
                     pill_target = Some(r.center().y);

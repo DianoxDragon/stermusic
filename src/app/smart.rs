@@ -32,9 +32,11 @@ pub enum Field {
     /// Durée, en minutes.
     Duration,
     Favorite,
+    /// Note, de 0 (aucune) à 5 étoiles.
+    Rating,
 }
 
-pub const FIELDS: [Field; 11] = [
+pub const FIELDS: [Field; 12] = [
     Field::Title,
     Field::Artist,
     Field::Album,
@@ -46,6 +48,7 @@ pub const FIELDS: [Field; 11] = [
     Field::Added,
     Field::Duration,
     Field::Favorite,
+    Field::Rating,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -69,6 +72,7 @@ impl Field {
             Field::Added => n_("Ajouté il y a (jours)"),
             Field::Duration => n_("Durée (minutes)"),
             Field::Favorite => n_("Favori"),
+            Field::Rating => n_("Note (étoiles)"),
         })
     }
 
@@ -299,6 +303,7 @@ impl SmartPlaylist {
 pub struct Facts<'a> {
     pub plays: &'a HashMap<PathBuf, PlayStat>,
     pub favorites: &'a HashSet<PathBuf>,
+    pub ratings: &'a HashMap<PathBuf, u8>,
     pub now: u64,
 }
 
@@ -348,6 +353,7 @@ fn matches(rule: &Rule, lib: &Library, i: usize, f: &Facts) -> bool {
                 Field::Plays => stat.count as f64,
                 Field::LastPlayed => days(stat.last),
                 Field::Added => days(t.mtime),
+                Field::Rating => f.ratings.get(&t.path).copied().unwrap_or(0) as f64,
                 _ => t.duration_ms as f64 / 60_000.0,
             };
             let Some(v) = number(&rule.value) else {
@@ -426,6 +432,7 @@ impl SterMusic {
         Facts {
             plays: &self.settings.plays,
             favorites: &self.settings.favorites,
+            ratings: &self.settings.ratings,
             now: now_secs(),
         }
     }
@@ -661,6 +668,8 @@ mod tests {
             mtime,
             composer: String::new(),
             schema: 0,
+            cue: None,
+            remote: None,
         }
     }
 
@@ -690,9 +699,11 @@ mod tests {
             },
         );
         let favorites: HashSet<PathBuf> = [PathBuf::from("/a"), PathBuf::from("/c")].into();
+        let ratings = HashMap::new();
         let f = Facts {
             plays: &plays,
             favorites: &favorites,
+            ratings: &ratings,
             now,
         };
         let titles = |p: &SmartPlaylist| -> Vec<String> {

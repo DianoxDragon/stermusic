@@ -21,6 +21,8 @@ pub const SLEEP_CHOICES: [u32; 6] = [15, 30, 45, 60, 90, 120];
 /// Où en est la connexion aux services de scrobbling.
 #[derive(Default)]
 pub struct OnlineState {
+    /// Formulaire d'ajout d'un serveur de musique.
+    pub server_form: super::servers_view::ServerForm,
     lb_check: Option<Receiver<Result<String, String>>>,
     lastfm: LastfmStep,
     error: Option<String>,
@@ -185,6 +187,7 @@ impl SterMusic {
             }
         }
         if self.radio.live.is_none()
+            && self.podcasts.playing.is_none()
             && widgets::menu_item(ui, Some(Icon::Music), tr("À la fin du morceau")).clicked()
         {
             self.actions.push(Action::SetSleep(Some(SleepKind::EndOfTrack)));

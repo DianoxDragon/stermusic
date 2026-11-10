@@ -1,6 +1,7 @@
 //! SterMusic : état de l'application, file d'attente, actions.
 
 mod browse;
+mod cast_view;
 mod chrome;
 mod cover_tool;
 mod dup_tool;
@@ -10,14 +11,17 @@ mod lists;
 mod lyrics_view;
 mod mb_import;
 mod nowbar;
+mod podcasts_view;
 mod radio_globe;
 mod radio_view;
+mod servers_view;
 mod rg_tool;
 mod settings_extra;
 mod smart;
 mod stats;
 mod tag_editor;
 mod tag_tools;
+mod tools;
 mod views;
 
 use std::collections::{HashMap, HashSet};
@@ -61,6 +65,9 @@ pub enum Page {
     Stats,
     /// Webradios.
     Radio,
+    Podcasts,
+    /// Outils (éditeur de tags, entretien, conversion, CD, synchronisation).
+    Tools,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -115,6 +122,8 @@ pub enum View {
     Recap(i32),
     /// Un genre, une année ou un compositeur.
     Browse(browse::BrowseKind, String),
+    /// Un podcast (par l'adresse de son flux).
+    Podcast(String),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -228,6 +237,13 @@ pub struct Settings {
     pub playlists: Vec<Playlist>,
     pub favorites: HashSet<PathBuf>,
     pub plays: HashMap<PathBuf, PlayStat>,
+    /// Notes des morceaux, de 1 à 5 étoiles.
+    pub ratings: HashMap<PathBuf, u8>,
+    /// Serveurs de musique (Navidrome, Jellyfin…).
+    pub servers: Vec<crate::servers::Server>,
+    /// Podcasts suivis, et où en est l'écoute de chaque épisode.
+    pub podcasts: Vec<crate::podcasts::Podcast>,
+    pub episode_progress: HashMap<String, crate::podcasts::Progress>,
 }
 
 impl Default for Settings {
@@ -286,6 +302,10 @@ impl Default for Settings {
             playlists: Vec::new(),
             favorites: HashSet::new(),
             plays: HashMap::new(),
+            ratings: HashMap::new(),
+            servers: Vec::new(),
+            podcasts: Vec::new(),
+            episode_progress: HashMap::new(),
         }
     }
 }
@@ -363,6 +383,19 @@ pub enum Action {
     PlayStation(crate::radio::Station),
     /// Arrête la lecture (morceau ou webradio) : plus rien en cours, la file d'attente reste.
     Stop,
+    /// Note d'un morceau (0 : pas de note).
+    SetRating(usize, u8),
+    /// Redemande au serveur la liste de ses morceaux.
+    SyncServer(String),
+    /// Retire un serveur de la bibliothèque.
+    RemoveServer(String),
+    /// Ouvre un outil (conversion, CD, synchronisation).
+    OpenTool(tools::Tool),
+    /// Convertit ces morceaux.
+    Convert(Vec<usize>),
+    /// Diffuse sur l'appareil n° k de la liste, ou revient sur l'ordinateur.
+    StartCast(usize),
+    StopCast,
     /// Ajoute une station à « Mes stations », ou l'en retire.
     ToggleStation(crate::radio::Station),
     /// Minuterie de sommeil (ou `None` pour l'arrêter).
@@ -588,7 +621,17 @@ pub struct SterMusic {
     egui_ctx: egui::Context,
     /// Place dans la file du morceau arrêté (bouton Arrêter) : « Lecture » y reprend.
     stopped_at: Option<usize>,
+    /// Morceaux des serveurs de musique (par serveur), et les actualisations en cours.
+    server_tracks: HashMap<String, Vec<library::Track>>,
+    server_rx: Vec<(String, Receiver<ServerFetch>)>,
+    /// Podcasts : épisode en cours, flux, recherche, téléchargements.
+    podcasts: podcasts_view::PodcastState,
+    tools: tools::ToolsState,
+    cast: cast_view::CastState,
 }
+
+/// Morceaux d'un serveur de musique, ou pourquoi on n'a pas pu les avoir.
+type ServerFetch = Result<Vec<library::Track>, String>;
 
 /// Morceaux d'une playlist intelligente déjà calculés : empreinte des règles, heure du calcul.
 type SmartCached = (u64, f64, Vec<usize>);
@@ -790,6 +833,11 @@ impl SterMusic {
             online: Default::default(),
             egui_ctx: cc.egui_ctx.clone(),
             stopped_at: None,
+            server_tracks: HashMap::new(),
+            server_rx: Vec::new(),
+            podcasts: Default::default(),
+            tools: Default::default(),
+            cast: Default::default(),
             settings,
         };
         if !app.settings.smart_seeded {
@@ -803,6 +851,15 @@ impl SterMusic {
         }
         if app.settings.auto_update {
             app.watcher = crate::watch::Watcher::start(&app.settings.music_dirs, &cc.egui_ctx);
+        }
+        // Morceaux des serveurs : ceux de la dernière actualisation, tout de suite.
+        for s in app.settings.servers.iter().filter(|s| s.enabled) {
+            let tracks = crate::servers::load_cache(&s.id);
+            app.server_tracks.insert(s.id.clone(), tracks);
+        }
+        if !app.server_tracks.is_empty() {
+            let tracks = app.lib.tracks.clone();
+            app.set_library(tracks);
         }
         app.restore_queue();
         app.start_scan();
@@ -847,7 +904,14 @@ impl SterMusic {
         self.scan_rx = None;
 
         // Le scan ne rend pas les morceaux dans l'ordre de la bibliothèque : on compare par chemin.
-        let changed = tracks.len() != self.lib.tracks.len()
+        // Les morceaux des serveurs et ceux ouverts hors bibliothèque ne comptent pas.
+        let local = self
+            .lib
+            .tracks
+            .iter()
+            .filter(|t| t.remote.is_none() && !self.external.iter().any(|e| e.path == t.path))
+            .count();
+        let changed = tracks.len() != local
             || tracks.iter().any(|t| {
                 self.lib
                     .find(&t.path)
@@ -874,15 +938,27 @@ impl SterMusic {
         self.folder_index = None;
         self.browse_index = None;
         self.smart_cache.borrow_mut().clear();
-        // Les morceaux ouverts hors bibliothèque restent jouables après un rescan.
-        if !self.external.is_empty() {
-            let present: HashSet<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
-            tracks.extend(
-                self.external
-                    .iter()
-                    .filter(|t| !present.contains(&t.path))
-                    .cloned(),
-            );
+        // Les morceaux ouverts hors bibliothèque restent jouables après un rescan ; ceux des
+        // serveurs actifs s'y ajoutent (ceux d'un serveur coupé ou retiré s'en vont).
+        let servers: HashSet<&str> = self
+            .settings
+            .servers
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id.as_str())
+            .collect();
+        tracks.retain(|t| t.remote.as_ref().is_none_or(|r| servers.contains(r.server.as_str())));
+        let mut present: HashSet<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
+        let extra = self.external.iter().chain(
+            self.server_tracks
+                .iter()
+                .filter(|(id, _)| servers.contains(id.as_str()))
+                .flat_map(|(_, v)| v.iter()),
+        );
+        for t in extra {
+            if present.insert(t.path.clone()) {
+                tracks.push(t.clone());
+            }
         }
         let paths = |lib: &Library, v: &[usize]| -> Vec<PathBuf> {
             v.iter().map(|&i| lib.tracks[i].path.clone()).collect()
@@ -974,7 +1050,7 @@ impl SterMusic {
             .and_then(|p| self.lib.find(&p))
             .and_then(|c| self.queue.iter().position(|&i| i == c));
         if let (Some(idx), Some(player)) = (self.current(), &mut self.player) {
-            if player.load(&self.lib.tracks[idx].path, true).is_ok() {
+            if player.load(&library::media(&self.lib.tracks[idx]), true).is_ok() {
                 let _ = player.seek(Duration::from_secs_f32(self.settings.position.max(0.0)));
             }
         }
@@ -1029,7 +1105,7 @@ impl SterMusic {
 
     /// Morceau en cours (aucun pendant l'écoute d'une webradio).
     pub fn current(&self) -> Option<usize> {
-        if self.radio.live.is_some() {
+        if self.radio.live.is_some() || self.podcasts.playing.is_some() {
             return None;
         }
         self.queue_pos.and_then(|p| self.queue.get(p).copied())
@@ -1041,16 +1117,20 @@ impl SterMusic {
 
     fn play_current(&mut self) {
         self.leave_radio();
+        self.leave_episode();
         let Some(idx) = self.current() else { return };
-        let Some(player) = &mut self.player else {
+        if self.player.is_none() {
             return;
-        };
+        }
+        let meta = self.cast_meta(idx);
+        let Some(player) = &mut self.player else { return };
+        player.set_meta(meta);
         let track = &self.lib.tracks[idx];
         let result = if self.crossfading {
             let duration = Duration::from_secs_f32(self.settings.crossfade_secs.clamp(1.0, 12.0));
-            player.crossfade_to(&track.path, duration)
+            player.crossfade_to(&library::media(track), duration)
         } else {
-            player.load(&track.path, false)
+            player.load(&library::media(track), false)
         };
         match result {
             // L'écoute n'est comptée qu'au bout de 30 secondes (voir `track_listen`).
@@ -1204,6 +1284,13 @@ impl SterMusic {
             return;
         }
         let has_track = self.player.as_ref().is_some_and(Player::has_track);
+        // Épisode arrêté (fin de minuterie, fin d'écoute) : il repart là où il en était.
+        if !has_track {
+            if let Some(p) = self.podcasts.playing.take() {
+                self.play_episode(p.podcast, p.episode);
+                return;
+            }
+        }
         if has_track {
             let mut error = None;
             if let Some(p) = &mut self.player {
@@ -1234,6 +1321,7 @@ impl SterMusic {
     /// lecture, mais la file d'attente reste telle quelle.
     fn stop_playback(&mut self) {
         self.leave_radio();
+        self.leave_episode();
         if let Some(p) = &mut self.player {
             p.stop();
         }
@@ -1849,8 +1937,33 @@ impl SterMusic {
             Action::Rescan => self.start_scan(),
             Action::TogglePlay => self.toggle_play(),
             Action::Stop => self.stop_playback(),
+            Action::SyncServer(id) => self.sync_server(ctx, &id),
+            Action::OpenTool(tool) => self.open_tool(ctx, tool),
+            Action::StartCast(k) => self.start_cast(ctx, k),
+            Action::StopCast => self.stop_cast(ctx),
+            Action::Convert(tracks) => self.convert_tracks(tracks),
+            Action::RemoveServer(id) => {
+                self.settings.servers.retain(|s| s.id != id);
+                self.server_tracks.remove(&id);
+                crate::servers::forget(&id);
+                let tracks = self.lib.tracks.clone();
+                self.set_library(tracks);
+            }
+            Action::SetRating(i, n) => {
+                if let Some(t) = self.lib.tracks.get(i) {
+                    let path = t.path.clone();
+                    if n == 0 {
+                        self.settings.ratings.remove(&path);
+                    } else {
+                        self.settings.ratings.insert(path, n.min(5));
+                    }
+                }
+            }
             Action::Next if self.radio.live.is_some() => self.step_station(ctx, 1),
             Action::Previous if self.radio.live.is_some() => self.step_station(ctx, -1),
+            // Podcast : Suivant avance de 30 s, Précédent recule de 15 s.
+            Action::Next if self.podcasts.playing.is_some() => self.apply(ctx, Action::SeekBy(30.0)),
+            Action::Previous if self.podcasts.playing.is_some() => self.apply(ctx, Action::SeekBy(-15.0)),
             Action::Next => self.next(false),
             Action::Previous => self.previous(),
             Action::PlayStation(station) => self.play_station(ctx, station),
@@ -2107,6 +2220,7 @@ impl SterMusic {
             || self.tag_editor.modal_open()
             || self.lib_tools.open.is_some()
             || self.radio.add.is_some()
+            || self.tools.open.is_some()
         {
             return;
         }
@@ -2121,6 +2235,21 @@ impl SterMusic {
         for (m, k, action) in keys {
             if ctx.input_mut(|i| i.consume_key(m, k)) {
                 self.actions.push(action);
+            }
+        }
+        // Ctrl+1 à Ctrl+5 : noter le morceau en cours ; Ctrl+0 : retirer sa note.
+        if let Some(cur) = self.current() {
+            let digits = [Key::Num0, Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5];
+            for (n, key) in digits.into_iter().enumerate() {
+                if ctx.input_mut(|i| i.consume_key(cmd, key)) {
+                    self.actions.push(Action::SetRating(cur, n as u8));
+                    let msg = if n == 0 {
+                        tr("Note retirée").to_owned()
+                    } else {
+                        trf!("Noté {0}", "★".repeat(n))
+                    };
+                    self.toast(msg);
+                }
             }
         }
         let vol = self.settings.volume;
@@ -2160,6 +2289,28 @@ impl SterMusic {
             mtime: 0,
             composer: String::new(),
             schema: 0,
+            cue: None,
+            remote: None,
+        });
+        // Épisode de podcast : le titre de l'épisode, le podcast en artiste.
+        let radio_track = radio_track.or_else(|| {
+            self.podcasts.playing.as_ref().map(|e| library::Track {
+                path: PathBuf::from(format!("podcast:{}", e.episode.key())),
+                title: e.episode.title.clone(),
+                artist: e.podcast.title.clone(),
+                album: tr("Podcast").into(),
+                album_artist: String::new(),
+                genre: String::new(),
+                year: None,
+                track_no: None,
+                disc_no: None,
+                duration_ms: e.episode.duration_ms,
+                mtime: 0,
+                composer: String::new(),
+                schema: 0,
+                cue: None,
+                remote: None,
+            })
         });
         match &radio_track {
             Some(t) => self.mpris.set_track(Some(t), None),
@@ -2224,6 +2375,10 @@ impl eframe::App for SterMusic {
         self.poll_lyrics(ctx);
         self.poll_radio(ctx);
         self.poll_online(ctx);
+        self.poll_servers(ctx);
+        self.poll_podcasts(ctx);
+        self.poll_tools(ctx);
+        self.poll_cast(ctx);
         self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         self.send_pending_note(ctx);
         self.sleep_tick(ctx);
@@ -2242,7 +2397,9 @@ impl eframe::App for SterMusic {
         self.handle_remote(ctx);
         // Fin d'un morceau (une webradio coupée est relancée par `poll_radio`).
         if self.radio.live.is_none() && self.player.as_ref().is_some_and(Player::finished) {
-            if self.sleep.as_ref().is_some_and(|s| s.kind == SleepKind::EndOfTrack) {
+            if self.podcasts.playing.is_some() {
+                self.episode_finished();
+            } else if self.sleep.as_ref().is_some_and(|s| s.kind == SleepKind::EndOfTrack) {
                 self.sleep_done();
             } else {
                 self.next(true);
@@ -2292,6 +2449,7 @@ impl eframe::App for SterMusic {
                 .show(ctx, |ui| self.content(ui));
             self.dialogs(ctx);
             self.radio_dialog(ctx);
+            self.tool_dialogs(ctx);
             self.lib_tool_dialogs(ctx);
             self.smart_dialog(ctx);
             self.toast_ui(ctx);
@@ -2316,6 +2474,7 @@ impl eframe::App for SterMusic {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_episode_progress();
         self.finish_listen();
         self.leave_radio();
         self.kwin.stop();

@@ -17,6 +17,8 @@ struct NowState {
     track: Option<usize>,
     /// Webradio en cours (ou en connexion) : la station, le titre diffusé, l'état.
     radio: Option<RadioNow>,
+    /// Épisode de podcast en cours (sa progression s'affiche comme celle d'un morceau).
+    episode: Option<RadioNow>,
     pos: f32,
     total: f32,
     playing: bool,
@@ -25,6 +27,8 @@ struct NowState {
 
 #[derive(Clone)]
 struct RadioNow {
+    /// Où mène un clic sur la zone (page Webradios, page du podcast).
+    target: View,
     station: crate::radio::Station,
     title: String,
     status: String,
@@ -34,6 +38,7 @@ impl SterMusic {
     fn radio_now(&self) -> Option<RadioNow> {
         if let Some(s) = self.radio.connecting_to() {
             return Some(RadioNow {
+                target: View::Page(super::Page::Radio),
                 station: s.clone(),
                 title: s.name.clone(),
                 status: tr("Connexion…").into(),
@@ -48,12 +53,14 @@ impl SterMusic {
         };
         Some(if title.is_empty() {
             RadioNow {
+                target: View::Page(super::Page::Radio),
                 station: live.station.clone(),
                 title: live.station.name.clone(),
                 status,
             }
         } else {
             RadioNow {
+                target: View::Page(super::Page::Radio),
                 station: live.station.clone(),
                 title,
                 status: format!("{} · {}", live.station.name, status),
@@ -67,11 +74,28 @@ impl SterMusic {
             Some(p) => (p.position().as_secs_f32(), p.is_playing(), p.has_track()),
             None => (0.0, false, false),
         };
-        let total = track
-            .map(|i| self.lib.tracks[i].duration().as_secs_f32())
-            .unwrap_or(0.0);
+        let episode = self.podcasts.playing.as_ref().map(|e| RadioNow {
+            target: View::Podcast(e.podcast.feed.clone()),
+            station: crate::radio::Station {
+                name: e.podcast.title.clone(),
+                favicon: if e.episode.image.is_empty() {
+                    e.podcast.image.clone()
+                } else {
+                    e.episode.image.clone()
+                },
+                ..Default::default()
+            },
+            title: e.episode.title.clone(),
+            status: e.podcast.title.clone(),
+        });
+        let total = match (&self.podcasts.playing, track) {
+            (Some(e), _) => e.episode.duration_ms as f32 / 1000.0,
+            (None, Some(i)) => self.lib.tracks[i].duration().as_secs_f32(),
+            _ => 0.0,
+        };
         NowState {
             track,
+            episode,
             radio: self.radio_now(),
             pos: pos.min(total.max(pos)),
             total,
@@ -180,10 +204,10 @@ impl SterMusic {
                 // Gauche : pochette, titre, artiste.
                 let info_w = (row.width() * 0.30).min(360.0);
                 let cover_rect = Rect::from_center_size(pos2(row.left() + 26.0, cy), vec2(52.0, 52.0));
-                if let Some(radio) = &st.radio {
-                    self.radio_info(ui, cover_rect, info_w, radio);
+                if let Some(info) = st.radio.as_ref().or(st.episode.as_ref()) {
+                    self.radio_info(ui, cover_rect, info_w, info);
                 }
-                match st.track.filter(|_| st.radio.is_none()) {
+                match st.track.filter(|_| st.radio.is_none() && st.episode.is_none()) {
                     Some(i) => {
                         let t = self.lib.tracks[i].clone();
                         let tex = self.covers.thumb(&t.path).cloned();
@@ -282,7 +306,7 @@ impl SterMusic {
                                 .push(Action::Go(View::Artist(self.lib.album_artist[album])));
                         }
                     }
-                    None if st.radio.is_some() => {}
+                    None if st.radio.is_some() || st.episode.is_some() => {}
                     None => {
                         widgets::cover(ui.painter(), cover_rect, None, 6, "");
                         ui.painter().text(
@@ -297,7 +321,7 @@ impl SterMusic {
 
                 // Centre : commandes.
                 let can_play = self.player.is_some()
-                    && (!self.lib.is_empty() || st.track.is_some() || st.radio.is_some());
+                    && (!self.lib.is_empty() || st.track.is_some() || st.radio.is_some() || st.episode.is_some());
                 let controls =
                     Rect::from_center_size(pos2(row.center().x, cy), vec2(6.0 * 44.0 + 12.0, 52.0));
                 ui.scope_builder(
@@ -349,6 +373,7 @@ impl SterMusic {
                         );
                         ui.add_space(2.0);
                         self.sleep_button(ui);
+                        self.cast_button(ui);
                         ui.add_space(6.0);
                         self.volume(ui, vol_w);
                         ui.add_space(6.0);
@@ -531,10 +556,10 @@ impl SterMusic {
         }
         if resp
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(tr("Webradios"))
+            .on_hover_text(if matches!(radio.target, View::Podcast(_)) { tr("Podcasts") } else { tr("Webradios") })
             .clicked()
         {
-            self.actions.push(Action::Go(View::Page(super::Page::Radio)));
+            self.actions.push(Action::Go(radio.target.clone()));
         }
         self.paint_logo(ui, cover_rect, &radio.station);
         let appear = anim::value_from(
@@ -589,7 +614,7 @@ impl SterMusic {
                 let x = cover.right() + 12.0;
                 let right = rect.right().min(rect.left() + 560.0) - pad;
                 let text_w = right - x - 34.0;
-                let (title, artist) = match (st.track, &st.radio) {
+                let (title, artist) = match (st.track, st.radio.as_ref().or(st.episode.as_ref())) {
                     (_, Some(r)) => (r.title.clone(), r.status.clone()),
                     (Some(i), None) => (
                         self.lib.tracks[i].title.clone(),

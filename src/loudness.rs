@@ -9,6 +9,7 @@ use std::fs::File;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use rodio::{Decoder, Source};
 
@@ -174,12 +175,21 @@ pub fn gain(loudness: f64) -> f32 {
 
 /// Décode le fichier en entier et mesure son volume. `stop` interrompt le décodage.
 pub fn analyze(path: &Path, stop: &AtomicBool) -> Result<Analysis, String> {
+    // Formats que Symphonia ne lit pas (Opus, WMA, APE…) : décodés par ffmpeg.
+    if crate::ffdecode::wants(path) {
+        let source = crate::ffdecode::FfmpegSource::open(&path.to_string_lossy(), Duration::ZERO, None)?;
+        return measure(source, stop);
+    }
     let file = File::open(path).map_err(|e| crate::trf!("ouverture impossible : {e}", e))?;
     // Comme pour la lecture : un décodeur qui panique sur un fichier exotique ne doit pas
     // emporter l'application.
     let source = catch_unwind(AssertUnwindSafe(|| Decoder::try_from(file)))
         .map_err(|_| crate::i18n::tr("format non pris en charge").to_owned())?
         .map_err(|e| crate::trf!("format non lisible : {e}", e))?;
+    measure(source, stop)
+}
+
+fn measure(source: impl Source + Send, stop: &AtomicBool) -> Result<Analysis, String> {
     let mut meter = Meter::new(source.sample_rate(), source.channels() as usize);
     let measured = catch_unwind(AssertUnwindSafe(move || {
         for (i, sample) in source.enumerate() {

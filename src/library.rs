@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "wav", "m4a", "aac", "opus", "aiff", "aif",
+    "mp3", "flac", "ogg", "oga", "wav", "m4a", "aac", "opus", "aiff", "aif", "wma", "ape", "wv", "dsf",
+    "dff", "mpc", "tta", "mka", "alac",
 ];
 
 pub const UNKNOWN_ARTIST: &str = crate::i18n::n_("Artiste inconnu");
@@ -48,6 +49,76 @@ pub struct Track {
     /// (sans le compositeur, par exemple) est relu.
     #[serde(default)]
     pub schema: u8,
+    /// Morceau d'un fichier découpé par une feuille CUE : le vrai fichier, son début et sa fin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cue: Option<CueSpan>,
+    /// Morceau d'un serveur de musique : où le lire, sa pochette.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote: Option<Remote>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CueSpan {
+    pub file: PathBuf,
+    pub start_ms: u64,
+    /// Fin du morceau (`None` : jusqu'à la fin du fichier).
+    pub end_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Remote {
+    /// Adresse du son.
+    pub stream: String,
+    /// Adresse de la pochette (vide s'il n'y en a pas).
+    pub cover: String,
+    /// Serveur d'où vient le morceau.
+    pub server: String,
+}
+
+/// Ce qu'il faut ouvrir pour jouer un morceau.
+pub fn media(t: &Track) -> crate::media::Media {
+    if let Some(r) = &t.remote {
+        return crate::media::Media::url(&r.stream, Some(t.duration()).filter(|d| !d.is_zero()));
+    }
+    if let Some(c) = &t.cue {
+        let mut m = crate::media::Media::file(&c.file);
+        m.start = Duration::from_millis(c.start_ms);
+        m.end = c.end_ms.map(Duration::from_millis);
+        m.duration = Some(t.duration());
+        return m;
+    }
+    let mut m = crate::media::Media::file(&t.path);
+    m.duration = Some(t.duration()).filter(|d| !d.is_zero());
+    m
+}
+
+/// Pour un morceau d'un fichier CUE ou d'un serveur, son vrai fichier et l'adresse de sa
+/// pochette (les pochettes et les paroles ne connaissent que le chemin du morceau).
+#[derive(Clone, Debug, Default)]
+pub struct Resolved {
+    pub file: Option<PathBuf>,
+    pub cover_url: Option<String>,
+}
+
+static RESOLVE: std::sync::RwLock<Option<HashMap<PathBuf, Resolved>>> = std::sync::RwLock::new(None);
+
+/// Le vrai fichier d'un morceau (celui d'un morceau CUE, rien pour un morceau distant).
+pub fn real_file(path: &Path) -> Option<PathBuf> {
+    match RESOLVE.read().ok().and_then(|m| m.as_ref().and_then(|m| m.get(path).cloned())) {
+        Some(r) => r.file,
+        None => Some(path.to_path_buf()),
+    }
+}
+
+/// Adresse de la pochette d'un morceau distant.
+pub fn cover_url(path: &Path) -> Option<String> {
+    RESOLVE
+        .read()
+        .ok()?
+        .as_ref()?
+        .get(path)
+        .and_then(|r| r.cover_url.clone())
+        .filter(|u| !u.is_empty())
 }
 
 /// Voir `Track::schema`.
@@ -59,6 +130,12 @@ pub fn split_genres(genre: &str) -> impl Iterator<Item = &str> {
 }
 
 impl Track {
+    /// Vrai pour un vrai fichier de musique sur le disque (ni morceau CUE, ni morceau distant) :
+    /// ses tags peuvent être modifiés.
+    pub fn is_plain_file(&self) -> bool {
+        self.cue.is_none() && self.remote.is_none()
+    }
+
     pub fn duration(&self) -> Duration {
         Duration::from_millis(self.duration_ms)
     }
@@ -156,6 +233,22 @@ fn words(query: &str) -> Vec<String> {
 
 impl Library {
     pub fn new(mut tracks: Vec<Track>) -> Self {
+        let special: HashMap<PathBuf, Resolved> = tracks
+            .iter()
+            .filter(|t| !t.is_plain_file())
+            .map(|t| {
+                (
+                    t.path.clone(),
+                    Resolved {
+                        file: t.cue.as_ref().map(|c| c.file.clone()),
+                        cover_url: t.remote.as_ref().map(|r| r.cover.clone()),
+                    },
+                )
+            })
+            .collect();
+        if let Ok(mut r) = RESOLVE.write() {
+            *r = Some(special);
+        }
         tracks.sort_by(|a, b| {
             lower(a.album_artist_or_artist())
                 .cmp(&lower(b.album_artist_or_artist()))
@@ -395,6 +488,8 @@ pub fn read_track(path: &Path) -> Track {
         mtime: mtime(path),
         composer: String::new(),
         schema: TRACK_SCHEMA,
+        cue: None,
+        remote: None,
     };
     if let Ok(tagged) = Probe::open(path).and_then(|p| p.read()) {
         track.duration_ms = tagged.properties().duration().as_millis() as u64;
@@ -418,22 +513,208 @@ pub fn read_track(path: &Path) -> Track {
             track.track_no = tag.track();
             track.disc_no = tag.disk();
         }
+    } else if let Some(p) = crate::ffdecode::probe(path) {
+        // Formats inconnus de lofty (WMA, DSD…) : ffprobe.
+        if !p.title.is_empty() {
+            track.title = p.title;
+        }
+        track.artist = p.artist;
+        track.album = p.album;
+        track.album_artist = p.album_artist;
+        track.genre = p.genre;
+        track.composer = p.composer;
+        track.year = p.year;
+        track.track_no = p.track;
+        track.disc_no = p.disc;
+        track.duration_ms = p.duration_ms;
     }
     track
 }
 
+// ---------- Feuilles CUE ----------
+
+/// Les morceaux décrits par une feuille CUE (un album en un seul fichier).
+pub fn read_cue(cue: &Path) -> Vec<Track> {
+    let Ok(bytes) = std::fs::read(cue) else {
+        return Vec::new();
+    };
+    // UTF-8 (avec ou sans BOM), sinon Latin-1 / Windows-1252 des vieux extracteurs.
+    let text = match std::str::from_utf8(&bytes) {
+        Ok(t) => t.trim_start_matches('\u{feff}').to_owned(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    };
+    parse_cue(&text, cue.parent().unwrap_or(Path::new(".")), mtime(cue))
+}
+
+fn parse_cue(text: &str, dir: &Path, mtime: u64) -> Vec<Track> {
+    fn value(rest: &str) -> String {
+        let rest = rest.trim();
+        if let Some(r) = rest.strip_prefix('"') {
+            r.rsplit_once('"').map(|(v, _)| v).unwrap_or(r).to_owned()
+        } else {
+            rest.to_owned()
+        }
+    }
+    // « 03:25:40 » : minutes, secondes, images (1/75 s).
+    fn time(s: &str) -> Option<u64> {
+        let mut p = s.trim().split(':').map(|x| x.parse::<u64>().ok());
+        let (m, sec, f) = (p.next()??, p.next()??, p.next()??);
+        Some((m * 60 + sec) * 1000 + f * 1000 / 75)
+    }
+    struct Raw {
+        file: PathBuf,
+        no: u32,
+        title: String,
+        performer: String,
+        composer: String,
+        start: u64,
+    }
+    let (mut album, mut album_artist, mut genre, mut year) = (String::new(), String::new(), String::new(), None);
+    let mut file: Option<PathBuf> = None;
+    let mut raws: Vec<Raw> = Vec::new();
+    let mut in_track = false;
+    for line in text.lines() {
+        let line = line.trim();
+        let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
+        match word.to_ascii_uppercase().as_str() {
+            "FILE" => {
+                // « FILE "album.flac" WAVE » : le nom, sans le type à la fin.
+                let r = rest.trim();
+                let name = if r.starts_with('"') {
+                    value(r)
+                } else {
+                    r.rsplit_once(' ').map(|(n, _)| n).unwrap_or(r).to_owned()
+                };
+                file = Some(dir.join(name));
+                in_track = false;
+            }
+            "TRACK" => {
+                let no = rest.split_whitespace().next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                if let Some(f) = &file {
+                    raws.push(Raw {
+                        file: f.clone(),
+                        no,
+                        title: String::new(),
+                        performer: String::new(),
+                        composer: String::new(),
+                        start: 0,
+                    });
+                    in_track = true;
+                }
+            }
+            "TITLE" if in_track => raws.last_mut().unwrap().title = value(rest),
+            "TITLE" => album = value(rest),
+            "PERFORMER" if in_track => raws.last_mut().unwrap().performer = value(rest),
+            "PERFORMER" => album_artist = value(rest),
+            "SONGWRITER" if in_track => raws.last_mut().unwrap().composer = value(rest),
+            "INDEX" if in_track => {
+                let mut parts = rest.split_whitespace();
+                if parts.next() == Some("01") {
+                    if let Some(t) = parts.next().and_then(time) {
+                        raws.last_mut().unwrap().start = t;
+                    }
+                }
+            }
+            "REM" => {
+                let (key, v) = rest.split_once(' ').unwrap_or((rest, ""));
+                match key.to_ascii_uppercase().as_str() {
+                    "GENRE" => genre = value(v),
+                    "DATE" => year = value(v).get(..4).and_then(|y| y.parse().ok()),
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for (i, r) in raws.iter().enumerate() {
+        if !r.file.is_file() {
+            continue;
+        }
+        // Fin : le début du morceau suivant du même fichier, sinon la fin du fichier.
+        let end = raws.get(i + 1).filter(|n| n.file == r.file).map(|n| n.start);
+        let file_ms = || {
+            Probe::open(&r.file)
+                .and_then(|p| p.read())
+                .map(|t| t.properties().duration().as_millis() as u64)
+                .ok()
+                .filter(|&d| d > 0)
+                .or_else(|| crate::ffdecode::probe(&r.file).map(|p| p.duration_ms))
+                .unwrap_or(0)
+        };
+        let duration = end.unwrap_or_else(file_ms).saturating_sub(r.start);
+        let performer = if r.performer.is_empty() {
+            album_artist.clone()
+        } else {
+            r.performer.clone()
+        };
+        out.push(Track {
+            path: PathBuf::from(format!("{}#{:02}", r.file.display(), r.no)),
+            title: if r.title.is_empty() {
+                format!("Track {:02}", r.no)
+            } else {
+                r.title.clone()
+            },
+            artist: performer,
+            album: album.clone(),
+            album_artist: album_artist.clone(),
+            genre: genre.clone(),
+            year,
+            track_no: Some(r.no),
+            disc_no: None,
+            duration_ms: duration,
+            mtime,
+            composer: r.composer.clone(),
+            schema: TRACK_SCHEMA,
+            cue: Some(CueSpan {
+                file: r.file.clone(),
+                start_ms: r.start,
+                end_ms: end,
+            }),
+            remote: None,
+        });
+    }
+    out
+}
+
+/// Vrai pour une feuille CUE.
+pub fn is_cue_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
+}
+
 /// Parcourt les dossiers ; les fichiers inchangés depuis le dernier scan sont repris du cache.
+/// Un album décrit par une feuille CUE donne ses morceaux, à la place du grand fichier.
 pub fn scan(dirs: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<ScanMsg>) {
     let mut tracks = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    let mut audio = Vec::new();
     for dir in &dirs {
         for entry in WalkDir::new(dir)
             .follow_links(true)
             .into_iter()
             .filter_map(Result::ok)
-            .filter(|e| e.file_type().is_file() && is_audio_file(e.path()))
+            .filter(|e| e.file_type().is_file())
         {
             let path = entry.path();
+            if is_cue_file(path) {
+                for t in read_cue(path) {
+                    if let Some(c) = &t.cue {
+                        seen.insert(c.file.clone());
+                    }
+                    if seen.insert(t.path.clone()) {
+                        tracks.push(t);
+                    }
+                }
+            } else if is_audio_file(path) {
+                audio.push(path.to_path_buf());
+            }
+        }
+    }
+    {
+        for path in &audio {
+            let path = path.as_path();
             if !seen.insert(path.to_path_buf()) {
                 continue;
             }
@@ -483,7 +764,9 @@ pub fn load_cache() -> Vec<Track> {
 
 pub fn save_cache(tracks: &[Track]) {
     let _ = std::fs::create_dir_all(data_dir());
-    if let Ok(json) = serde_json::to_vec(tracks) {
+    // Les morceaux des serveurs ont leur propre cache (voir `servers`).
+    let local: Vec<&Track> = tracks.iter().filter(|t| t.remote.is_none()).collect();
+    if let Ok(json) = serde_json::to_vec(&local) {
         let tmp = cache_file().with_extension("json.tmp");
         if std::fs::write(&tmp, json).is_ok() {
             let _ = std::fs::rename(tmp, cache_file());
@@ -531,4 +814,34 @@ pub fn fmt_long(d: Duration) -> String {
 /// « 3 fichiers », « 1 fichier », dans la langue de l'interface (voir `i18n::plural`).
 pub fn plural(n: usize, one: &str, many: &str) -> String {
     crate::i18n::plural(n, one, many)
+}
+
+#[cfg(test)]
+mod cue_tests {
+    use super::*;
+
+    #[test]
+    fn cue_sheet() {
+        let dir = std::env::temp_dir().join(format!("stermusic-cue-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Album.flac"), b"pas vraiment du son").unwrap();
+        let text = "REM GENRE Rock\nREM DATE 1997\nPERFORMER \"Groupe\"\nTITLE \"Le disque\"\n\
+            FILE \"Album.flac\" WAVE\n  TRACK 01 AUDIO\n    TITLE \"Un\"\n    INDEX 01 00:00:00\n\
+            \x20 TRACK 02 AUDIO\n    TITLE \"Deux\"\n    PERFORMER \"Invité\"\n    INDEX 00 03:58:00\n\
+            \x20   INDEX 01 04:00:37\n";
+        let t = parse_cue(text, &dir, 7);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].title.as_str(), t[0].artist.as_str()), ("Un", "Groupe"));
+        assert_eq!((t[1].artist.as_str(), t[1].album_artist.as_str()), ("Invité", "Groupe"));
+        assert_eq!(t[0].album, "Le disque");
+        assert_eq!((t[0].genre.as_str(), t[0].year), ("Rock", Some(1997)));
+        // 4:00 et 37 images (1/75 s) : 240 493 ms ; le premier morceau finit là.
+        let c = t[1].cue.as_ref().unwrap();
+        assert_eq!(c.start_ms, 240_493);
+        assert_eq!(t[0].cue.as_ref().unwrap().end_ms, Some(240_493));
+        assert_eq!(t[0].duration_ms, 240_493);
+        assert!(t[1].path.to_string_lossy().ends_with("Album.flac#02"));
+        assert!(!t[0].is_plain_file());
+    }
 }

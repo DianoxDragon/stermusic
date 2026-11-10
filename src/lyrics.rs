@@ -283,8 +283,11 @@ fn from_cached(c: &Cached) -> Option<Lyrics> {
 
 /// Cherche les paroles d'un morceau (à appeler hors du fil de l'interface).
 pub fn find(t: &Track, online: bool) -> Option<Lyrics> {
-    if let Some(l) = from_file(&t.path).or_else(|| from_tags(&t.path)) {
-        return Some(l);
+    // Un morceau d'un fichier CUE ou d'un serveur n'a ni .lrc ni tags à lui : en ligne seulement.
+    if t.is_plain_file() {
+        if let Some(l) = from_file(&t.path).or_else(|| from_tags(&t.path)) {
+            return Some(l);
+        }
     }
     if !online {
         return None;

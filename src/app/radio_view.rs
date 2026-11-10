@@ -51,6 +51,8 @@ enum Logo {
 pub struct RadioState {
     pub live: Option<Live>,
     pub connecting: Option<(Station, Receiver<Result<Connected, String>>)>,
+    /// Diffusion : recherche de l'adresse du flux, que l'appareil lira lui-même.
+    pub cast_rx: Option<(Station, Receiver<Result<String, String>>)>,
     query: String,
     /// Filtres de l'annuaire (nom, genre, pays), et la recherche affichée.
     filter: Query,
@@ -77,6 +79,7 @@ impl Default for RadioState {
         Self {
             live: None,
             connecting: None,
+            cast_rx: None,
             query: String::new(),
             filter: Query {
                 country: radio::desktop_country(),
@@ -101,21 +104,43 @@ impl Default for RadioState {
 impl RadioState {
     /// Station qui joue (ou se connecte) : son nom.
     pub fn connecting_to(&self) -> Option<&Station> {
-        self.connecting.as_ref().map(|(s, _)| s)
+        self.connecting
+            .as_ref()
+            .map(|(s, _)| s)
+            .or(self.cast_rx.as_ref().map(|(s, _)| s))
+    }
+
+    /// Station en cours (diffusée : sans titre diffusé).
+    pub fn set_live(&mut self, station: Station, info: LiveInfo) {
+        if let Some(old) = self.live.take() {
+            old.info.stop.store(true, Ordering::Relaxed);
+        }
+        self.live = Some(Live {
+            station,
+            info,
+            paused: false,
+            retries: 0,
+            last_title: String::new(),
+        });
     }
 
     /// Logo d'une station (téléchargé en arrière-plan à la première demande).
     pub fn logo(&mut self, ctx: &egui::Context, station: &Station) -> Option<egui::TextureHandle> {
-        if station.favicon.is_empty() {
+        self.image(ctx, &station.favicon)
+    }
+
+    /// Image en ligne (logo de station, image de podcast), téléchargée à la première demande.
+    pub fn image(&mut self, ctx: &egui::Context, url: &str) -> Option<egui::TextureHandle> {
+        if url.is_empty() {
             return None;
         }
-        match self.logos.get(&station.favicon) {
+        match self.logos.get(url) {
             Some(Logo::Ready(t)) => return Some(t.clone()),
             Some(_) => return None,
             None => {}
         }
-        self.logos.insert(station.favicon.clone(), Logo::Loading);
-        let (url, tx, ctx) = (station.favicon.clone(), self.logo_tx.clone(), ctx.clone());
+        self.logos.insert(url.to_owned(), Logo::Loading);
+        let (url, tx, ctx) = (url.to_owned(), self.logo_tx.clone(), ctx.clone());
         std::thread::spawn(move || {
             let image = radio::fetch_image(&url).and_then(|bytes| decode_logo(&bytes));
             let _ = tx.send((url, image));
@@ -173,7 +198,7 @@ impl RadioState {
 fn decode_logo(bytes: &[u8]) -> Option<egui::ColorImage> {
     let img = image::load_from_memory(bytes).ok()?;
     let img = img
-        .resize(128, 128, image::imageops::FilterType::Triangle)
+        .resize(320, 320, image::imageops::FilterType::Triangle)
         .to_rgba8();
     Some(egui::ColorImage::from_rgba_unmultiplied(
         [img.width() as usize, img.height() as usize],
@@ -185,6 +210,10 @@ impl SterMusic {
     /// Lance l'écoute d'une station (la connexion se fait en arrière-plan ; la musique en
     /// cours continue jusqu'à ce que la station réponde).
     pub(super) fn play_station(&mut self, ctx: &egui::Context, station: Station) {
+        if self.player.as_ref().is_some_and(|p| p.casting().is_some()) {
+            self.play_station_cast(ctx, station);
+            return;
+        }
         let (tx, rx) = channel();
         let s = station.clone();
         let ctx = ctx.clone();
@@ -212,6 +241,7 @@ impl SterMusic {
             live.info.stop.store(true, Ordering::Relaxed);
         }
         self.radio.connecting = None;
+        self.radio.cast_rx = None;
     }
 
     /// Station suivante (ou précédente) parmi « Mes stations ».
@@ -262,6 +292,17 @@ impl SterMusic {
                 }
             }
         }
+        let cast_ready = match &self.radio.cast_rx {
+            Some((_, rx)) => rx.try_recv().ok(),
+            None => None,
+        };
+        if let Some(result) = cast_ready {
+            let (station, _) = self.radio.cast_rx.take().unwrap();
+            match result {
+                Ok(url) => self.cast_station_ready(station, url),
+                Err(e) => self.toast(format!("{} — {e}", station.name)),
+            }
+        }
         let connected = match &self.radio.connecting {
             Some((_, rx)) => rx.try_recv().ok(),
             None => None,
@@ -281,6 +322,7 @@ impl SterMusic {
         // Coupure du flux : on retente trois fois, puis on s'arrête.
         let ended = self.radio.live.as_ref().is_some_and(|l| !l.paused)
             && self.radio.connecting.is_none()
+            && self.radio.cast_rx.is_none()
             && !self.player.as_ref().is_some_and(|p| p.is_live() && !p.finished());
         if ended {
             let live = self.radio.live.as_mut().unwrap();
@@ -337,6 +379,7 @@ impl SterMusic {
         if let Some(old) = self.radio.live.take() {
             old.info.stop.store(true, Ordering::Relaxed);
         }
+        self.leave_episode();
         let Some(player) = &mut self.player else { return };
         if let Err(e) = player.play_stream(decoder) {
             info.stop.store(true, Ordering::Relaxed);

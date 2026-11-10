@@ -291,6 +291,9 @@ impl SterMusic {
                 View::Page(Page::Tags) => self.tags_page(ui),
                 View::Page(Page::Stats) => self.stats_page(ui),
                 View::Page(Page::Radio) => self.radio_page(ui),
+                View::Page(Page::Podcasts) => self.podcasts_page(ui),
+                View::Page(Page::Tools) => self.tools_page(ui),
+                View::Podcast(feed) => self.podcast_page(ui, &feed),
                 View::Browse(kind, name) => self.browse_page(ui, kind, &name),
                 View::Recap(year) => self.recap_page(ui, year),
                 View::Album(a) => self.album_page(ui, a),
@@ -1765,16 +1768,48 @@ impl SterMusic {
             details.push(t.genre.clone());
         }
         details.push(fmt_duration(t.duration()));
-        if let Some(ext) = t.path.extension() {
+        let file = t.cue.as_ref().map(|c| c.file.as_path()).unwrap_or(&t.path);
+        if let Some(ext) = file.extension().filter(|_| t.remote.is_none()) {
             details.push(ext.to_string_lossy().to_uppercase());
         }
-        ui.painter().text(
+        let line = ui.painter().text(
             pos2(x, y),
             Align2::LEFT_TOP,
             details.join(" · "),
             FontId::proportional(13.0),
             theme::TEXT_3,
         );
+        // Note du morceau, en petit au bout de la ligne : cliquer sur une étoile note.
+        let rating = self.settings.ratings.get(&t.path).copied().unwrap_or(0);
+        let mut preview = None;
+        let mut stars = Vec::new();
+        for k in 1..=5u8 {
+            let c = pos2(line.right() + 16.0 + 15.0 * (k - 1) as f32, line.center().y);
+            let r = ui.interact(
+                Rect::from_center_size(c, vec2(15.0, 18.0)),
+                ui.id().with(("np_star", k)),
+                Sense::click(),
+            );
+            if r.hovered() {
+                preview = Some(k);
+            }
+            if r.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                self.actions.push(Action::SetRating(idx, if rating == k { 0 } else { k }));
+            }
+            stars.push(c);
+        }
+        let shown = preview.unwrap_or(rating);
+        for (k, c) in stars.into_iter().enumerate() {
+            let on = (k as u8) < shown;
+            let color = if preview.is_some() {
+                theme::accent_light()
+            } else if on {
+                theme::alpha(theme::accent_light(), 0xC0)
+            } else {
+                theme::white(0x30)
+            };
+            icons::paint_centered(ui.painter(), if on { Icon::StarFilled } else { Icon::Star }, c, 12.0, color);
+        }
         y += 34.0;
 
         // Paroles ou « À suivre », au choix quand le morceau a des paroles.
@@ -2167,6 +2202,7 @@ impl SterMusic {
                 self.playback_extra_settings(ui);
             });
 
+            self.servers_settings(ui);
             self.scrobble_settings(ui);
 
             subtitle(ui, tr("Éditeur de tags"));

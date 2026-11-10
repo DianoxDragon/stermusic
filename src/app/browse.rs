@@ -450,6 +450,8 @@ mod tests {
             mtime: 0,
             composer: composer.into(),
             schema: 0,
+            cue: None,
+            remote: None,
         }
     }
 

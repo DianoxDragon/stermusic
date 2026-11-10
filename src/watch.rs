@@ -124,6 +124,14 @@ pub fn plan(paths: Vec<PathBuf>) -> Plan {
             let files = crate::tags::expand_until([p], &std::sync::atomic::AtomicBool::new(false));
             read.extend(files);
         } else if p.exists() {
+            // Une feuille CUE (ou un fichier qu'elle découpe) : tout le dossier est à relire.
+            let near_cue = crate::library::is_cue_file(&p)
+                || p.parent().and_then(|d| std::fs::read_dir(d).ok()).is_some_and(|mut d| {
+                    d.any(|e| e.is_ok_and(|e| crate::library::is_cue_file(&e.path())))
+                });
+            if near_cue {
+                return Plan::Rescan;
+            }
             if crate::library::is_audio_file(&p) {
                 read.push(p);
             }

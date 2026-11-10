@@ -602,6 +602,12 @@ impl SterMusic {
     /// Ouvre la page de l'éditeur sur ces fichiers ou dossiers. Sans modification en attente,
     /// la liste repart de zéro ; sinon ils s'y ajoutent (rien n'est perdu).
     pub(super) fn open_tag_editor(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>) {
+        // Morceaux d'un fichier CUE ou d'un serveur : pas de fichier à eux, pas de tags à modifier.
+        let before = paths.len();
+        let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.exists()).collect();
+        if paths.len() < before {
+            self.toast(tr("Les morceaux CUE ou d'un serveur n'ont pas de tags modifiables"));
+        }
         if paths.is_empty() {
             return;
         }

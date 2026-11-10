@@ -3890,6 +3890,7 @@ dependencies = [
  "regex",
  "rfd",
  "rodio",
+ "rustls",
  "serde",
  "serde_json",
  "smithay-clipboard",

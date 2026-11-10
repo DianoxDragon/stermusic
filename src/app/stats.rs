@@ -940,6 +940,8 @@ mod tests {
             mtime: 0,
             composer: String::new(),
             schema: 0,
+            cue: None,
+            remote: None,
         }
     }
 

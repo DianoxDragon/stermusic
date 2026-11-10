@@ -209,7 +209,12 @@ impl SterMusic {
             let al = &lib.albums[a];
             (
                 format!("{} — {}", al.artist, al.title),
-                al.tracks.iter().map(|&t| lib.tracks[t].path.clone()).collect(),
+                // Seuls les vrais fichiers reçoivent un gain (ni morceau CUE, ni morceau distant).
+                al.tracks
+                    .iter()
+                    .filter(|&&t| lib.tracks[t].is_plain_file())
+                    .map(|&t| lib.tracks[t].path.clone())
+                    .collect(),
             )
         };
         match self.lib_tools.rg.scope {

@@ -142,6 +142,10 @@ impl SterMusic {
 
     /// ReplayGain de quelques morceaux précis (menu d'un album, d'une sélection).
     pub(super) fn open_replaygain_for(&mut self, paths: Vec<PathBuf>, label: String) {
+        let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
+        if paths.is_empty() {
+            return;
+        }
         self.lib_tools.rg.opened(Some((paths, label)));
         self.lib_tools.open = Some(LibTool::ReplayGain);
     }

@@ -534,14 +534,14 @@ pub fn desktop_country() -> String {
         .unwrap_or_else(|| "FR".into())
 }
 
-/// Télécharge le logo d'une station (petite image : 512 Ko au plus).
+/// Télécharge une image (logo de station, image de podcast : 3 Mo au plus).
 pub fn fetch_image(url: &str) -> Option<Vec<u8>> {
     if !url.starts_with("http") {
         return None;
     }
     let resp = agent(Duration::from_secs(8)).get(url).call().ok()?;
     let mut bytes = Vec::new();
-    resp.into_reader().take(512 * 1024).read_to_end(&mut bytes).ok()?;
+    resp.into_reader().take(3 << 20).read_to_end(&mut bytes).ok()?;
     Some(bytes)
 }
 
@@ -819,7 +819,7 @@ fn stream_title(meta: &[u8]) -> Option<String> {
 }
 
 /// Une adresse de playlist (.pls, .m3u) mène au vrai flux : on prend sa première entrée.
-fn resolve(url: &str) -> Result<String, String> {
+pub fn resolve(url: &str) -> Result<String, String> {
     let lower = url.to_ascii_lowercase();
     let path = lower.split('?').next().unwrap_or("");
     let playlist = path.ends_with(".pls") || path.ends_with(".m3u") || path.ends_with(".asx");

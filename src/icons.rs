@@ -107,6 +107,10 @@ icons! {
     Shapes => "shapes.svg",
     Link => "link.svg",
     MediaStop => "stop-filled.svg",
+    StarFilled => "star-filled.svg",
+    Podcast => "podcast.svg",
+    Wrench => "wrench.svg",
+    Cast => "cast.svg",
 }
 
 /// Rectangle aligné sur la grille des pixels physiques.

@@ -218,6 +218,7 @@ impl SterMusic {
                 let paths = a
                     .tracks
                     .iter()
+                    .filter(|&&t| self.lib.tracks[t].is_plain_file())
                     .map(|&t| self.lib.tracks[t].path.clone())
                     .collect();
                 (a.title.clone(), a.artist.clone(), paths)

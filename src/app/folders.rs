@@ -382,6 +382,8 @@ mod tests {
             mtime: 0,
             composer: String::new(),
             schema: 0,
+            cue: None,
+            remote: None,
         };
         let lib = Library::new(vec![
             t("/m/## Personnel/Papa/a.mp3"),
