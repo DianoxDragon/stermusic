@@ -87,6 +87,25 @@ icons! {
     Stop => "square-stop.svg",
     Images => "images.svg",
     Help => "circle-help.svg",
+    Chart => "chart-column.svg",
+    Flame => "flame.svg",
+    History => "history.svg",
+    CalendarPlus => "calendar-plus.svg",
+    Star => "star.svg",
+    Zap => "zap.svg",
+    Moon => "moon.svg",
+    Sun => "sun.svg",
+    Coffee => "coffee.svg",
+    EyeOff => "eye-off.svg",
+    Radio => "radio.svg",
+    RadioTower => "radio-tower.svg",
+    Speaker => "speaker.svg",
+    Timer => "timer.svg",
+    Bell => "bell.svg",
+    Calendar => "calendar.svg",
+    Feather => "feather.svg",
+    Shapes => "shapes.svg",
+    Link => "link.svg",
 }
 
 /// Rectangle aligné sur la grille des pixels physiques.
@@ -152,6 +171,12 @@ fn breeze_name(icon: Icon) -> Option<&'static str> {
         Stop => "process-stop",
         Images => "view-preview",
         Help => "help-contextual",
+        Chart => "view-statistics",
+        Radio => "radio",
+        Speaker => "audio-speakers-symbolic",
+        Timer => "chronometer",
+        Bell => "notifications",
+        Calendar => "view-calendar",
         _ => return None,
     })
 }

@@ -586,6 +586,8 @@ mod tests {
             disc_no: None,
             duration_ms: secs * 1000,
             mtime: 0,
+            composer: String::new(),
+            schema: 0,
         }
     }
 

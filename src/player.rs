@@ -31,6 +31,8 @@ pub struct Player {
     tap: dsp::SharedTap,
     /// Fondu enchaîné : le morceau précédent qui s'efface, depuis quand, et la durée du fondu.
     fading: Option<(Sink, Instant, Duration)>,
+    /// Webradio en cours : un direct ne se met pas en pause, il s'arrête.
+    live: bool,
 }
 
 impl Player {
@@ -45,6 +47,7 @@ impl Player {
             audio,
             tap,
             fading: None,
+            live: false,
         };
         // On vérifie tout de suite qu'une sortie audio existe ; elle sera libérée si rien ne joue.
         player.stream()?;
@@ -62,6 +65,48 @@ impl Player {
         Ok(self.stream.as_ref().unwrap())
     }
 
+    /// Joue un flux de webradio (remplace le morceau en cours).
+    pub fn play_stream<S>(&mut self, source: S) -> Result<(), String>
+    where
+        S: rodio::Source + Send + 'static,
+    {
+        self.stop();
+        let source = Processor::new(source, self.audio.clone(), None, Some(self.tap.clone()));
+        let sink = Sink::connect_new(self.stream()?.mixer());
+        sink.set_volume(self.volume);
+        sink.append(source);
+        self.sink = Some(sink);
+        self.live = true;
+        self.idle_since = None;
+        Ok(())
+    }
+
+    /// Vrai pendant l'écoute d'une webradio.
+    pub fn is_live(&self) -> bool {
+        self.live && self.sink.is_some()
+    }
+
+    /// Rouvre la sortie audio (une autre sortie vient d'être choisie) ; le morceau en cours
+    /// reprend au même endroit. Un direct, lui, est arrêté : c'est à l'appelant de le relancer.
+    pub fn reopen(&mut self) -> Result<(), String> {
+        if self.live {
+            self.stop();
+            self.stream = None;
+            return Ok(());
+        }
+        let playing = self.is_playing();
+        self.finish_fade();
+        if let Some(sink) = self.sink.take() {
+            self.parked = Some(sink.get_pos());
+            sink.stop();
+        }
+        self.stream = None;
+        if playing {
+            return self.play();
+        }
+        Ok(())
+    }
+
     /// Charge un fichier (remplace le morceau en cours), en lecture ou en pause.
     pub fn load(&mut self, path: &Path, paused: bool) -> Result<(), String> {
         self.stop();
@@ -75,6 +120,7 @@ impl Player {
     }
 
     fn open(&mut self, path: &Path, position: Duration) -> Result<(), String> {
+        self.live = false;
         let file = File::open(path).map_err(|e| crate::trf!("Ouverture impossible : {e}", e))?;
         // `try_from(File)` donne au décodeur la taille du fichier et son extension : sans elles,
         // Symphonia échoue (voire panique, avec rodio 0.20) sur les M4A/AAC.
@@ -193,6 +239,7 @@ impl Player {
         }
         self.parked = None;
         self.path = None;
+        self.live = false;
         self.idle_since = Some(Instant::now());
     }
 
@@ -209,6 +256,11 @@ impl Player {
 
     /// Met en pause et libère aussitôt la sortie audio : l'indicateur de son de Plasma s'éteint.
     pub fn pause(&mut self) {
+        if self.live {
+            self.stop();
+            self.stream = None;
+            return;
+        }
         self.finish_fade();
         if let Some(sink) = self.sink.take() {
             self.parked = Some(sink.get_pos());

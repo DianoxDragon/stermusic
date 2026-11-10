@@ -15,13 +15,52 @@ pub const NOWBAR_HEIGHT: f32 = 96.0;
 
 struct NowState {
     track: Option<usize>,
+    /// Webradio en cours (ou en connexion) : la station, le titre diffusé, l'état.
+    radio: Option<RadioNow>,
     pos: f32,
     total: f32,
     playing: bool,
     has_track: bool,
 }
 
+#[derive(Clone)]
+struct RadioNow {
+    station: crate::radio::Station,
+    title: String,
+    status: String,
+}
+
 impl SterMusic {
+    fn radio_now(&self) -> Option<RadioNow> {
+        if let Some(s) = self.radio.connecting_to() {
+            return Some(RadioNow {
+                station: s.clone(),
+                title: s.name.clone(),
+                status: tr("Connexion…").into(),
+            });
+        }
+        let live = self.radio.live.as_ref()?;
+        let title = live.info.title();
+        let status = if live.paused {
+            tr("Arrêtée").to_owned()
+        } else {
+            tr("En direct").to_owned()
+        };
+        Some(if title.is_empty() {
+            RadioNow {
+                station: live.station.clone(),
+                title: live.station.name.clone(),
+                status,
+            }
+        } else {
+            RadioNow {
+                station: live.station.clone(),
+                title,
+                status: format!("{} · {}", live.station.name, status),
+            }
+        })
+    }
+
     fn now_state(&self) -> NowState {
         let track = self.current();
         let (pos, playing, has_track) = match &self.player {
@@ -33,6 +72,7 @@ impl SterMusic {
             .unwrap_or(0.0);
         NowState {
             track,
+            radio: self.radio_now(),
             pos: pos.min(total.max(pos)),
             total,
             playing,
@@ -83,25 +123,46 @@ impl SterMusic {
                 let shown = seek.preview.map(|v| v * st.total).unwrap_or(st.pos);
                 let time_font = FontId::proportional(12.0);
                 let painter = ui.painter();
-                painter.text(
-                    pos2(rect.left() + 20.0, bar_y),
-                    Align2::LEFT_CENTER,
-                    if st.has_track {
-                        fmt_duration(Duration::from_secs_f32(shown))
+                if st.radio.is_some() {
+                    // Direct : pastille rouge et « EN DIRECT » à la place du temps écoulé.
+                    let dot = pos2(rect.left() + 24.0, bar_y);
+                    let pulse = if st.playing {
+                        0.6 + 0.4 * (ui.input(|i| i.time) as f32 * 3.0).sin().abs()
                     } else {
-                        "0:00".into()
-                    },
-                    time_font.clone(),
-                    theme::TEXT_2,
-                );
+                        0.4
+                    };
+                    painter.circle_filled(dot, 4.0, Color32::from_rgb(0xE5, 0x48, 0x4D).gamma_multiply(pulse));
+                    painter.text(
+                        pos2(dot.x + 9.0, bar_y),
+                        Align2::LEFT_CENTER,
+                        tr("DIRECT"),
+                        FontId::proportional(10.5),
+                        theme::TEXT_2,
+                    );
+                } else {
+                    painter.text(
+                        pos2(rect.left() + 20.0, bar_y),
+                        Align2::LEFT_CENTER,
+                        if st.has_track {
+                            fmt_duration(Duration::from_secs_f32(shown))
+                        } else {
+                            "0:00".into()
+                        },
+                        time_font.clone(),
+                        theme::TEXT_2,
+                    );
+                }
+                let total_text = if st.radio.is_some() {
+                    String::new()
+                } else if st.total > 0.0 {
+                    fmt_duration(Duration::from_secs_f32(st.total))
+                } else {
+                    "0:00".into()
+                };
                 painter.text(
                     pos2(rect.right() - 20.0, bar_y),
                     Align2::RIGHT_CENTER,
-                    if st.total > 0.0 {
-                        fmt_duration(Duration::from_secs_f32(st.total))
-                    } else {
-                        "0:00".into()
-                    },
+                    total_text,
                     time_font,
                     theme::TEXT_2,
                 );
@@ -115,7 +176,10 @@ impl SterMusic {
                 // Gauche : pochette, titre, artiste.
                 let info_w = (row.width() * 0.30).min(360.0);
                 let cover_rect = Rect::from_center_size(pos2(row.left() + 26.0, cy), vec2(52.0, 52.0));
-                match st.track {
+                if let Some(radio) = &st.radio {
+                    self.radio_info(ui, cover_rect, info_w, radio);
+                }
+                match st.track.filter(|_| st.radio.is_none()) {
                     Some(i) => {
                         let t = self.lib.tracks[i].clone();
                         let tex = self.covers.thumb(&t.path).cloned();
@@ -214,6 +278,7 @@ impl SterMusic {
                                 .push(Action::Go(View::Artist(self.lib.album_artist[album])));
                         }
                     }
+                    None if st.radio.is_some() => {}
                     None => {
                         widgets::cover(ui.painter(), cover_rect, None, 6, "");
                         ui.painter().text(
@@ -227,7 +292,8 @@ impl SterMusic {
                 }
 
                 // Centre : commandes.
-                let can_play = self.player.is_some() && (!self.lib.is_empty() || st.track.is_some());
+                let can_play = self.player.is_some()
+                    && (!self.lib.is_empty() || st.track.is_some() || st.radio.is_some());
                 let controls =
                     Rect::from_center_size(pos2(row.center().x, cy), vec2(5.0 * 44.0 + 12.0, 52.0));
                 ui.scope_builder(
@@ -241,7 +307,9 @@ impl SterMusic {
                 );
 
                 // Droite : favori, volume, en cours de lecture.
-                let right = Rect::from_min_max(pos2(row.right() - 300.0, row.top()), row.max);
+                let right = Rect::from_min_max(pos2(row.right() - 340.0, row.top()), row.max);
+                // Fenêtre étroite : la barre de volume raccourcit pour ne pas toucher les commandes.
+                let vol_w = if row.width() < 980.0 { 64.0 } else { 110.0 };
                 ui.scope_builder(
                     UiBuilder::new()
                         .max_rect(right)
@@ -275,10 +343,22 @@ impl SterMusic {
                                 ui.add_space(6.0);
                             },
                         );
+                        ui.add_space(2.0);
+                        self.sleep_button(ui);
                         ui.add_space(6.0);
-                        self.volume(ui, 110.0);
+                        self.volume(ui, vol_w);
                         ui.add_space(6.0);
-                        if let Some(i) = st.track {
+                        if let Some(radio) = &st.radio {
+                            let saved = self.settings.radios.iter().any(|r| r.url == radio.station.url);
+                            let (icon, tip) = if saved {
+                                (Icon::HeartFilled, tr("Retirer de mes stations"))
+                            } else {
+                                (Icon::Heart, tr("Ajouter à mes stations"))
+                            };
+                            if widgets::toggle_icon(ui, saved, icon, tip, 36.0, 17.0).clicked() {
+                                self.actions.push(Action::ToggleStation(radio.station.clone()));
+                            }
+                        } else if let Some(i) = st.track {
                             let fav = self.settings.favorites.contains(&self.lib.tracks[i].path);
                             let (icon, tip) = if fav {
                                 (Icon::HeartFilled, tr("Retirer des favoris"))
@@ -354,9 +434,89 @@ impl SterMusic {
             "Volume : {0} % (clic : couper le son)",
             format!("{:.0}", vol * 100.0)
         );
-        if widgets::icon_button(ui, icon, &tip, 34.0, 17.0).clicked() {
+        let resp = widgets::icon_button(ui, icon, &tip, 34.0, 17.0);
+        if resp.clicked() {
             self.actions.push(Action::ToggleMute);
         }
+        // Clic droit : choisir la sortie audio.
+        resp.context_menu(|ui| {
+            ui.label(egui::RichText::new(tr("Sortie audio")).small().color(theme::TEXT_3));
+            self.output_menu(ui);
+        });
+    }
+
+    /// Bouton de la minuterie de sommeil, avec le temps restant quand elle tourne.
+    fn sleep_button(&mut self, ui: &mut egui::Ui) {
+        let remaining = self.sleep_remaining();
+        let tip = match remaining {
+            Some(r) => trf!("Minuterie de sommeil : arrêt dans {0}", super::settings_extra::fmt_remaining(r)),
+            None => tr("Minuterie de sommeil").to_owned(),
+        };
+        let on = self.sleep.is_some();
+        let resp = widgets::toggle_icon(ui, on, Icon::Moon, &tip, 36.0, 17.0);
+        let popup_id = ui.make_persistent_id("sleep_popup");
+        if resp.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup_id));
+        }
+        egui::popup::popup_above_or_below_widget(
+            ui,
+            popup_id,
+            &resp,
+            egui::AboveOrBelow::Above,
+            egui::PopupCloseBehavior::CloseOnClick,
+            |ui| self.sleep_menu(ui),
+        );
+        if let Some(r) = remaining.filter(|_| ui.available_width() > 60.0) {
+            ui.label(
+                egui::RichText::new(super::settings_extra::fmt_remaining(r))
+                    .small()
+                    .color(theme::accent_light()),
+            );
+        }
+    }
+
+    /// Station en cours dans la barre de lecture : logo, titre diffusé, nom de la station.
+    fn radio_info(&mut self, ui: &mut egui::Ui, cover_rect: Rect, info_w: f32, radio: &RadioNow) {
+        let tx = cover_rect.right() + 12.0;
+        let max_w = info_w - 70.0;
+        let cy = cover_rect.center().y;
+        let title = widgets::galley(ui, &radio.title, theme::semibold(14.0), theme::TEXT, max_w);
+        let sub = widgets::galley(ui, &radio.status, FontId::proportional(12.5), theme::TEXT_2, max_w);
+        let text_w = title.size().x.max(sub.size().x);
+        let zone = Rect::from_min_max(
+            pos2(cover_rect.left() - 6.0, cover_rect.top() - 5.0),
+            pos2(tx + text_w + 12.0, cover_rect.bottom() + 5.0),
+        );
+        let resp = ui.interact(zone, ui.id().with("nowbar_radio"), Sense::click());
+        let hover = widgets::hover_t(ui, resp.id, resp.hovered());
+        if hover > 0.0 {
+            ui.painter()
+                .rect_filled(zone, CornerRadius::same(8), theme::white((0x10 as f32 * hover) as u8));
+        }
+        if resp
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tr("Webradios"))
+            .clicked()
+        {
+            self.actions.push(Action::Go(View::Page(super::Page::Radio)));
+        }
+        self.paint_logo(ui, cover_rect, &radio.station);
+        let appear = anim::value_from(
+            ui.ctx(),
+            egui::Id::new(("nowbar_radio_title", &radio.title)),
+            0.0,
+            1.0,
+            anim::SLOW,
+            anim::Easing::OutExpo,
+        );
+        let slide = vec2(10.0 * (1.0 - appear), 0.0);
+        ui.painter().galley_with_override_text_color(
+            pos2(tx, cy - 19.0) + slide,
+            title,
+            theme::TEXT.gamma_multiply(appear),
+        );
+        ui.painter()
+            .galley_with_override_text_color(pos2(tx, cy + 3.0), sub, theme::TEXT_2);
     }
 
     /// Mini lecteur compact : pochette, titre, artiste, commandes et progression sur une ligne.
@@ -393,12 +553,13 @@ impl SterMusic {
                 let x = cover.right() + 12.0;
                 let right = rect.right().min(rect.left() + 560.0) - pad;
                 let text_w = right - x - 34.0;
-                let (title, artist) = match st.track {
-                    Some(i) => (
+                let (title, artist) = match (st.track, &st.radio) {
+                    (_, Some(r)) => (r.title.clone(), r.status.clone()),
+                    (Some(i), None) => (
                         self.lib.tracks[i].title.clone(),
                         self.lib.tracks[i].artist_or_unknown().to_owned(),
                     ),
-                    None => (tr("Rien en lecture").into(), String::new()),
+                    (None, None) => (tr("Rien en lecture").into(), String::new()),
                 };
                 let g = widgets::galley(ui, &title, theme::semibold(14.0), theme::TEXT, text_w);
                 ui.painter().galley(pos2(x, cover.top() + 2.0), g, theme::TEXT);

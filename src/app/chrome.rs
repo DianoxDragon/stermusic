@@ -347,11 +347,14 @@ impl SterMusic {
                     (Page::Library, Icon::Music, tr("Bibliothèque musicale")),
                     (Page::Queue, Icon::ListMusic, tr("File d'attente")),
                     (Page::Playlists, Icon::Library, tr("Playlists")),
+                    (Page::Radio, Icon::Radio, tr("Webradios")),
+                    (Page::Stats, Icon::Chart, tr("Statistiques")),
                 ];
                 let active_page = match &self.view {
                     View::Page(p) => Some(*p),
-                    View::Album(_) | View::Artist(_) => Some(Page::Library),
+                    View::Album(_) | View::Artist(_) | View::Browse(..) => Some(Page::Library),
                     View::Playlist(_) => Some(Page::Playlists),
+                    View::Recap(_) => Some(Page::Stats),
                     _ => None,
                 };
                 let mut pill_target = None;
@@ -378,24 +381,50 @@ impl SterMusic {
                         Stroke::new(1.0_f32, theme::stroke()),
                     );
                     y += 10.0;
-                    let list_rect = Rect::from_min_max(
-                        pos2(left, y),
-                        pos2(left + inner_w, rect.bottom() - bottom_reserved),
-                    );
-                    let mut entries: Vec<(PlaylistId, String)> =
-                        vec![(PlaylistId::Favorites, tr("Favoris").into())];
-                    entries.extend(
-                        self.settings
-                            .playlists
-                            .iter()
-                            .enumerate()
-                            .map(|(i, p)| (PlaylistId::User(i), p.name.clone())),
-                    );
                     let current_pl = if let View::Playlist(id) = self.view {
                         Some(id)
                     } else {
                         None
                     };
+                    // Favoris et playlists intelligentes : une rangée d'icônes, discrète (le nom
+                    // s'affiche au survol).
+                    let mut quick: Vec<(PlaylistId, Icon, String)> =
+                        vec![(PlaylistId::Favorites, Icon::Heart, tr("Favoris").to_owned())];
+                    quick.extend(
+                        self.settings
+                            .smart_playlists
+                            .iter()
+                            .enumerate()
+                            .map(|(i, p)| (PlaylistId::Smart(i), p.icon.icon(), p.name.clone())),
+                    );
+                    const PILL: f32 = 36.0;
+                    let per_row = (((inner_w - 12.0) / (PILL + 4.0)).floor() as usize).max(1);
+                    for (k, (id, icon, name)) in quick.into_iter().enumerate() {
+                        let (row, col) = (k / per_row, k % per_row);
+                        let r = Rect::from_min_size(
+                            pos2(
+                                left + 6.0 + col as f32 * (PILL + 4.0),
+                                y + row as f32 * (PILL + 4.0),
+                            ),
+                            vec2(PILL, PILL),
+                        );
+                        if quick_item(ui, r, icon, &name, current_pl == Some(id)).clicked() {
+                            self.actions.push(Action::Go(View::Playlist(id)));
+                        }
+                    }
+                    let rows = (self.settings.smart_playlists.len() + 1).div_ceil(per_row);
+                    y += rows as f32 * (PILL + 4.0) + 6.0;
+                    let list_rect = Rect::from_min_max(
+                        pos2(left, y),
+                        pos2(left + inner_w, rect.bottom() - bottom_reserved),
+                    );
+                    let entries: Vec<(PlaylistId, String)> = self
+                        .settings
+                        .playlists
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| (PlaylistId::User(i), p.name.clone()))
+                        .collect();
                     ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
                         egui::ScrollArea::vertical()
                             .id_salt("side_playlists")
@@ -403,12 +432,9 @@ impl SterMusic {
                             .show(ui, |ui| {
                                 for (id, name) in entries {
                                     let (r, _) = ui.allocate_exact_size(vec2(inner_w, 34.0), Sense::hover());
-                                    let icon = if id == PlaylistId::Favorites {
-                                        Icon::Heart
-                                    } else {
-                                        Icon::ListMusic
-                                    };
-                                    if sub_item(ui, r, icon, &name, current_pl == Some(id)).clicked() {
+                                    if sub_item(ui, r, Icon::ListMusic, &name, current_pl == Some(id))
+                                        .clicked()
+                                    {
                                         self.actions.push(Action::Go(View::Playlist(id)));
                                     }
                                 }
@@ -555,6 +581,7 @@ impl SterMusic {
             Dialog::ThemeName { id: None, .. } => tr("Enregistrer le thème"),
             Dialog::ThemeName { .. } => tr("Renommer le thème"),
             Dialog::DeleteTheme(_) => tr("Supprimer le thème ?"),
+            Dialog::ClearStats => tr("Effacer les statistiques ?"),
             Dialog::NewPlaylist { .. } => tr("Nouvelle playlist"),
             Dialog::Rename { .. } => tr("Renommer la playlist"),
             Dialog::ConfirmDelete(_) => tr("Supprimer la playlist ?"),
@@ -617,6 +644,15 @@ impl SterMusic {
                         }
                     }
                     Dialog::DeleteTheme(_) => {}
+                    Dialog::ClearStats => {
+                        ui.label(
+                            egui::RichText::new(tr(
+                                "Les compteurs d'écoutes et tout l'historique daté seront supprimés définitivement. \
+                                 Les playlists « Les plus écoutés » et le récap repartiront de zéro.",
+                            ))
+                            .color(theme::TEXT_2),
+                        );
+                    }
                     Dialog::ConfirmDelete(i) => {
                         let name = self
                             .settings
@@ -637,6 +673,7 @@ impl SterMusic {
                             Dialog::ThemeName { id: None, .. } => tr("Enregistrer"),
                             Dialog::ThemeName { .. } => tr("Renommer"),
                             Dialog::DeleteTheme(_) => tr("Supprimer"),
+                            Dialog::ClearStats => tr("Effacer"),
                             Dialog::NewPlaylist { .. } => tr("Créer"),
                             Dialog::Rename { .. } => tr("Renommer"),
                             Dialog::ConfirmDelete(_) => tr("Supprimer"),
@@ -679,6 +716,7 @@ impl SterMusic {
                         }
                     }
                 }
+                Some(Dialog::ClearStats) => self.clear_stats(),
                 Some(Dialog::DeleteTheme(id)) => {
                     self.settings.saved_themes.retain(|t| t.id != id);
                     theme::set_saved(&self.settings.saved_themes);
@@ -845,6 +883,33 @@ fn nav_item(
     } else {
         response.on_hover_text(label)
     }
+}
+
+/// Raccourci rond vers une playlist (favoris, playlists intelligentes) : l'icône seule.
+fn quick_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bool) -> egui::Response {
+    let response = ui.interact(
+        rect,
+        ui.id()
+            .with(("quick", label, rect.left() as i32, rect.top() as i32)),
+        Sense::click(),
+    );
+    let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::FAST);
+    if s > 0.0 {
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(8),
+            theme::alpha(theme::accent(), (0x55 as f32 * s) as u8),
+        );
+    }
+    widgets::paint_interaction(ui, rect, 8, &response);
+    let h = widgets::hover_t(ui, response.id, response.hovered());
+    let color = theme::mix(
+        theme::mix(theme::TEXT_3, theme::TEXT, h),
+        theme::accent_light(),
+        s,
+    );
+    icons::paint_centered(ui.painter(), icon, rect.center(), 17.0, color);
+    response.on_hover_text(label)
 }
 
 fn sub_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bool) -> egui::Response {

@@ -4,6 +4,7 @@ mod backdrop;
 mod covers;
 mod dnd;
 mod dsp;
+mod history;
 mod i18n;
 mod i18n_en;
 #[cfg(test)]
@@ -13,14 +14,20 @@ mod ipc;
 mod kwin;
 mod library;
 mod loudness;
+mod lyrics;
 mod mpris;
+mod notify;
+mod outputs;
 mod musicbrainz;
 mod player;
+mod radio;
+mod scrobble;
 mod shader;
 mod tags;
 mod tagtools;
 mod theme;
 mod viz;
+mod watch;
 mod widgets;
 
 use std::path::PathBuf;

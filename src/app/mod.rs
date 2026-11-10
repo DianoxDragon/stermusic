@@ -1,13 +1,20 @@
 //! SterMusic : état de l'application, file d'attente, actions.
 
+mod browse;
 mod chrome;
 mod cover_tool;
 mod dup_tool;
+mod folders;
 mod lib_tools;
 mod lists;
+mod lyrics_view;
 mod mb_import;
 mod nowbar;
+mod radio_view;
 mod rg_tool;
+mod settings_extra;
+mod smart;
+mod stats;
 mod tag_editor;
 mod tag_tools;
 mod views;
@@ -49,6 +56,10 @@ pub enum Page {
     Settings,
     /// Éditeur de tags.
     Tags,
+    /// Statistiques d'écoute.
+    Stats,
+    /// Webradios.
+    Radio,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -57,6 +68,10 @@ pub enum LibTab {
     Songs,
     Albums,
     Artists,
+    /// La bibliothèque rangée comme sur le disque.
+    Folders,
+    /// Par genre, par année ou par compositeur.
+    Browse,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -83,6 +98,8 @@ pub enum BackdropKind {
 pub enum PlaylistId {
     Favorites,
     User(usize),
+    /// Playlist intelligente (remplie d'après des règles).
+    Smart(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -93,6 +110,10 @@ pub enum View {
     Playlist(PlaylistId),
     Search,
     NowPlaying,
+    /// Récap d'une année d'écoute.
+    Recap(i32),
+    /// Un genre, une année ou un compositeur.
+    Browse(browse::BrowseKind, String),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -105,6 +126,22 @@ pub struct Playlist {
 pub struct PlayStat {
     pub count: u32,
     pub last: u64,
+    /// Secondes réellement écoutées (depuis que SterMusic les mesure).
+    #[serde(default)]
+    pub seconds: f64,
+}
+
+/// Écoute en cours : le morceau, ce qui en a été entendu, et si elle compte déjà.
+pub(crate) struct Listening {
+    path: PathBuf,
+    /// Déjà envoyée aux services de scrobbling.
+    scrobbled: bool,
+    started: u64,
+    heard: f32,
+    last_pos: f32,
+    /// Moment du dernier relevé : la lecture n'a pas pu avancer de plus que le temps écoulé.
+    last_tick: std::time::Instant,
+    counted: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -156,7 +193,28 @@ pub struct Settings {
     pub saved_themes: Vec<theme::SavedTheme>,
     /// Langue de l'interface (par défaut, celle du bureau).
     pub lang: crate::i18n::Lang,
+    /// Playlists intelligentes, et vrai une fois les quatre proposées d'office ajoutées.
+    pub smart_playlists: Vec<smart::SmartPlaylist>,
+    pub smart_seeded: bool,
+    pub stats_period: stats::Period,
+    /// Paroles : chercher sur LRCLIB, et les montrer dans « En cours de lecture ».
+    pub lyrics_online: bool,
+    pub show_lyrics: bool,
+    /// Bibliothèque mise à jour toute seule (surveillance des dossiers).
+    pub auto_update: bool,
     pub sidebar_collapsed: bool,
+    /// Bibliothèque, onglet « Parcourir » : genres, années ou compositeurs.
+    pub browse_kind: browse::BrowseKind,
+    /// Webradios enregistrées (« Mes stations »).
+    pub radios: Vec<crate::radio::Station>,
+    /// Sortie audio choisie (nom PipeWire ; vide : celle du système).
+    pub audio_output: String,
+    /// Notification du bureau au changement de morceau (quand la fenêtre n'est pas au premier plan).
+    pub notify_tracks: bool,
+    /// Scrobbling (ListenBrainz, Last.fm).
+    pub scrobble: crate::scrobble::Config,
+    /// Minuterie de sommeil : durée du fondu (s).
+    pub sleep_fade_secs: f32,
     pub resume: bool,
     pub page: Page,
     pub lib_tab: LibTab,
@@ -201,7 +259,19 @@ impl Default for Settings {
             tag_prefs: Default::default(),
             saved_themes: Vec::new(),
             lang: crate::i18n::Lang::from_env(),
+            smart_playlists: Vec::new(),
+            smart_seeded: false,
+            stats_period: stats::Period::default(),
+            lyrics_online: true,
+            show_lyrics: true,
+            auto_update: true,
             sidebar_collapsed: false,
+            browse_kind: Default::default(),
+            radios: Vec::new(),
+            audio_output: String::new(),
+            notify_tracks: true,
+            scrobble: Default::default(),
+            sleep_fade_secs: 30.0,
             resume: true,
             page: Page::Home,
             lib_tab: LibTab::Songs,
@@ -274,10 +344,40 @@ pub enum Action {
     PlayFiles(Vec<PathBuf>),
     /// Choisit des fichiers à éditer, hors bibliothèque compris.
     PickTagFiles,
+    /// Surveillance des dossiers de musique (bibliothèque mise à jour toute seule).
+    SetAutoUpdate(bool),
+    NewSmartPlaylist,
+    EditSmartPlaylist(usize),
+    /// Exporter les statistiques en CSV : par morceau (vrai) ou par écoute.
+    ExportStats(bool),
+    ClearStats,
     /// Ouvre un outil d'entretien de la bibliothèque (pochettes manquantes, ReplayGain, doublons).
     LibTool(lib_tools::LibTool),
     /// Ouvre le calcul du ReplayGain sur ces morceaux (le libellé dit ce que c'est).
     ReplayGain(Vec<PathBuf>, String),
+    /// Écoute une webradio.
+    PlayStation(crate::radio::Station),
+    /// Ajoute une station à « Mes stations », ou l'en retire.
+    ToggleStation(crate::radio::Station),
+    /// Minuterie de sommeil (ou `None` pour l'arrêter).
+    SetSleep(Option<SleepKind>),
+    /// Sortie audio (nom PipeWire ; vide : celle du système).
+    SetOutput(String),
+    /// Les réglages de scrobbling ont changé.
+    ScrobbleConfig,
+}
+
+/// Minuterie de sommeil : au bout de quelques minutes, ou à la fin du morceau en cours.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SleepKind {
+    Minutes(u32),
+    EndOfTrack,
+}
+
+pub struct Sleep {
+    pub kind: SleepKind,
+    /// Heure de l'arrêt (minuterie en minutes).
+    pub end: std::time::Instant,
 }
 
 /// Morceaux sélectionnés dans une liste (Ctrl+clic, Maj+clic).
@@ -349,6 +449,8 @@ pub enum Dialog {
     },
     /// Supprimer un thème favori.
     DeleteTheme(String),
+    /// Effacer toutes les statistiques d'écoute.
+    ClearStats,
     NewPlaylist {
         name: String,
         tracks: Vec<usize>,
@@ -423,6 +525,20 @@ pub struct SterMusic {
     external: Vec<library::Track>,
     /// Outils d'entretien de la bibliothèque.
     lib_tools: lib_tools::LibTools,
+    /// Historique d'écoute daté (statistiques, récap).
+    listens: Vec<crate::history::Listen>,
+    /// Morceau en cours d'écoute, et vrai une fois son écoute comptée (30 secondes).
+    listening: Option<Listening>,
+    smart_edit: Option<smart::Edit>,
+    /// Morceaux des playlists intelligentes, recalculés au plus toutes les deux secondes.
+    smart_cache: std::cell::RefCell<HashMap<usize, SmartCached>>,
+    /// Vue par dossiers : l'index (reconstruit avec la bibliothèque) et le dossier ouvert.
+    folder_index: Option<folders::FolderIndex>,
+    lib_folder: Option<PathBuf>,
+    lyrics: lyrics_view::LyricsState,
+    /// Surveillance des dossiers de musique, et mise à jour en cours.
+    watcher: crate::watch::Watcher,
+    watch_rx: Option<Receiver<WatchDone>>,
     /// Fichier que le lecteur a ouvert, connu des threads qui écrivent des tags : celui-là est
     /// écrit via une copie (une écriture sur place décalerait le son sous le décodeur).
     now_loaded: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
@@ -447,6 +563,35 @@ pub struct SterMusic {
     auto_np: crate::viz::AutoViz,
     auto_banner: crate::viz::AutoViz,
     viz_label: Option<(usize, f64)>,
+    /// Webradios : station en cours, annuaire.
+    radio: radio_view::RadioState,
+    /// Genres, années, compositeurs (reconstruit avec la bibliothèque).
+    browse_index: Option<browse::BrowseIndex>,
+    /// Minuterie de sommeil, et facteur de volume du fondu qui la termine.
+    sleep: Option<Sleep>,
+    sleep_gain: f32,
+    notifier: crate::notify::Notifier,
+    /// Notification à envoyer quand la pochette du morceau sera prête (ou au plus tard à l'heure dite).
+    pending_note: Option<(PathBuf, f64)>,
+    /// La fenêtre est au premier plan (pas de notification alors).
+    focused: bool,
+    scrobbler: crate::scrobble::Scrobbler,
+    /// Paramètres : sorties audio connues, connexion aux services de scrobbling.
+    outputs: Vec<crate::outputs::Output>,
+    online: settings_extra::OnlineState,
+    egui_ctx: egui::Context,
+}
+
+/// Morceaux d'une playlist intelligente déjà calculés : empreinte des règles, heure du calcul.
+type SmartCached = (u64, f64, Vec<usize>);
+
+/// Résultat d'une mise à jour de la bibliothèque après des changements sur le disque.
+pub enum WatchDone {
+    Rescan,
+    Update {
+        tracks: Vec<library::Track>,
+        gone: Vec<PathBuf>,
+    },
 }
 
 /// Ce qui est demandé au lancement, en ligne de commande.
@@ -463,11 +608,37 @@ pub struct Launch {
 /// Taille du mini lecteur.
 const MINI_SIZE: egui::Vec2 = egui::vec2(380.0, 116.0);
 
-fn now_secs() -> u64 {
+pub(crate) fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Ce qu'un relevé ajoute au temps écouté : l'avancée de la lecture, sauf un saut. La lecture
+/// avance au rythme de l'horloge (même si la fenêtre, cachée, n'a pas été redessinée depuis
+/// longtemps) : un bond plus grand que le temps écoulé, ou en arrière, est un saut.
+fn heard_step(step: f32, wall: f32) -> f32 {
+    if step >= 0.0 && step <= wall + 0.75 {
+        step
+    } else {
+        0.0
+    }
+}
+
+/// Ce qu'on envoie aux services de scrobbling d'un morceau (rien sans artiste ni titre).
+fn scrobble_song(t: &library::Track) -> Option<crate::scrobble::Song> {
+    if t.artist.trim().is_empty() || t.title.trim().is_empty() {
+        return None;
+    }
+    Some(crate::scrobble::Song {
+        artist: t.artist.clone(),
+        title: t.title.clone(),
+        album: t.album.clone(),
+        album_artist: t.album_artist.clone(),
+        duration: t.duration().as_secs() as u32,
+        track_no: t.track_no,
+    })
 }
 
 /// Courbe de volume plus naturelle pour l'oreille qu'une échelle linéaire.
@@ -537,6 +708,7 @@ impl SterMusic {
             settings.leveling,
         );
         let tap = crate::dsp::Tap::new();
+        crate::outputs::route_to(&settings.audio_output);
         let (player, toast) = match Player::new(volume, audio.clone(), tap.clone()) {
             Ok(p) => (Some(p), None),
             Err(e) => (None, Some((e, 0.0))),
@@ -573,6 +745,15 @@ impl SterMusic {
             dnd: crate::dnd::Dnd::new(cc),
             external: Vec::new(),
             lib_tools: Default::default(),
+            listens: crate::history::load(),
+            listening: None,
+            smart_edit: None,
+            smart_cache: Default::default(),
+            folder_index: None,
+            lib_folder: None,
+            lyrics: Default::default(),
+            watcher: Default::default(),
+            watch_rx: None,
             now_loaded: Default::default(),
             toast,
             queue_drag: None,
@@ -589,8 +770,31 @@ impl SterMusic {
             auto_np: crate::viz::AutoViz::default(),
             auto_banner: crate::viz::AutoViz::default(),
             viz_label: None,
+            radio: Default::default(),
+            browse_index: None,
+            sleep: None,
+            sleep_gain: 1.0,
+            notifier: Default::default(),
+            pending_note: None,
+            focused: true,
+            scrobbler: crate::scrobble::Scrobbler::new(settings.scrobble.clone()),
+            outputs: Vec::new(),
+            online: Default::default(),
+            egui_ctx: cc.egui_ctx.clone(),
             settings,
         };
+        if !app.settings.smart_seeded {
+            app.settings.smart_seeded = true;
+            app.settings
+                .smart_playlists
+                .extend(smart::SmartPlaylist::presets());
+        }
+        for p in &mut app.settings.smart_playlists {
+            p.guess_icon();
+        }
+        if app.settings.auto_update {
+            app.watcher = crate::watch::Watcher::start(&app.settings.music_dirs, &cc.egui_ctx);
+        }
         app.restore_queue();
         app.start_scan();
         if !tag_files.is_empty() {
@@ -658,6 +862,9 @@ impl SterMusic {
     /// Remplace la bibliothèque en gardant la file d'attente, le morceau en cours et la page
     /// ouverte (un album dont on vient de changer le titre reste affiché sous son nouveau nom).
     fn set_library(&mut self, mut tracks: Vec<library::Track>) {
+        self.folder_index = None;
+        self.browse_index = None;
+        self.smart_cache.borrow_mut().clear();
         // Les morceaux ouverts hors bibliothèque restent jouables après un rescan.
         if !self.external.is_empty() {
             let present: HashSet<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
@@ -811,7 +1018,11 @@ impl SterMusic {
         self.play_list(tracks, 0);
     }
 
+    /// Morceau en cours (aucun pendant l'écoute d'une webradio).
     pub fn current(&self) -> Option<usize> {
+        if self.radio.live.is_some() {
+            return None;
+        }
         self.queue_pos.and_then(|p| self.queue.get(p).copied())
     }
 
@@ -820,6 +1031,7 @@ impl SterMusic {
     }
 
     fn play_current(&mut self) {
+        self.leave_radio();
         let Some(idx) = self.current() else { return };
         let Some(player) = &mut self.player else {
             return;
@@ -832,10 +1044,27 @@ impl SterMusic {
             player.load(&track.path, false)
         };
         match result {
+            // L'écoute n'est comptée qu'au bout de 30 secondes (voir `track_listen`).
             Ok(()) => {
-                let stat = self.settings.plays.entry(track.path.clone()).or_default();
-                stat.count += 1;
-                stat.last = now_secs();
+                let path = track.path.clone();
+                let song = scrobble_song(track);
+                self.finish_listen();
+                if let Some(song) = song {
+                    if self.settings.scrobble.any() {
+                        self.scrobbler.now_playing(song);
+                    }
+                }
+                let now = self.egui_ctx.input(|i| i.time);
+                self.pending_note = Some((path.clone(), now + 1.5));
+                self.listening = Some(Listening {
+                    scrobbled: false,
+                    path,
+                    started: now_secs(),
+                    heard: 0.0,
+                    last_pos: 0.0,
+                    last_tick: std::time::Instant::now(),
+                    counted: false,
+                });
             }
             Err(e) => {
                 let msg = format!("{} — {e}", track.title);
@@ -847,7 +1076,8 @@ impl SterMusic {
 
     /// Fondu enchaîné : quelques secondes avant la fin du morceau, le suivant démarre en fondu.
     fn maybe_crossfade(&mut self) {
-        if !self.settings.crossfade {
+        // La minuterie « fin du morceau » arrête la lecture : pas de morceau suivant.
+        if !self.settings.crossfade || self.sleep.as_ref().is_some_and(|s| s.kind == SleepKind::EndOfTrack) {
             return;
         }
         let Some(p) = &self.player else { return };
@@ -921,6 +1151,9 @@ impl SterMusic {
         if tracks.is_empty() {
             return;
         }
+        // Une lecture choisie remplace la file du dernier lancement : sans cela, la fin du premier
+        // scan (bibliothèque encore vide au démarrage) restaurait l'ancienne file par-dessus.
+        self.restored = true;
         self.queue = tracks;
         self.queue_pos = Some(start.min(self.queue.len() - 1));
         self.unshuffled = None;
@@ -949,6 +1182,17 @@ impl SterMusic {
     }
 
     fn toggle_play(&mut self) {
+        if let Some(live) = &self.radio.live {
+            if live.paused {
+                let station = live.station.clone();
+                self.radio.connecting = None;
+                let ctx = self.egui_ctx.clone();
+                self.play_station(&ctx, station);
+            } else {
+                self.pause_station();
+            }
+            return;
+        }
         let has_track = self.player.as_ref().is_some_and(Player::has_track);
         if has_track {
             let mut error = None;
@@ -1033,7 +1277,7 @@ impl SterMusic {
         let v = if self.settings.muted {
             0.0
         } else {
-            perceptual(self.settings.volume)
+            perceptual(self.settings.volume) * self.sleep_gain
         };
         if let Some(p) = &mut self.player {
             p.set_volume(v);
@@ -1049,6 +1293,203 @@ impl SterMusic {
         let mut shared = self.now_loaded.lock().unwrap();
         if shared.as_ref() != loaded {
             *shared = loaded.cloned();
+        }
+    }
+
+    /// Morceaux d'une playlist intelligente ; le calcul (toute la bibliothèque) est gardé deux
+    /// secondes, ou jusqu'à ce que ses règles changent.
+    fn smart_tracks(&self, i: usize) -> Vec<usize> {
+        let Some(p) = self.settings.smart_playlists.get(i) else {
+            return Vec::new();
+        };
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(p).unwrap_or_default().hash(&mut h);
+        (self.lib.tracks.len(), self.settings.favorites.len()).hash(&mut h);
+        let key = h.finish();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        if let Some((k, at, v)) = self.smart_cache.borrow().get(&i) {
+            if *k == key && now - at < 2.0 {
+                return v.clone();
+            }
+        }
+        let v = smart::evaluate(p, &self.lib, &self.smart_facts());
+        self.smart_cache.borrow_mut().insert(i, (key, now, v.clone()));
+        v
+    }
+
+    /// Suit l'écoute du morceau en cours : seules les secondes vraiment entendues comptent (un
+    /// saut dans le morceau n'en ajoute aucune). Passé 30 secondes (ou la moitié d'un morceau
+    /// court), l'écoute compte ; elle est notée dans l'historique quand le morceau s'arrête, avec
+    /// sa durée réelle.
+    fn track_listen(&mut self) {
+        let Some(path) = self.listening.as_ref().map(|l| l.path.clone()) else {
+            return;
+        };
+        let current = self.current().map(|i| self.lib.tracks[i].clone());
+        let same = current.as_ref().is_some_and(|t| t.path == path);
+        let playing = self
+            .player
+            .as_ref()
+            .is_some_and(|p| p.has_track() && p.is_playing());
+        if !same || !self.player.as_ref().is_some_and(Player::has_track) {
+            self.finish_listen();
+            return;
+        }
+        let Some(p) = &self.player else { return };
+        let pos = p.position().as_secs_f32();
+        let Some(l) = &mut self.listening else { return };
+        let wall = l.last_tick.elapsed().as_secs_f32();
+        if playing {
+            let step = pos - l.last_pos;
+            l.heard += heard_step(step, wall);
+        }
+        l.last_pos = pos;
+        l.last_tick = std::time::Instant::now();
+        let needed = current
+            .as_ref()
+            .map(|t| (t.duration().as_secs_f32() * 0.5).clamp(1.0, 30.0))
+            .unwrap_or(30.0);
+        if !l.counted && l.heard >= needed {
+            l.counted = true;
+            let stat = self.settings.plays.entry(l.path.clone()).or_default();
+            stat.count += 1;
+            stat.last = now_secs();
+        }
+        let duration = current.as_ref().map(|t| t.duration().as_secs_f32()).unwrap_or(0.0);
+        if !l.scrobbled && crate::scrobble::counts(duration, l.heard) {
+            l.scrobbled = true;
+            let started = l.started;
+            if self.settings.scrobble.any() {
+                if let Some(song) = current.as_ref().and_then(scrobble_song) {
+                    self.scrobbler.scrobble(song, started);
+                }
+            }
+        }
+    }
+
+    /// L'écoute en cours, si elle compte déjà : le morceau et les secondes entendues.
+    pub(super) fn listening_now(&self) -> Option<(PathBuf, f32)> {
+        self.listening
+            .as_ref()
+            .filter(|l| l.counted)
+            .map(|l| (l.path.clone(), l.heard))
+    }
+
+    /// Fin de l'écoute en cours (autre morceau, arrêt, fermeture) : notée si elle a compté.
+    fn finish_listen(&mut self) {
+        let Some(l) = self.listening.take() else { return };
+        if !l.counted {
+            return;
+        }
+        if let Some(stat) = self.settings.plays.get_mut(&l.path) {
+            stat.seconds += l.heard as f64;
+        }
+        let listen = crate::history::Listen {
+            time: l.started,
+            path: l.path,
+            seconds: l.heard.round() as u32,
+        };
+        crate::history::append(&listen);
+        self.listens.push(listen);
+    }
+
+    /// (Re)lance la surveillance des dossiers de musique, ou l'arrête.
+    fn restart_watch(&mut self, ctx: &egui::Context) {
+        self.watcher = if self.settings.auto_update {
+            crate::watch::Watcher::start(&self.settings.music_dirs, ctx)
+        } else {
+            Default::default()
+        };
+    }
+
+    /// Changements sur le disque : relit les fichiers touchés en arrière-plan, puis met la
+    /// bibliothèque à jour.
+    fn poll_watch(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.watch_rx {
+            match rx.try_recv() {
+                Ok(done) => {
+                    self.watch_rx = None;
+                    self.apply_watch(done);
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.watch_rx = None,
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if self.watcher.waiting() {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        // Un scan complet ou une mise à jour déjà en route : les changements attendent leur tour.
+        if self.scan_rx.is_some() || self.watch_rx.is_some() {
+            return;
+        }
+        let Some(paths) = self.watcher.poll() else { return };
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let done = match crate::watch::plan(paths) {
+                crate::watch::Plan::Rescan => WatchDone::Rescan,
+                crate::watch::Plan::Update { read, gone } => WatchDone::Update {
+                    tracks: read.iter().map(|p| library::read_track(p)).collect(),
+                    gone,
+                },
+            };
+            let _ = tx.send(done);
+            ctx.request_repaint();
+        });
+        self.watch_rx = Some(rx);
+    }
+
+    fn apply_watch(&mut self, done: WatchDone) {
+        let (tracks, gone) = match done {
+            WatchDone::Rescan => {
+                self.start_scan();
+                return;
+            }
+            WatchDone::Update { tracks, gone } => (tracks, gone),
+        };
+        let before = self.lib.tracks.len();
+        let updated: HashSet<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
+        let mut all: Vec<library::Track> = self
+            .lib
+            .tracks
+            .iter()
+            // Un chemin disparu peut être un fichier ou un dossier entier.
+            .filter(|t| !updated.contains(&t.path) && !gone.iter().any(|g| t.path.starts_with(g)))
+            .cloned()
+            .collect();
+        let removed = before - all.len();
+        // Seuls les fichiers rangés dans un dossier de la bibliothèque y entrent.
+        let dirs = &self.settings.music_dirs;
+        all.extend(
+            tracks
+                .into_iter()
+                .filter(|t| dirs.iter().any(|d| t.path.starts_with(d))),
+        );
+        let added = all.len().saturating_sub(before - removed);
+        let changed = added + removed > 0 || !updated.is_empty();
+        if !changed {
+            return;
+        }
+        let paths: Vec<PathBuf> = updated.iter().cloned().collect();
+        library::save_cache(&all);
+        self.set_library(all);
+        self.covers.forget(&paths);
+        let net_added = self.lib.tracks.len().saturating_sub(before);
+        let net_removed = before.saturating_sub(self.lib.tracks.len());
+        if net_added > 0 {
+            self.toast(trf!(
+                "Bibliothèque à jour : {0}",
+                library::plural(net_added, "morceau ajouté", "morceaux ajoutés")
+            ));
+        } else if net_removed > 0 {
+            self.toast(trf!(
+                "Bibliothèque à jour : {0}",
+                library::plural(net_removed, "morceau retiré", "morceaux retirés")
+            ));
         }
     }
 
@@ -1091,6 +1532,7 @@ impl SterMusic {
 
     pub fn playlist_tracks(&self, id: PlaylistId) -> Vec<usize> {
         match id {
+            PlaylistId::Smart(i) => self.smart_tracks(i),
             PlaylistId::Favorites => {
                 let mut v: Vec<usize> = self
                     .settings
@@ -1112,6 +1554,12 @@ impl SterMusic {
 
     pub fn playlist_name(&self, id: PlaylistId) -> String {
         match id {
+            PlaylistId::Smart(i) => self
+                .settings
+                .smart_playlists
+                .get(i)
+                .map(|p| p.name.clone())
+                .unwrap_or_default(),
             PlaylistId::Favorites => tr("Favoris").into(),
             PlaylistId::User(i) => self
                 .settings
@@ -1200,6 +1648,8 @@ impl SterMusic {
                 self.dialog = Some(Dialog::NewPlaylist { name, tracks });
             }
             Action::RemoveFromPlaylist(id, pos) => match id {
+                // Une playlist intelligente se remplit d'après ses règles : rien à retirer à la main.
+                PlaylistId::Smart(_) => {}
                 PlaylistId::Favorites => {
                     let tracks = self.playlist_tracks(id);
                     if let Some(&t) = tracks.get(pos) {
@@ -1325,6 +1775,19 @@ impl SterMusic {
                 if !self.settings.music_dirs.contains(&dir) {
                     self.settings.music_dirs.push(dir);
                     self.start_scan();
+                    self.restart_watch(ctx);
+                }
+            }
+            Action::SetAutoUpdate(on) => {
+                self.settings.auto_update = on;
+                self.restart_watch(ctx);
+            }
+            Action::NewSmartPlaylist => self.smart_edit = Some(smart::Edit::new(None, None)),
+            Action::ExportStats(per_track) => self.export_stats(per_track),
+            Action::ClearStats => self.dialog = Some(Dialog::ClearStats),
+            Action::EditSmartPlaylist(i) => {
+                if let Some(p) = self.settings.smart_playlists.get(i).cloned() {
+                    self.smart_edit = Some(smart::Edit::new(Some(i), Some(p)));
                 }
             }
             Action::RemoveFolder(i) => {
@@ -1341,12 +1804,20 @@ impl SterMusic {
                     } else {
                         self.start_scan();
                     }
+                    self.restart_watch(ctx);
                 }
             }
             Action::Rescan => self.start_scan(),
             Action::TogglePlay => self.toggle_play(),
+            Action::Next if self.radio.live.is_some() => self.step_station(ctx, 1),
+            Action::Previous if self.radio.live.is_some() => self.step_station(ctx, -1),
             Action::Next => self.next(false),
             Action::Previous => self.previous(),
+            Action::PlayStation(station) => self.play_station(ctx, station),
+            Action::ToggleStation(station) => self.toggle_saved_station(&station),
+            Action::SetSleep(kind) => self.set_sleep(kind),
+            Action::SetOutput(name) => self.set_output(name),
+            Action::ScrobbleConfig => self.scrobbler.set_config(self.settings.scrobble.clone()),
             Action::SeekTo(s) => self.seek_to(s),
             Action::SeekBy(d) => {
                 let pos = self
@@ -1560,7 +2031,9 @@ impl SterMusic {
                 Remote::Next => Action::Next,
                 Remote::Previous => Action::Previous,
                 Remote::Stop => {
-                    if let Some(p) = &mut self.player {
+                    if self.radio.live.is_some() {
+                        self.pause_station();
+                    } else if let Some(p) = &mut self.player {
                         p.stop();
                     }
                     continue;
@@ -1600,6 +2073,7 @@ impl SterMusic {
             || self.dialog.is_some()
             || self.tag_editor.modal_open()
             || self.lib_tools.open.is_some()
+            || self.radio.add.is_some()
         {
             return;
         }
@@ -1635,8 +2109,31 @@ impl SterMusic {
             let path = self.lib.tracks[i].path.clone();
             self.covers.large(&path).and_then(|l| l.file.clone())
         });
-        self.mpris
-            .set_track(current.map(|i| &self.lib.tracks[i]), cover_file.as_deref());
+        let radio_track = self.radio.live.as_ref().map(|l| library::Track {
+            path: PathBuf::from(format!("{}#{}", l.station.url, l.last_title)),
+            title: if l.last_title.is_empty() {
+                l.station.name.clone()
+            } else {
+                l.last_title.clone()
+            },
+            artist: l.station.name.clone(),
+            album: tr("Webradio").into(),
+            album_artist: String::new(),
+            genre: String::new(),
+            year: None,
+            track_no: None,
+            disc_no: None,
+            duration_ms: 0,
+            mtime: 0,
+            composer: String::new(),
+            schema: 0,
+        });
+        match &radio_track {
+            Some(t) => self.mpris.set_track(Some(t), None),
+            None => self
+                .mpris
+                .set_track(current.map(|i| &self.lib.tracks[i]), cover_file.as_deref()),
+        }
         let (state, pos) = match &self.player {
             Some(p) if p.has_track() => (
                 if p.is_paused() {
@@ -1650,9 +2147,10 @@ impl SterMusic {
         };
         self.mpris.set_state(state, pos, std::mem::take(&mut self.seeked));
 
-        let title = match current.map(|i| &self.lib.tracks[i]) {
-            Some(t) => format!("{} — {} · SterMusic", t.title, t.artist_or_unknown()),
-            None => "SterMusic".to_owned(),
+        let title = match (current.map(|i| &self.lib.tracks[i]), &radio_track) {
+            (_, Some(t)) => format!("{} — {} · SterMusic", t.title, t.artist),
+            (Some(t), None) => format!("{} — {} · SterMusic", t.title, t.artist_or_unknown()),
+            (None, None) => "SterMusic".to_owned(),
         };
         // Le script KWin garde au premier plan la fenêtre dont le titre porte cette marque.
         let title = if self.mini {
@@ -1688,6 +2186,14 @@ impl eframe::App for SterMusic {
         self.poll_tag_editor(ctx);
         self.poll_lib_tools(ctx);
         self.sync_now_loaded();
+        self.track_listen();
+        self.poll_watch(ctx);
+        self.poll_lyrics(ctx);
+        self.poll_radio(ctx);
+        self.poll_online(ctx);
+        self.focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        self.send_pending_note(ctx);
+        self.sleep_tick(ctx);
         for request in self.ipc.poll() {
             ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(ViewportCommand::Focus);
@@ -1701,8 +2207,13 @@ impl eframe::App for SterMusic {
         self.kwin.poll();
         self.apply_pending_size(ctx);
         self.handle_remote(ctx);
-        if self.player.as_ref().is_some_and(Player::finished) {
-            self.next(true);
+        // Fin d'un morceau (une webradio coupée est relancée par `poll_radio`).
+        if self.radio.live.is_none() && self.player.as_ref().is_some_and(Player::finished) {
+            if self.sleep.as_ref().is_some_and(|s| s.kind == SleepKind::EndOfTrack) {
+                self.sleep_done();
+            } else {
+                self.next(true);
+            }
         }
         self.maybe_crossfade();
         if let Some(p) = &mut self.player {
@@ -1747,7 +2258,9 @@ impl eframe::App for SterMusic {
                 .frame(egui::Frame::NONE)
                 .show(ctx, |ui| self.content(ui));
             self.dialogs(ctx);
+            self.radio_dialog(ctx);
             self.lib_tool_dialogs(ctx);
+            self.smart_dialog(ctx);
             self.toast_ui(ctx);
             chrome::apply_resize(ctx, resize);
         }
@@ -1770,6 +2283,8 @@ impl eframe::App for SterMusic {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.finish_listen();
+        self.leave_radio();
         self.kwin.stop();
         self.lib_tools.stop();
     }
@@ -1783,9 +2298,11 @@ impl eframe::App for SterMusic {
         self.settings.queue = self.paths(&self.queue);
         self.settings.queue_pos = self.queue_pos;
         self.settings.tag_prefs = self.tag_editor.prefs.clone();
+        // Pendant une webradio, le lecteur ne tient plus la position du morceau de la file.
         self.settings.position = self
             .player
             .as_ref()
+            .filter(|_| self.radio.live.is_none())
             .map(|p| p.position().as_secs_f32())
             .unwrap_or(0.0);
         eframe::set_value(storage, eframe::APP_KEY, &self.settings);
@@ -1890,5 +2407,30 @@ impl SterMusic {
         self.toast(tr(
             "SterMusic ajouté à Better Blur : KWin floute maintenant l'arrière-plan",
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::heard_step;
+
+    #[test]
+    fn listening_time() {
+        // Lecture normale, même après une longue pause d'affichage (fenêtre cachée).
+        assert_eq!(heard_step(0.25, 0.25), 0.25);
+        assert_eq!(heard_step(42.0, 42.1), 42.0);
+        // Saut de 2:00 à 4:00 : rien n'est compté ; retour en arrière non plus.
+        assert_eq!(heard_step(120.0, 0.3), 0.0);
+        assert_eq!(heard_step(-30.0, 0.3), 0.0);
+        // Écouter 2 minutes, sauter 2 minutes, écouter encore 1 minute : 3 minutes.
+        let mut heard = 0.0;
+        for _ in 0..480 {
+            heard += heard_step(0.25, 0.25);
+        }
+        heard += heard_step(120.0, 0.25);
+        for _ in 0..240 {
+            heard += heard_step(0.25, 0.25);
+        }
+        assert_eq!(heard, 180.0);
     }
 }

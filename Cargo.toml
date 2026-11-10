@@ -31,6 +31,7 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 regex = "1"
 # Glisser-déposer de fichiers sous Wayland (winit 0.30 ne le gère que sous X11) : voir `[patch]`.
 smithay-clipboard = "0.7"
+notify = { version = "8", default-features = false }
 
 # Presse-papiers Wayland d'egui, modifié pour accepter les fichiers glissés sur la fenêtre (voir
 # vendor/smithay-clipboard/README.md).

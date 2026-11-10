@@ -532,6 +532,7 @@ impl SterMusic {
         let mut renamed: Vec<PathBuf> = Vec::new();
         let mut failed: Vec<String> = Vec::new();
         let mut in_library = false;
+        let mut history_changed = false;
         for (k, new) in plan {
             let old = self.tag_editor.files[k].path.clone();
             let result = match new {
@@ -573,10 +574,14 @@ impl SterMusic {
             if let Some(player) = &mut self.player {
                 player.renamed(&old, &new);
             }
+            history_changed |= crate::history::rename(&mut self.listens, &old, &new);
             renamed.push(old);
         }
         if in_library {
             library::save_cache(&self.lib.tracks);
+        }
+        if history_changed {
+            crate::history::save(&self.listens);
         }
         self.covers.forget(&renamed);
         self.tag_editor.resort();

@@ -42,6 +42,20 @@ pub struct Track {
     pub duration_ms: u64,
     /// Date de modification du fichier (secondes) : sert au cache et à « Ajoutés récemment ».
     pub mtime: u64,
+    #[serde(default)]
+    pub composer: String,
+    /// Version de la lecture des tags : un morceau du cache lu par une version plus ancienne
+    /// (sans le compositeur, par exemple) est relu.
+    #[serde(default)]
+    pub schema: u8,
+}
+
+/// Voir `Track::schema`.
+pub const TRACK_SCHEMA: u8 = 1;
+
+/// Genres d'un morceau : le champ peut en contenir plusieurs (« Rock; Pop »).
+pub fn split_genres(genre: &str) -> impl Iterator<Item = &str> {
+    genre.split([';', '\0']).map(str::trim).filter(|g| !g.is_empty())
 }
 
 impl Track {
@@ -379,6 +393,8 @@ pub fn read_track(path: &Path) -> Track {
         disc_no: None,
         duration_ms: 0,
         mtime: mtime(path),
+        composer: String::new(),
+        schema: TRACK_SCHEMA,
     };
     if let Ok(tagged) = Probe::open(path).and_then(|p| p.read()) {
         track.duration_ms = tagged.properties().duration().as_millis() as u64;
@@ -392,6 +408,10 @@ pub fn read_track(path: &Path) -> Track {
             track.genre = get(tag.genre());
             track.album_artist = tag
                 .get_string(&ItemKey::AlbumArtist)
+                .map(|s| s.trim().to_owned())
+                .unwrap_or_default();
+            track.composer = tag
+                .get_string(&ItemKey::Composer)
                 .map(|s| s.trim().to_owned())
                 .unwrap_or_default();
             track.year = tag.year();
@@ -418,7 +438,7 @@ pub fn scan(dirs: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<ScanM
                 continue;
             }
             let track = match cache.get(path) {
-                Some(t) if t.mtime == mtime(path) => t.clone(),
+                Some(t) if t.mtime == mtime(path) && t.schema >= TRACK_SCHEMA => t.clone(),
                 _ => read_track(path),
             };
             tracks.push(track);
