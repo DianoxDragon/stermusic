@@ -39,26 +39,31 @@ pub struct GlobeState {
     selected: Option<usize>,
     /// Pays vers lequel le globe s'est tourné (il suit le choix de pays de l'annuaire).
     centered_on: Option<String>,
-    /// Image détaillée de la région affichée, celle en cours de téléchargement, et le moment
-    /// du dernier mouvement (on attend que la carte s'arrête pour la demander).
+    /// Images détaillées de la région affichée : la nouvelle, et l'ancienne qui reste dessous
+    /// le temps du fondu ; le bloc de tuiles en cours d'assemblage ; le moment du dernier
+    /// mouvement (on attend que la carte s'arrête pour demander les tuiles).
     detail: Option<DetailTex>,
-    detail_rx: Option<Receiver<Option<(DetailRequest, egui::ColorImage)>>>,
+    detail_prev: Option<DetailTex>,
+    detail_rx: Option<Receiver<Option<(globe::TileRange, egui::ColorImage)>>>,
     last_motion: f64,
-    /// Échec du téléchargement : on réessaie plus tard.
+    /// Échec du téléchargement : on réessaie un peu plus tard.
     detail_retry_at: f64,
-}
-
-/// Une image détaillée demandée : sa zone (degrés) et sa résolution (pixels par degré).
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct DetailRequest {
-    bounds: [f32; 4],
-    px_per_deg: f32,
 }
 
 struct DetailTex {
     texture: egui::TextureHandle,
-    request: DetailRequest,
+    range: globe::TileRange,
     since: f64,
+}
+
+impl DetailTex {
+    fn frame(&self, now: f64) -> globe::Detail {
+        globe::Detail {
+            texture: self.texture.id(),
+            bounds: self.range.bounds(),
+            alpha: ((now - self.since) / 0.3).clamp(0.0, 1.0) as f32,
+        }
+    }
 }
 
 impl Default for GlobeState {
@@ -79,6 +84,7 @@ impl Default for GlobeState {
             selected: None,
             centered_on: None,
             detail: None,
+            detail_prev: None,
             detail_rx: None,
             last_motion: 0.0,
             detail_retry_at: 0.0,
@@ -152,20 +158,22 @@ impl SterMusic {
                 g.detail_rx = None;
                 let now = ctx.input(|i| i.time);
                 match result {
-                    Some((request, img)) => {
+                    Some((range, img)) => {
                         let options = egui::TextureOptions {
                             magnification: egui::TextureFilter::Linear,
                             minification: egui::TextureFilter::Linear,
                             wrap_mode: egui::TextureWrapMode::ClampToEdge,
                             mipmap_mode: Some(egui::TextureFilter::Linear),
                         };
+                        // L'image d'avant reste dessous pendant que la nouvelle apparaît.
+                        g.detail_prev = g.detail.take();
                         g.detail = Some(DetailTex {
                             texture: ctx.load_texture("earth_detail", img, options),
-                            request,
+                            range,
                             since: now,
                         });
                     }
-                    None => g.detail_retry_at = now + 15.0,
+                    None => g.detail_retry_at = now + 5.0,
                 }
             }
         }
@@ -293,14 +301,19 @@ impl SterMusic {
         if moving || resp.dragged() || scrolled {
             g.last_motion = now;
         }
-        let detail_frame = g.detail.as_ref().map(|d| globe::Detail {
-            texture: d.texture.id(),
-            bounds: d.request.bounds,
-            alpha: ((now - d.since) / 0.35).clamp(0.0, 1.0) as f32,
-        });
-        if detail_frame.is_some_and(|d| d.alpha < 1.0) {
+        let fresh = g.detail.as_ref().map(|d| d.frame(now));
+        if fresh.is_some_and(|d| d.alpha >= 1.0) {
+            g.detail_prev = None;
+        } else if fresh.is_some() {
             ctx.request_repaint();
         }
+        let details = [
+            g.detail_prev.as_ref().map(|d| globe::Detail {
+                alpha: 1.0,
+                ..d.frame(now)
+            }),
+            fresh,
+        ];
         if moving || resp.dragged() || shift > 0.0 && shift < 1.0 {
             ctx.request_repaint();
         }
@@ -316,7 +329,7 @@ impl SterMusic {
                 globe::Frame {
                     view,
                     earth: tex.id(),
-                    detail: detail_frame,
+                    details,
                     glow,
                     corner: 10.0,
                 },
@@ -426,17 +439,20 @@ impl SterMusic {
 
         // Voiles dégradés en haut et en bas : l'en-tête et les légendes restent lisibles.
         let bg = theme::bg();
+        // Le voile du haut suit le coin arrondi de la zone (sinon il en dessine un carré).
         vertical_fade(
             &painter,
             Rect::from_min_max(area.min, pos2(area.right(), toolbar.bottom() + 36.0)),
             theme::alpha(bg, 0xE0),
             theme::alpha(bg, 0x00),
+            10.0,
         );
         vertical_fade(
             &painter,
             Rect::from_min_max(pos2(area.left(), area.bottom() - 56.0), area.max),
             theme::alpha(bg, 0x00),
             theme::alpha(bg, 0xB0),
+            0.0,
         );
 
         widgets::place(ui, header, |ui| {
@@ -460,57 +476,41 @@ impl SterMusic {
         );
     }
 
-    /// Demande l'image détaillée de la zone visible, une fois le globe immobile.
+    /// Demande les tuiles détaillées de la zone visible, une fois le globe immobile.
     fn request_detail(&mut self, ctx: &egui::Context, view: &View, area: Rect, now: f64) {
         let g = &mut self.radio.globe;
-        if g.zoom < 2.2 || g.detail_rx.is_some() || now < g.detail_retry_at || !globe::available() {
+        if g.zoom < 1.4 || g.detail_rx.is_some() || now < g.detail_retry_at || !globe::available() {
             return;
         }
         let still = now - g.last_motion;
-        if still < 0.4 {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.45 - still));
+        if still < 0.25 {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.3 - still));
             return;
         }
-        let Some(request) = detail_request(view, area, ctx.pixels_per_point()) else {
+        let Some((bounds, need)) = visible_area(view, area, ctx.pixels_per_point()) else {
             return;
         };
-        // L'image déjà là couvre la zone, assez finement : rien à faire.
-        if let Some(d) = &g.detail {
-            let [a0, b0, a1, b1] = d.request.bounds;
-            let [c0, e0, c1, e1] = request.bounds;
-            let covers = a0 <= c0 + 0.01 && b0 <= e0 + 0.01 && a1 >= c1 - 0.01 && b1 >= e1 - 0.01;
-            if covers && d.request.px_per_deg >= request.px_per_deg * 0.7 {
-                return;
-            }
+        // Le niveau le moins fin qui suffit à l'écran ; moins fin encore si la zone demande
+        // trop de tuiles.
+        let mut level = (globe::MIN_LEVEL..=globe::MAX_LEVEL)
+            .find(|&l| globe::level_px_per_deg(l) >= need * 0.85)
+            .unwrap_or(globe::MAX_LEVEL);
+        let mut range = globe::TileRange::covering(bounds, level);
+        while range.count() > globe::MAX_TILES && level > globe::MIN_LEVEL {
+            level -= 1;
+            range = globe::TileRange::covering(bounds, level);
         }
-        // Un peu de marge autour de ce qu'on voit : un petit déplacement reste détaillé.
-        let [lat0, lon0, lat1, lon1] = request.bounds;
-        let (mlat, mlon) = ((lat1 - lat0) * 0.2, (lon1 - lon0) * 0.2);
-        let bounds = [
-            (lat0 - mlat).max(-85.0),
-            (lon0 - mlon).max(-180.0),
-            (lat1 + mlat).min(85.0),
-            (lon1 + mlon).min(180.0),
-        ];
-        let mid_lat = ((bounds[0] + bounds[2]) * 0.5).to_radians().cos().max(0.2);
-        let mut w = (bounds[3] - bounds[1]) * request.px_per_deg * mid_lat;
-        let mut h = (bounds[2] - bounds[0]) * request.px_per_deg;
-        let fit = (2048.0 / w).min(2048.0 / h).min(1.0);
-        w *= fit;
-        h *= fit;
-        let request = DetailRequest {
-            bounds,
-            px_per_deg: request.px_per_deg * fit,
-        };
+        if range.count() > globe::MAX_TILES {
+            return;
+        }
+        // L'image déjà là couvre la zone assez finement : rien à faire.
+        if g.detail.as_ref().is_some_and(|d| d.range.contains(&range)) {
+            return;
+        }
         let (tx, rx) = channel();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let img = globe::fetch_detail(
-                request.bounds,
-                w.round().max(64.0) as u32,
-                h.round().max(64.0) as u32,
-            );
-            let _ = tx.send(img.map(|i| (request, i)));
+            let _ = tx.send(globe::mosaic(range).map(|img| (range, img)));
             ctx.request_repaint();
         });
         g.detail_rx = Some(rx);
@@ -701,21 +701,41 @@ impl SterMusic {
     }
 }
 
-/// Rectangle en dégradé vertical (voile au-dessus de la carte).
-fn vertical_fade(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) {
+/// Rectangle en dégradé vertical (voile au-dessus de la carte), le coin haut gauche arrondi
+/// de `corner` points.
+fn vertical_fade(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32, corner: f32) {
+    let color_at = |y: f32| {
+        let t = ((y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+        top.lerp_to_gamma(bottom, t)
+    };
+    // Contour (convexe) : l'arrondi du coin, puis les trois autres coins.
+    let mut outline = Vec::new();
+    if corner > 0.0 {
+        let c = rect.left_top() + vec2(corner, corner);
+        for k in 0..=8 {
+            let a = std::f32::consts::PI + std::f32::consts::FRAC_PI_2 * k as f32 / 8.0;
+            outline.push(c + corner * vec2(a.cos(), a.sin()));
+        }
+    } else {
+        outline.push(rect.left_top());
+    }
+    outline.extend([rect.right_top(), rect.right_bottom(), rect.left_bottom()]);
     let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(rect.left_top(), top);
-    mesh.colored_vertex(rect.right_top(), top);
-    mesh.colored_vertex(rect.left_bottom(), bottom);
-    mesh.colored_vertex(rect.right_bottom(), bottom);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(1, 3, 2);
+    let center = rect.center();
+    mesh.colored_vertex(center, color_at(center.y));
+    for p in &outline {
+        mesh.colored_vertex(*p, color_at(p.y));
+    }
+    let n = outline.len() as u32;
+    for k in 0..n {
+        mesh.add_triangle(0, 1 + k, 1 + (k + 1) % n);
+    }
     painter.add(mesh);
 }
 
-/// La zone de la Terre visible dans `area` (degrés), et la résolution qu'il y faudrait ; `None`
-/// si elle est trop grande (globe entier) ou qu'elle chevauche la ligne de changement de date.
-fn detail_request(view: &View, area: Rect, ppp: f32) -> Option<DetailRequest> {
+/// La zone de la Terre visible dans `area` (degrés), et les pixels d'écran par degré qu'il y
+/// faudrait ; `None` si elle est trop grande (globe entier).
+fn visible_area(view: &View, area: Rect, ppp: f32) -> Option<([f32; 4], f32)> {
     let mut lats = Vec::new();
     let mut lons = Vec::new();
     for i in 0..=12 {
@@ -736,13 +756,9 @@ fn detail_request(view: &View, area: Rect, ppp: f32) -> Option<DetailRequest> {
     let min = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
     let max = |v: &[f32]| v.iter().copied().fold(f32::MIN, f32::max);
     let (lat0, lat1, lon0, lon1) = (min(&lats), max(&lats), min(&lons), max(&lons));
-    if lon1 - lon0 > 120.0 || lat1 - lat0 > 90.0 {
+    if lon1 - lon0 > 150.0 || lat1 - lat0 > 100.0 {
         return None;
     }
-    // Pixels d'écran par degré au centre du globe.
     let need = view.radius * ppp * std::f32::consts::PI / 180.0;
-    Some(DetailRequest {
-        bounds: [lat0, lon0, lat1, lon1],
-        px_per_deg: need.min(globe::DETAIL_MAX_PX_PER_DEG),
-    })
+    Some(([lat0, lon0, lat1, lon1], need))
 }

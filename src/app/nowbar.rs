@@ -131,7 +131,11 @@ impl SterMusic {
                     } else {
                         0.4
                     };
-                    painter.circle_filled(dot, 4.0, Color32::from_rgb(0xE5, 0x48, 0x4D).gamma_multiply(pulse));
+                    painter.circle_filled(
+                        dot,
+                        4.0,
+                        Color32::from_rgb(0xE5, 0x48, 0x4D).gamma_multiply(pulse),
+                    );
                     painter.text(
                         pos2(dot.x + 9.0, bar_y),
                         Align2::LEFT_CENTER,
@@ -295,7 +299,7 @@ impl SterMusic {
                 let can_play = self.player.is_some()
                     && (!self.lib.is_empty() || st.track.is_some() || st.radio.is_some());
                 let controls =
-                    Rect::from_center_size(pos2(row.center().x, cy), vec2(5.0 * 44.0 + 12.0, 52.0));
+                    Rect::from_center_size(pos2(row.center().x, cy), vec2(6.0 * 44.0 + 12.0, 52.0));
                 ui.scope_builder(
                     UiBuilder::new()
                         .max_rect(controls)
@@ -401,6 +405,22 @@ impl SterMusic {
         if widgets::icon_button(ui, Icon::SkipForward, tr("Suivant (Ctrl+→)"), size, 19.0).clicked() {
             self.actions.push(Action::Next);
         }
+        // Arrêter : plus rien en lecture, la file d'attente reste.
+        let active = self.player.as_ref().is_some_and(|p| p.has_track())
+            || self.radio.live.is_some()
+            || self.radio.connecting_to().is_some();
+        let stop = ui.add_enabled_ui(active, |ui| {
+            widgets::icon_button(
+                ui,
+                Icon::MediaStop,
+                tr("Arrêter (la file d'attente est gardée)"),
+                size,
+                16.0,
+            )
+        });
+        if stop.inner.clicked() {
+            self.actions.push(Action::Stop);
+        }
         let (icon, tip) = match self.settings.repeat {
             Repeat::Off => (Icon::Repeat, tr("Répétition : désactivée")),
             Repeat::All => (Icon::Repeat, tr("Répétition : toute la file")),
@@ -440,7 +460,11 @@ impl SterMusic {
         }
         // Clic droit : choisir la sortie audio.
         resp.context_menu(|ui| {
-            ui.label(egui::RichText::new(tr("Sortie audio")).small().color(theme::TEXT_3));
+            ui.label(
+                egui::RichText::new(tr("Sortie audio"))
+                    .small()
+                    .color(theme::TEXT_3),
+            );
             self.output_menu(ui);
         });
     }
@@ -449,7 +473,10 @@ impl SterMusic {
     fn sleep_button(&mut self, ui: &mut egui::Ui) {
         let remaining = self.sleep_remaining();
         let tip = match remaining {
-            Some(r) => trf!("Minuterie de sommeil : arrêt dans {0}", super::settings_extra::fmt_remaining(r)),
+            Some(r) => trf!(
+                "Minuterie de sommeil : arrêt dans {0}",
+                super::settings_extra::fmt_remaining(r)
+            ),
             None => tr("Minuterie de sommeil").to_owned(),
         };
         let on = self.sleep.is_some();
@@ -481,7 +508,13 @@ impl SterMusic {
         let max_w = info_w - 70.0;
         let cy = cover_rect.center().y;
         let title = widgets::galley(ui, &radio.title, theme::semibold(14.0), theme::TEXT, max_w);
-        let sub = widgets::galley(ui, &radio.status, FontId::proportional(12.5), theme::TEXT_2, max_w);
+        let sub = widgets::galley(
+            ui,
+            &radio.status,
+            FontId::proportional(12.5),
+            theme::TEXT_2,
+            max_w,
+        );
         let text_w = title.size().x.max(sub.size().x);
         let zone = Rect::from_min_max(
             pos2(cover_rect.left() - 6.0, cover_rect.top() - 5.0),
@@ -490,8 +523,11 @@ impl SterMusic {
         let resp = ui.interact(zone, ui.id().with("nowbar_radio"), Sense::click());
         let hover = widgets::hover_t(ui, resp.id, resp.hovered());
         if hover > 0.0 {
-            ui.painter()
-                .rect_filled(zone, CornerRadius::same(8), theme::white((0x10 as f32 * hover) as u8));
+            ui.painter().rect_filled(
+                zone,
+                CornerRadius::same(8),
+                theme::white((0x10 as f32 * hover) as u8),
+            );
         }
         if resp
             .on_hover_cursor(egui::CursorIcon::PointingHand)

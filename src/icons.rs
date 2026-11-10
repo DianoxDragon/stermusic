@@ -106,6 +106,7 @@ icons! {
     Feather => "feather.svg",
     Shapes => "shapes.svg",
     Link => "link.svg",
+    MediaStop => "stop-filled.svg",
 }
 
 /// Rectangle aligné sur la grille des pixels physiques.
@@ -177,6 +178,7 @@ fn breeze_name(icon: Icon) -> Option<&'static str> {
         Timer => "chronometer",
         Bell => "notifications",
         Calendar => "view-calendar",
+        MediaStop => "media-playback-stop",
         _ => return None,
     })
 }

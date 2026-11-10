@@ -840,4 +840,5 @@ pub const EN: &[(&str, &str)] = &[
     ("lieux", "places"),
     ("station", "station"),
     ("stations", "stations"),
+    ("Arrêter (la file d'attente est gardée)", "Stop (the queue is kept)"),
 ];

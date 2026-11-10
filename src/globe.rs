@@ -89,7 +89,7 @@ struct Resources {
     srgb_textures: bool,
 }
 
-const UNIFORMS: [&str; 10] = [
+const UNIFORMS: [&str; 13] = [
     "u_rect",
     "u_globe",
     "u_rot",
@@ -97,9 +97,12 @@ const UNIFORMS: [&str; 10] = [
     "u_srgb",
     "u_glow",
     "u_corner",
-    "u_detail",
-    "u_detail_box",
-    "u_detail_alpha",
+    "u_detail0",
+    "u_detail0_box",
+    "u_detail0_alpha",
+    "u_detail1",
+    "u_detail1_box",
+    "u_detail1_alpha",
 ];
 
 /// Image détaillée d'une région, posée sur la Terre de base quand on zoome.
@@ -118,7 +121,8 @@ pub struct Frame {
     pub view: View,
     /// Image de la Terre entière.
     pub earth: egui::TextureId,
-    pub detail: Option<Detail>,
+    /// Images détaillées : l'ancienne (dessous) et la nouvelle, qui apparaît en fondu.
+    pub details: [Option<Detail>; 2],
     /// Couleur de l'atmosphère.
     pub glow: egui::Color32,
     /// Rayon du coin haut gauche de la zone (points).
@@ -142,10 +146,10 @@ pub fn paint(painter: &egui::Painter, rect: Rect, frame: Frame) {
         let (Some(res), Some(earth)) = (resources.as_ref(), painter.texture(frame.earth)) else {
             return;
         };
-        let detail = frame
-            .detail
-            .and_then(|d| painter.texture(d.texture).map(|t| (t, d)));
-        unsafe { draw(painter.gl(), res, &info, rect, &frame, earth, detail) };
+        let details = frame
+            .details
+            .map(|d| d.and_then(|d| painter.texture(d.texture).map(|t| (t, d))));
+        unsafe { draw(painter.gl(), res, &info, rect, &frame, earth, details) };
     });
     painter.add(egui::Shape::Callback(egui::PaintCallback {
         rect,
@@ -161,15 +165,31 @@ uniform sampler2D u_tex;
 uniform int u_srgb;
 uniform vec3 u_glow;    // couleur de l'atmosphère
 uniform float u_corner; // rayon du coin haut gauche (pixels), celui de la zone de contenu
-uniform sampler2D u_detail;     // image détaillée d'une région
-uniform vec4 u_detail_box;      // latitude min, longitude min, latitude max, longitude max (degrés)
-uniform float u_detail_alpha;   // 0 : pas d'image détaillée
+// Images détaillées de régions (l'ancienne, puis la nouvelle par-dessus) : zone en degrés
+// (latitude min, longitude min, latitude max, longitude max) et opacité (0 : aucune).
+uniform sampler2D u_detail0;
+uniform vec4 u_detail0_box;
+uniform float u_detail0_alpha;
+uniform sampler2D u_detail1;
+uniform vec4 u_detail1_box;
+uniform float u_detail1_alpha;
 out vec4 out_color;
 
 const float PI = 3.14159265;
 
 vec3 srgb_from_linear(vec3 c) {
     return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, vec3(lessThan(c, vec3(0.0031308))));
+}
+
+// Une image détaillée, fondue sur ses bords dans ce qui est dessous ; ses trous (tuiles
+// manquantes) sont transparents.
+vec3 detail(vec3 col, sampler2D tex, vec4 box, float alpha, float lat, float lon) {
+    vec2 duv = vec2((lon - box.y) / (box.w - box.y), (box.z - lat) / (box.z - box.x));
+    if (alpha <= 0.0 || duv.x <= 0.0 || duv.x >= 1.0 || duv.y <= 0.0 || duv.y >= 1.0) return col;
+    vec2 edge = min(duv, 1.0 - duv);
+    float feather = smoothstep(0.0, 0.04, min(edge.x, edge.y));
+    vec4 d = textureGrad(tex, duv, dFdx(duv), dFdy(duv));
+    return mix(col, d.rgb / max(d.a, 0.001), feather * alpha * d.a);
 }
 
 float corner_mask(vec2 p) {
@@ -204,19 +224,11 @@ void main() {
     dx.x -= sign(dx.x) * step(0.5, abs(dx.x));
     dy.x -= sign(dy.x) * step(0.5, abs(dy.x));
     vec3 col = textureGrad(u_tex, uv, dx, dy).rgb;
-    // Image détaillée de la région affichée, fondue sur ses bords dans la Terre de base.
-    if (u_detail_alpha > 0.0) {
-        float lat = degrees(phi);
-        float lon = mod(degrees(lam) + 180.0, 360.0) - 180.0;
-        vec2 duv = vec2((lon - u_detail_box.y) / (u_detail_box.w - u_detail_box.y),
-                        (u_detail_box.z - lat) / (u_detail_box.z - u_detail_box.x));
-        if (duv.x > 0.0 && duv.x < 1.0 && duv.y > 0.0 && duv.y < 1.0) {
-            vec2 edge = min(duv, 1.0 - duv);
-            float feather = smoothstep(0.0, 0.06, min(edge.x, edge.y));
-            vec3 dcol = textureGrad(u_detail, duv, dFdx(duv), dFdy(duv)).rgb;
-            col = mix(col, dcol, feather * u_detail_alpha);
-        }
-    }
+    // Images détaillées de la région affichée, par-dessus la Terre de base.
+    float lat = degrees(phi);
+    float lon = mod(degrees(lam) + 180.0, 360.0) - 180.0;
+    col = detail(col, u_detail0, u_detail0_box, u_detail0_alpha, lat, lon);
+    col = detail(col, u_detail1, u_detail1_box, u_detail1_alpha, lat, lon);
     if (u_srgb == 1) col = srgb_from_linear(col);
     // Aux pôles, l'image se resserre en un point (traînées en étoile) : on la fond dans la
     // teinte moyenne de ses bords (océan Arctique en haut, banquise en bas).
@@ -301,7 +313,7 @@ unsafe fn draw(
     rect: Rect,
     frame: &Frame,
     earth: glow::Texture,
-    detail: Option<(glow::Texture, Detail)>,
+    details: [Option<(glow::Texture, Detail)>; 2],
 ) {
     let vp = info.viewport_in_pixels();
     let ppp = info.pixels_per_point;
@@ -329,53 +341,165 @@ unsafe fn draw(
         gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, Some(earth));
         gl.uniform_1_i32(l("u_tex"), 0);
-        match detail {
-            Some((tex, d)) => {
-                gl.active_texture(glow::TEXTURE1);
-                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-                gl.uniform_1_i32(l("u_detail"), 1);
-                let [a, b, c, e] = d.bounds;
-                gl.uniform_4_f32(l("u_detail_box"), a, b, c, e);
-                gl.uniform_1_f32(l("u_detail_alpha"), d.alpha);
+        for (k, detail) in details.iter().enumerate() {
+            let name = |what: &str| format!("u_detail{k}{what}");
+            // Toujours une texture liée à chaque unité (celle de la Terre à défaut).
+            gl.active_texture(glow::TEXTURE1 + k as u32);
+            gl.bind_texture(glow::TEXTURE_2D, Some(detail.map_or(earth, |(t, _)| t)));
+            gl.uniform_1_i32(l(&name("")), 1 + k as i32);
+            match detail {
+                Some((_, d)) => {
+                    let [a, b, c, e] = d.bounds;
+                    gl.uniform_4_f32(l(&name("_box")), a, b, c, e);
+                    gl.uniform_1_f32(l(&name("_alpha")), d.alpha);
+                }
+                None => gl.uniform_1_f32(l(&name("_alpha")), 0.0),
             }
-            None => gl.uniform_1_f32(l("u_detail_alpha"), 0.0),
         }
         gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
         gl.bind_vertex_array(None);
-        if detail.is_some() {
+        for k in (1..=2).rev() {
+            gl.active_texture(glow::TEXTURE0 + k);
             gl.bind_texture(glow::TEXTURE_2D, None);
-            gl.active_texture(glow::TEXTURE0);
         }
+        gl.active_texture(glow::TEXTURE0);
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.use_program(None);
     }
 }
 
-/// Résolution la plus fine de l'image détaillée de la NASA (pixels par degré, 500 m environ).
-pub const DETAIL_MAX_PX_PER_DEG: f32 = 220.0;
+// ---------- Tuiles détaillées (NASA GIBS) ----------
 
-/// Télécharge l'image satellite d'une région (NASA GIBS, Blue Marble avec relief, domaine
-/// public) : `bounds` en degrés, comme [`Detail::bounds`] ; bloquant.
-pub fn fetch_detail(bounds: [f32; 4], width: u32, height: u32) -> Option<egui::ColorImage> {
-    let [lat0, lon0, lat1, lon1] = bounds;
+/// Niveaux de tuiles utilisés : en dessous de 3, la Terre de base est aussi fine ; 7 est le
+/// plus fin que propose la NASA pour cette image (500 m par pixel environ).
+pub const MIN_LEVEL: u32 = 3;
+pub const MAX_LEVEL: u32 = 7;
+const TILE_PX: u32 = 512;
+/// Au-delà, la zone est trop grande pour une seule image détaillée.
+pub const MAX_TILES: u32 = 36;
+
+/// Côté d'une tuile en degrés (288° au niveau 0, moitié moins à chaque niveau).
+pub fn tile_deg(level: u32) -> f32 {
+    288.0 / (1u32 << level) as f32
+}
+
+/// Pixels par degré des tuiles d'un niveau.
+pub fn level_px_per_deg(level: u32) -> f32 {
+    TILE_PX as f32 / tile_deg(level)
+}
+
+/// Un bloc de tuiles d'un même niveau : lignes et colonnes (fin exclue).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TileRange {
+    pub level: u32,
+    pub rows: (u32, u32),
+    pub cols: (u32, u32),
+}
+
+impl TileRange {
+    /// Les tuiles qui couvrent une zone (degrés, comme [`Detail::bounds`]).
+    pub fn covering(bounds: [f32; 4], level: u32) -> Self {
+        let td = tile_deg(level);
+        let max_row = (180.0 / td).ceil() as u32;
+        let max_col = (360.0 / td).ceil() as u32;
+        let [lat0, lon0, lat1, lon1] = bounds;
+        let row = |lat: f32| (((90.0 - lat) / td).floor().max(0.0) as u32).min(max_row - 1);
+        let col = |lon: f32| (((lon + 180.0) / td).floor().max(0.0) as u32).min(max_col - 1);
+        Self {
+            level,
+            rows: (row(lat1), row(lat0) + 1),
+            cols: (col(lon0), col(lon1) + 1),
+        }
+    }
+
+    pub fn count(&self) -> u32 {
+        (self.rows.1 - self.rows.0) * (self.cols.1 - self.cols.0)
+    }
+
+    /// Zone couverte (degrés).
+    pub fn bounds(&self) -> [f32; 4] {
+        let td = tile_deg(self.level);
+        [
+            90.0 - self.rows.1 as f32 * td,
+            -180.0 + self.cols.0 as f32 * td,
+            90.0 - self.rows.0 as f32 * td,
+            -180.0 + self.cols.1 as f32 * td,
+        ]
+    }
+
+    /// Vrai si `other` est entièrement couvert, au moins aussi finement.
+    pub fn contains(&self, other: &TileRange) -> bool {
+        if other.level > self.level {
+            return false;
+        }
+        let a = self.bounds();
+        let b = other.bounds();
+        a[0] <= b[0] + 1e-3 && a[1] <= b[1] + 1e-3 && a[2] >= b[2] - 1e-3 && a[3] >= b[3] - 1e-3
+    }
+}
+
+fn tile_file(level: u32, row: u32, col: u32) -> std::path::PathBuf {
+    crate::library::cache_dir()
+        .join("globe")
+        .join(level.to_string())
+        .join(format!("{row}_{col}.jpg"))
+}
+
+/// Une tuile : depuis le cache du disque, sinon téléchargée (puis gardée).
+fn tile(agent: &ureq::Agent, level: u32, row: u32, col: u32) -> Option<image::RgbaImage> {
+    let file = tile_file(level, row, col);
+    if let Ok(bytes) = std::fs::read(&file) {
+        if let Ok(img) = image::load_from_memory(&bytes) {
+            return Some(img.to_rgba8());
+        }
+    }
     let url = format!(
-        "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap\
-         &VERSION=1.3.0&LAYERS=BlueMarble_ShadedRelief_Bathymetry&STYLES=&CRS=EPSG:4326\
-         &BBOX={lat0:.4},{lon0:.4},{lat1:.4},{lon1:.4}&WIDTH={width}&HEIGHT={height}&FORMAT=image/jpeg"
+        "https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/BlueMarble_ShadedRelief_Bathymetry/default/500m/\
+         {level}/{row}/{col}.jpeg"
     );
-    let resp = ureq::AgentBuilder::new()
-        .user_agent(concat!("SterMusic/", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(25))
-        .build()
-        .get(&url)
-        .call()
-        .ok()?;
+    let resp = agent.get(&url).call().ok()?;
     if !resp.content_type().starts_with("image/") {
         return None;
     }
     let mut bytes = Vec::new();
-    std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 16 << 20), &mut bytes).ok()?;
+    std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 4 << 20), &mut bytes).ok()?;
     let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+        let _ = std::fs::write(&file, &bytes);
+    }
+    Some(img)
+}
+
+/// Assemble un bloc de tuiles en une image (tuiles téléchargées en parallèle ; une tuile
+/// manquante reste transparente). `None` si aucune n'a pu être obtenue. Bloquant.
+pub fn mosaic(range: TileRange) -> Option<egui::ColorImage> {
+    let agent = ureq::AgentBuilder::new()
+        .user_agent(concat!("SterMusic/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(20))
+        .build();
+    let (nr, nc) = (range.rows.1 - range.rows.0, range.cols.1 - range.cols.0);
+    let keys: Vec<(u32, u32)> = (0..nr).flat_map(|r| (0..nc).map(move |c| (r, c))).collect();
+    let mut tiles: Vec<Option<image::RgbaImage>> = vec![None; keys.len()];
+    std::thread::scope(|scope| {
+        for (chunk_keys, chunk_out) in keys.chunks(6).zip(tiles.chunks_mut(6)) {
+            let agent = &agent;
+            scope.spawn(move || {
+                for ((r, c), out) in chunk_keys.iter().zip(chunk_out.iter_mut()) {
+                    *out = tile(agent, range.level, range.rows.0 + r, range.cols.0 + c);
+                }
+            });
+        }
+    });
+    if tiles.iter().all(Option::is_none) {
+        return None;
+    }
+    let mut img = image::RgbaImage::new(nc * TILE_PX, nr * TILE_PX);
+    for ((r, c), t) in keys.iter().zip(&tiles) {
+        if let Some(t) = t {
+            image::imageops::replace(&mut img, t, (*c * TILE_PX) as i64, (*r * TILE_PX) as i64);
+        }
+    }
     Some(egui::ColorImage::from_rgba_unmultiplied(
         [img.width() as usize, img.height() as usize],
         img.as_raw(),
@@ -421,6 +545,18 @@ mod tests {
         assert!(view.project(-48.85, -177.65).is_none());
         // Nord en haut : Londres est au-dessus de Paris.
         assert!(view.project(51.5, -0.12).unwrap().0.y < view.center.y);
+    }
+
+    #[test]
+    fn tiles() {
+        // La tuile 7/18/78 couvre l'ouest de la Bretagne (vérifié sur le serveur de la NASA).
+        let r = TileRange::covering([47.5, -4.0, 48.5, -3.0], 7);
+        assert_eq!((r.rows, r.cols), ((18, 19), (78, 79)));
+        assert_eq!(r.bounds(), [47.25, -4.5, 49.5, -2.25]);
+        let wide = TileRange::covering([40.0, -10.0, 52.0, 10.0], 5);
+        assert!(wide.contains(&TileRange::covering([45.0, -5.0, 46.0, -4.0], 5)));
+        assert!(!wide.contains(&r)); // plus fin : pas couvert
+        assert!(level_px_per_deg(MAX_LEVEL) > 220.0);
     }
 
     #[test]

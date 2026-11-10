@@ -361,6 +361,8 @@ pub enum Action {
     ReplayGain(Vec<PathBuf>, String),
     /// Écoute une webradio.
     PlayStation(crate::radio::Station),
+    /// Arrête la lecture (morceau ou webradio) : plus rien en cours, la file d'attente reste.
+    Stop,
     /// Ajoute une station à « Mes stations », ou l'en retire.
     ToggleStation(crate::radio::Station),
     /// Minuterie de sommeil (ou `None` pour l'arrêter).
@@ -584,6 +586,8 @@ pub struct SterMusic {
     outputs: Vec<crate::outputs::Output>,
     online: settings_extra::OnlineState,
     egui_ctx: egui::Context,
+    /// Place dans la file du morceau arrêté (bouton Arrêter) : « Lecture » y reprend.
+    stopped_at: Option<usize>,
 }
 
 /// Morceaux d'une playlist intelligente déjà calculés : empreinte des règles, heure du calcul.
@@ -785,6 +789,7 @@ impl SterMusic {
             outputs: Vec::new(),
             online: Default::default(),
             egui_ctx: cc.egui_ctx.clone(),
+            stopped_at: None,
             settings,
         };
         if !app.settings.smart_seeded {
@@ -1158,6 +1163,7 @@ impl SterMusic {
         // Une lecture choisie remplace la file du dernier lancement : sans cela, la fin du premier
         // scan (bibliothèque encore vide au démarrage) restaurait l'ancienne file par-dessus.
         self.restored = true;
+        self.stopped_at = None;
         self.queue = tracks;
         self.queue_pos = Some(start.min(self.queue.len() - 1));
         self.unshuffled = None;
@@ -1213,10 +1219,35 @@ impl SterMusic {
             self.seeked = true;
         } else if self.current().is_some() {
             self.play_current();
+        } else if !self.queue.is_empty() {
+            // Après « Arrêter » : la file reprend au morceau arrêté.
+            let pos = self.stopped_at.take().filter(|&p| p < self.queue.len()).unwrap_or(0);
+            self.queue_pos = Some(pos);
+            self.play_current();
         } else if !self.lib.is_empty() {
             let all: Vec<usize> = self.sorted_songs().to_vec();
             self.play_list(all, 0);
         }
+    }
+
+    /// Bouton Arrêter : coupe le morceau ou la webradio en cours ; il n'y a plus rien en
+    /// lecture, mais la file d'attente reste telle quelle.
+    fn stop_playback(&mut self) {
+        self.leave_radio();
+        if let Some(p) = &mut self.player {
+            p.stop();
+        }
+        self.finish_listen();
+        if self.queue_pos.is_some() {
+            self.stopped_at = self.queue_pos;
+        }
+        self.queue_pos = None;
+        self.pending_note = None;
+        if self.sleep.take().is_some() {
+            self.sleep_gain = 1.0;
+            self.apply_volume();
+        }
+        self.seeked = true;
     }
 
     /// Morceau suivant ; `auto` quand le précédent s'est terminé tout seul.
@@ -1708,6 +1739,9 @@ impl SterMusic {
                 }
                 self.queue.remove(pos);
                 self.unshuffled = None;
+                if let Some(s) = self.stopped_at {
+                    self.stopped_at = (pos != s).then(|| if pos < s { s - 1 } else { s });
+                }
                 match self.queue_pos {
                     Some(cur) if pos < cur => self.queue_pos = Some(cur - 1),
                     Some(cur) if pos == cur => {
@@ -1749,6 +1783,7 @@ impl SterMusic {
             Action::QueueClear => {
                 self.queue.clear();
                 self.queue_pos = None;
+                self.stopped_at = None;
                 self.unshuffled = None;
                 if let Some(p) = &mut self.player {
                     p.stop();
@@ -1813,6 +1848,7 @@ impl SterMusic {
             }
             Action::Rescan => self.start_scan(),
             Action::TogglePlay => self.toggle_play(),
+            Action::Stop => self.stop_playback(),
             Action::Next if self.radio.live.is_some() => self.step_station(ctx, 1),
             Action::Previous if self.radio.live.is_some() => self.step_station(ctx, -1),
             Action::Next => self.next(false),
@@ -2034,14 +2070,7 @@ impl SterMusic {
                 Remote::Toggle => Action::TogglePlay,
                 Remote::Next => Action::Next,
                 Remote::Previous => Action::Previous,
-                Remote::Stop => {
-                    if self.radio.live.is_some() {
-                        self.pause_station();
-                    } else if let Some(p) = &mut self.player {
-                        p.stop();
-                    }
-                    continue;
-                }
+                Remote::Stop => Action::Stop,
                 Remote::SeekBy(d) => Action::SeekBy(d),
                 Remote::SetPosition(d) => Action::SeekTo(d.as_secs_f32()),
                 Remote::Raise => {
