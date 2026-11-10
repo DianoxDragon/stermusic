@@ -1,6 +1,7 @@
-//! Globe terrestre dessiné par la carte graphique : l'image satellite (« Whole world – land and
-//! oceans », NASA, domaine public) projetée sur une sphère vue de face, avec un liseré
-//! d'atmosphère. Les stations sont placées par-dessus avec [`View::project`].
+//! Globe terrestre dessiné par la carte graphique : l'image satellite (Blue Marble avec relief,
+//! NASA GIBS, domaine public) projetée sur une sphère vue de face, avec un liseré d'atmosphère.
+//! En zoomant, une image plus détaillée de la région affichée est téléchargée et fondue
+//! par-dessus. Les stations sont placées avec [`View::project`].
 
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -88,25 +89,49 @@ struct Resources {
     srgb_textures: bool,
 }
 
-const UNIFORMS: [&str; 7] = [
-    "u_rect", "u_globe", "u_rot", "u_tex", "u_srgb", "u_glow", "u_corner",
+const UNIFORMS: [&str; 10] = [
+    "u_rect",
+    "u_globe",
+    "u_rot",
+    "u_tex",
+    "u_srgb",
+    "u_glow",
+    "u_corner",
+    "u_detail",
+    "u_detail_box",
+    "u_detail_alpha",
 ];
+
+/// Image détaillée d'une région, posée sur la Terre de base quand on zoome.
+#[derive(Clone, Copy, Debug)]
+pub struct Detail {
+    pub texture: egui::TextureId,
+    /// Latitude et longitude minimales, puis maximales (degrés).
+    pub bounds: [f32; 4],
+    /// Opacité (fondu d'apparition).
+    pub alpha: f32,
+}
+
+/// Ce qu'il faut pour dessiner une image du globe.
+#[derive(Clone, Copy)]
+pub struct Frame {
+    pub view: View,
+    /// Image de la Terre entière.
+    pub earth: egui::TextureId,
+    pub detail: Option<Detail>,
+    /// Couleur de l'atmosphère.
+    pub glow: egui::Color32,
+    /// Rayon du coin haut gauche de la zone (points).
+    pub corner: f32,
+}
 
 /// Faux si le pilote a refusé le shader (le globe est alors dessiné sans l'image).
 pub fn available() -> bool {
     STATE.load(Ordering::Relaxed) != 2
 }
 
-/// Dessine le globe dans `rect` (la texture est l'image de la Terre, chargée par egui).
-pub fn paint(
-    painter: &egui::Painter,
-    rect: Rect,
-    view: View,
-    texture: egui::TextureId,
-    glow_color: egui::Color32,
-    corner: f32,
-) {
-    let glow = egui::Rgba::from(glow_color);
+/// Dessine le globe dans `rect`.
+pub fn paint(painter: &egui::Painter, rect: Rect, frame: Frame) {
     let callback = egui_glow::CallbackFn::new(move |info, painter| {
         let mut guard = RESOURCES.lock().unwrap();
         let resources = guard.get_or_insert_with(|| {
@@ -114,21 +139,13 @@ pub fn paint(
             STATE.store(if r.is_some() { 1 } else { 2 }, Ordering::Relaxed);
             r
         });
-        let (Some(res), Some(tex)) = (resources.as_ref(), painter.texture(texture)) else {
+        let (Some(res), Some(earth)) = (resources.as_ref(), painter.texture(frame.earth)) else {
             return;
         };
-        unsafe {
-            draw(
-                painter.gl(),
-                res,
-                &info,
-                rect,
-                view,
-                tex,
-                [glow.r(), glow.g(), glow.b()],
-                corner,
-            )
-        };
+        let detail = frame
+            .detail
+            .and_then(|d| painter.texture(d.texture).map(|t| (t, d)));
+        unsafe { draw(painter.gl(), res, &info, rect, &frame, earth, detail) };
     });
     painter.add(egui::Shape::Callback(egui::PaintCallback {
         rect,
@@ -144,6 +161,9 @@ uniform sampler2D u_tex;
 uniform int u_srgb;
 uniform vec3 u_glow;    // couleur de l'atmosphère
 uniform float u_corner; // rayon du coin haut gauche (pixels), celui de la zone de contenu
+uniform sampler2D u_detail;     // image détaillée d'une région
+uniform vec4 u_detail_box;      // latitude min, longitude min, latitude max, longitude max (degrés)
+uniform float u_detail_alpha;   // 0 : pas d'image détaillée
 out vec4 out_color;
 
 const float PI = 3.14159265;
@@ -184,10 +204,23 @@ void main() {
     dx.x -= sign(dx.x) * step(0.5, abs(dx.x));
     dy.x -= sign(dy.x) * step(0.5, abs(dy.x));
     vec3 col = textureGrad(u_tex, uv, dx, dy).rgb;
+    // Image détaillée de la région affichée, fondue sur ses bords dans la Terre de base.
+    if (u_detail_alpha > 0.0) {
+        float lat = degrees(phi);
+        float lon = mod(degrees(lam) + 180.0, 360.0) - 180.0;
+        vec2 duv = vec2((lon - u_detail_box.y) / (u_detail_box.w - u_detail_box.y),
+                        (u_detail_box.z - lat) / (u_detail_box.z - u_detail_box.x));
+        if (duv.x > 0.0 && duv.x < 1.0 && duv.y > 0.0 && duv.y < 1.0) {
+            vec2 edge = min(duv, 1.0 - duv);
+            float feather = smoothstep(0.0, 0.06, min(edge.x, edge.y));
+            vec3 dcol = textureGrad(u_detail, duv, dFdx(duv), dFdy(duv)).rgb;
+            col = mix(col, dcol, feather * u_detail_alpha);
+        }
+    }
     if (u_srgb == 1) col = srgb_from_linear(col);
     // Aux pôles, l'image se resserre en un point (traînées en étoile) : on la fond dans la
     // teinte moyenne de ses bords (océan Arctique en haut, banquise en bas).
-    vec3 pole = phi > 0.0 ? vec3(11.0, 10.0, 50.0) / 255.0 : vec3(215.0, 204.0, 192.0) / 255.0;
+    vec3 pole = phi > 0.0 ? vec3(6.0, 17.0, 46.0) / 255.0 : vec3(241.0, 241.0, 241.0) / 255.0;
     col = mix(col, pole, smoothstep(1.32, 1.48, abs(phi)));
     // Lumière douce venue du haut à gauche, assombrissement vers le bord, liseré d'atmosphère.
     vec3 n = vec3(d, z);
@@ -261,20 +294,20 @@ unsafe fn create(gl: &glow::Context) -> Option<Resources> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 unsafe fn draw(
     gl: &glow::Context,
     res: &Resources,
     info: &egui::PaintCallbackInfo,
     rect: Rect,
-    view: View,
-    texture: glow::Texture,
-    glow_color: [f32; 3],
-    corner: f32,
+    frame: &Frame,
+    earth: glow::Texture,
+    detail: Option<(glow::Texture, Detail)>,
 ) {
     let vp = info.viewport_in_pixels();
     let ppp = info.pixels_per_point;
     let l = |name: &str| res.loc[UNIFORMS.iter().position(|n| *n == name).unwrap()].as_ref();
+    let view = frame.view;
+    let glow_color = egui::Rgba::from(frame.glow);
     // Centre du globe en pixels, depuis le coin bas gauche du rectangle de dessin.
     let cx = (view.center.x - rect.left()) * ppp;
     let cy = (rect.bottom() - view.center.y) * ppp;
@@ -291,16 +324,62 @@ unsafe fn draw(
         gl.uniform_3_f32(l("u_globe"), cx, cy, view.radius * ppp);
         gl.uniform_2_f32(l("u_rot"), view.lon, view.lat);
         gl.uniform_1_i32(l("u_srgb"), res.srgb_textures as i32);
-        gl.uniform_3_f32(l("u_glow"), glow_color[0], glow_color[1], glow_color[2]);
-        gl.uniform_1_f32(l("u_corner"), corner * ppp);
+        gl.uniform_3_f32(l("u_glow"), glow_color.r(), glow_color.g(), glow_color.b());
+        gl.uniform_1_f32(l("u_corner"), frame.corner * ppp);
         gl.active_texture(glow::TEXTURE0);
-        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.bind_texture(glow::TEXTURE_2D, Some(earth));
         gl.uniform_1_i32(l("u_tex"), 0);
+        match detail {
+            Some((tex, d)) => {
+                gl.active_texture(glow::TEXTURE1);
+                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                gl.uniform_1_i32(l("u_detail"), 1);
+                let [a, b, c, e] = d.bounds;
+                gl.uniform_4_f32(l("u_detail_box"), a, b, c, e);
+                gl.uniform_1_f32(l("u_detail_alpha"), d.alpha);
+            }
+            None => gl.uniform_1_f32(l("u_detail_alpha"), 0.0),
+        }
         gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
         gl.bind_vertex_array(None);
+        if detail.is_some() {
+            gl.bind_texture(glow::TEXTURE_2D, None);
+            gl.active_texture(glow::TEXTURE0);
+        }
         gl.bind_texture(glow::TEXTURE_2D, None);
         gl.use_program(None);
     }
+}
+
+/// Résolution la plus fine de l'image détaillée de la NASA (pixels par degré, 500 m environ).
+pub const DETAIL_MAX_PX_PER_DEG: f32 = 220.0;
+
+/// Télécharge l'image satellite d'une région (NASA GIBS, Blue Marble avec relief, domaine
+/// public) : `bounds` en degrés, comme [`Detail::bounds`] ; bloquant.
+pub fn fetch_detail(bounds: [f32; 4], width: u32, height: u32) -> Option<egui::ColorImage> {
+    let [lat0, lon0, lat1, lon1] = bounds;
+    let url = format!(
+        "https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap\
+         &VERSION=1.3.0&LAYERS=BlueMarble_ShadedRelief_Bathymetry&STYLES=&CRS=EPSG:4326\
+         &BBOX={lat0:.4},{lon0:.4},{lat1:.4},{lon1:.4}&WIDTH={width}&HEIGHT={height}&FORMAT=image/jpeg"
+    );
+    let resp = ureq::AgentBuilder::new()
+        .user_agent(concat!("SterMusic/", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(25))
+        .build()
+        .get(&url)
+        .call()
+        .ok()?;
+    if !resp.content_type().starts_with("image/") {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 16 << 20), &mut bytes).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [img.width() as usize, img.height() as usize],
+        img.as_raw(),
+    ))
 }
 
 /// Image de la Terre décodée, prête à devenir une texture (à faire hors du thread de l'interface).

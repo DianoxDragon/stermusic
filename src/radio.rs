@@ -238,7 +238,27 @@ pub fn countries() -> Result<Vec<Country>, String> {
 
 /// « The United States Of America » → « United States Of America » : l'article gêne le tri.
 fn country_name(name: &str) -> String {
-    name.strip_prefix("The ").unwrap_or(name).trim().to_owned()
+    let name = name.strip_prefix("The ").unwrap_or(name).trim();
+    // L'annuaire donne les noms officiels, parfois à rallonge.
+    let short = match name {
+        "United Kingdom Of Great Britain And Northern Ireland" => "United Kingdom",
+        "United States Of America" => "United States",
+        "Russian Federation" => "Russia",
+        "Republic Of Korea" => "South Korea",
+        "Democratic People's Republic Of Korea" => "North Korea",
+        "Iran (Islamic Republic Of)" | "Islamic Republic Of Iran" => "Iran",
+        "Bolivarian Republic Of Venezuela" | "Venezuela (Bolivarian Republic Of)" => "Venezuela",
+        "Plurinational State Of Bolivia" | "Bolivia (Plurinational State Of)" => "Bolivia",
+        "Republic Of Moldova" => "Moldova",
+        "United Republic Of Tanzania" => "Tanzania",
+        "Syrian Arab Republic" => "Syria",
+        "Lao People's Democratic Republic" => "Laos",
+        "Viet Nam" => "Vietnam",
+        "Taiwan, Republic Of China" => "Taiwan",
+        "Netherlands (Kingdom Of The)" => "Netherlands",
+        other => other,
+    };
+    short.to_owned()
 }
 
 // ---------- Stations du monde (globe) ----------
@@ -291,56 +311,177 @@ pub fn fetch_world() -> Result<Vec<Station>, String> {
     Ok(stations)
 }
 
-/// Un lieu du globe : les stations d'une même zone (cellule d'un demi-degré, une cinquantaine
-/// de kilomètres), à leur position moyenne.
+/// Un lieu du globe : une ville et ses stations (ou, loin de toute ville connue, une zone d'un
+/// demi-degré).
 #[derive(Clone, Debug)]
 pub struct Place {
     pub lat: f32,
     pub lon: f32,
-    /// « Bretagne, France », ou le pays seul.
+    /// La ville (« Lorient »), ou la région quand il n'y en a pas.
     pub name: String,
+    /// La région et le pays (« Bretagne, France »), ou le pays seul.
+    pub region: String,
     /// Indices dans la liste des stations du monde, les plus écoutées d'abord.
     pub stations: Vec<usize>,
 }
 
-/// Regroupe les stations en lieux.
-pub fn places(world: &[Station]) -> Vec<Place> {
-    let mut cells: std::collections::HashMap<(i32, i32), Vec<usize>> = Default::default();
-    for (i, s) in world.iter().enumerate() {
-        if let Some([lat, lon]) = s.geo {
-            cells
-                .entry(((lat * 2.0).floor() as i32, (lon * 2.0).floor() as i32))
-                .or_default()
-                .push(i);
+impl Place {
+    /// « Lorient, France » : pour une bulle d'aide.
+    pub fn full_name(&self) -> String {
+        if self.region.is_empty() || self.region == self.name {
+            self.name.clone()
+        } else {
+            let country = self.region.rsplit(", ").next().unwrap_or(&self.region);
+            format!("{}, {country}", self.name)
         }
     }
-    let mut out: Vec<Place> = cells
-        .into_values()
-        .map(|stations| {
-            let n = stations.len() as f32;
-            let lat = stations.iter().map(|&i| world[i].geo.unwrap()[0]).sum::<f32>() / n;
-            let lon = stations.iter().map(|&i| world[i].geo.unwrap()[1]).sum::<f32>() / n;
-            let mut names: std::collections::HashMap<String, usize> = Default::default();
-            for &i in &stations {
-                let s = &world[i];
-                let country = country_name(&s.country);
-                let name = if s.state.is_empty() || s.state.eq_ignore_ascii_case(&country) {
-                    country
-                } else {
-                    format!("{}, {country}", s.state)
-                };
-                *names.entry(name).or_default() += 1;
-            }
-            let name = names
-                .into_iter()
-                .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
-                .map(|(n, _)| n)
-                .unwrap_or_default();
-            Place {
+}
+
+// ---------- Villes (GeoNames) ----------
+
+/// Villes de plus de 15 000 habitants (GeoNames, CC BY 4.0) : nom, latitude, longitude, pays,
+/// population.
+const CITIES_TSV: &str = include_str!("../assets/cities.tsv");
+
+struct City {
+    name: &'static str,
+    lat: f32,
+    lon: f32,
+    population: u32,
+}
+
+struct Cities {
+    list: Vec<City>,
+    /// Villes rangées par case d'un degré, pour chercher seulement autour d'un point.
+    grid: std::collections::HashMap<(i32, i32), Vec<u32>>,
+}
+
+/// Distance maximale entre une station et la ville à laquelle elle est rattachée (km).
+const CITY_RADIUS_KM: f32 = 40.0;
+
+fn cities() -> &'static Cities {
+    static CITIES: std::sync::OnceLock<Cities> = std::sync::OnceLock::new();
+    CITIES.get_or_init(|| {
+        let mut list = Vec::new();
+        let mut grid: std::collections::HashMap<(i32, i32), Vec<u32>> = Default::default();
+        for line in CITIES_TSV.lines() {
+            let mut f = line.split('\t');
+            let (Some(name), Some(lat), Some(lon), _, Some(pop)) =
+                (f.next(), f.next(), f.next(), f.next(), f.next())
+            else {
+                continue;
+            };
+            let (Ok(lat), Ok(lon)) = (lat.parse::<f32>(), lon.parse::<f32>()) else {
+                continue;
+            };
+            grid.entry((lat.floor() as i32, lon.floor() as i32))
+                .or_default()
+                .push(list.len() as u32);
+            list.push(City {
+                name,
                 lat,
                 lon,
-                name,
-                stations,
+                population: pop.parse().unwrap_or(0),
+            });
+        }
+        Cities { list, grid }
+    })
+}
+
+impl Cities {
+    /// La ville à laquelle rattacher un point : la plus proche, les grandes villes comptant un
+    /// peu plus (une station « de Paris » placée en banlieue reste à Paris).
+    fn nearest(&self, lat: f32, lon: f32) -> Option<usize> {
+        let (cy, cx) = (lat.floor() as i32, lon.floor() as i32);
+        let reach = if lat.abs() > 60.0 { 2 } else { 1 };
+        let coslat = lat.to_radians().cos().max(0.1);
+        let mut best: Option<(usize, f32)> = None;
+        for dy in -1..=1 {
+            for dx in -reach..=reach {
+                let Some(cell) = self.grid.get(&(cy + dy, cx + dx)) else {
+                    continue;
+                };
+                for &k in cell {
+                    let c = &self.list[k as usize];
+                    let km = 111.2 * ((c.lat - lat).powi(2) + ((c.lon - lon) * coslat).powi(2)).sqrt();
+                    if km > CITY_RADIUS_KM {
+                        continue;
+                    }
+                    let weight = 1.0 + 0.3 * (c.population.max(15_000) as f32 / 15_000.0).ln();
+                    let score = km / weight;
+                    if best.is_none_or(|(_, b)| score < b) {
+                        best = Some((k as usize, score));
+                    }
+                }
+            }
+        }
+        best.map(|(k, _)| k)
+    }
+}
+
+/// « Bretagne, France » : la région et le pays le plus souvent donnés par ces stations.
+fn region_of(world: &[Station], stations: &[usize]) -> String {
+    let mut names: std::collections::HashMap<String, usize> = Default::default();
+    for &i in stations {
+        let s = &world[i];
+        let country = country_name(&s.country);
+        let name = if s.state.is_empty() || s.state.eq_ignore_ascii_case(&country) {
+            country
+        } else {
+            format!("{}, {country}", s.state)
+        };
+        *names.entry(name).or_default() += 1;
+    }
+    names
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(&a.0)))
+        .map(|(n, _)| n)
+        .unwrap_or_default()
+}
+
+/// Regroupe les stations en lieux : par ville, sinon par zone d'un demi-degré.
+pub fn places(world: &[Station]) -> Vec<Place> {
+    #[derive(Hash, PartialEq, Eq)]
+    enum Key {
+        City(usize),
+        Cell(i32, i32),
+    }
+    let cities = cities();
+    let mut groups: std::collections::HashMap<Key, Vec<usize>> = Default::default();
+    for (i, s) in world.iter().enumerate() {
+        if let Some([lat, lon]) = s.geo {
+            let key = match cities.nearest(lat, lon) {
+                Some(c) => Key::City(c),
+                None => Key::Cell((lat * 2.0).floor() as i32, (lon * 2.0).floor() as i32),
+            };
+            groups.entry(key).or_default().push(i);
+        }
+    }
+    let mut out: Vec<Place> = groups
+        .into_iter()
+        .map(|(key, stations)| {
+            let region = region_of(world, &stations);
+            match key {
+                Key::City(c) => {
+                    let city = &cities.list[c];
+                    Place {
+                        lat: city.lat,
+                        lon: city.lon,
+                        name: city.name.to_owned(),
+                        region,
+                        stations,
+                    }
+                }
+                Key::Cell(..) => {
+                    let n = stations.len() as f32;
+                    Place {
+                        lat: stations.iter().map(|&i| world[i].geo.unwrap()[0]).sum::<f32>() / n,
+                        lon: stations.iter().map(|&i| world[i].geo.unwrap()[1]).sum::<f32>() / n,
+                        name: region.clone(),
+                        region,
+                        stations,
+                    }
+                }
             }
         })
         .collect();
@@ -815,21 +956,63 @@ mod tests {
         };
         let world = vec![
             st("A", "FR", "Île-de-France", 48.86, 2.35),
-            st("B", "FR", "Île-de-France", 48.80, 2.30),
+            st("B", "FR", "Île-de-France", 48.85, 2.33),
             st("C", "FR", "", 43.30, 5.37),
             st("D", "GB", "", 51.50, -0.12),
         ];
         let places = places(&world);
-        assert_eq!(places.len(), 3);
+        let names: Vec<String> = places.iter().map(|p| p.full_name()).collect();
+        assert_eq!(places.len(), 3, "{names:?}");
+        // Deux stations de la région parisienne : un seul lieu, Paris.
         let paris = places.iter().find(|p| p.stations.len() == 2).unwrap();
-        assert_eq!(paris.name, "Île-de-France, France");
-        assert!(places.iter().any(|p| p.name == "United Kingdom"));
+        assert_eq!(paris.name, "Paris");
+        assert_eq!(paris.region, "Île-de-France, France");
+        assert_eq!(paris.full_name(), "Paris, France");
+        assert!(places.iter().any(|p| p.name == "Marseille"));
+        assert!(places
+            .iter()
+            .any(|p| p.name == "London" && p.full_name() == "London, United Kingdom"));
+        assert_eq!(
+            country_name("The United Kingdom Of Great Britain And Northern Ireland"),
+            "United Kingdom"
+        );
+        // Loin de toute ville : une zone, nommée d'après son pays.
+        let sea = super::places(&[st("E", "FR", "", 46.0, -12.0)]);
+        assert_eq!(sea[0].name, "France");
         let (lat, lon) = country_center(&world, "fr").unwrap();
-        assert!((lat - 48.80).abs() < 0.01 && (lon - 2.35).abs() < 0.01);
+        assert!((lat - 48.85).abs() < 0.01 && (lon - 2.35).abs() < 0.01);
     }
 
     #[test]
     fn country() {
         assert!(desktop_country().len() == 2);
+    }
+}
+
+#[cfg(test)]
+mod real_world {
+    /// Sur le cache réel des stations du monde : `cargo test real_places -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_places() {
+        let (world, _) = super::load_world().expect("cache des stations du monde");
+        let t = std::time::Instant::now();
+        let places = super::places(&world);
+        let without_city = places.iter().filter(|p| p.name == p.region).count();
+        eprintln!(
+            "{} stations, {} lieux ({} sans ville) en {:?}",
+            world.len(),
+            places.len(),
+            without_city,
+            t.elapsed()
+        );
+        for p in places.iter().rev().take(8) {
+            eprintln!("  {} — {} stations", p.full_name(), p.stations.len());
+        }
+        for p in &places {
+            if p.stations.iter().any(|&i| world[i].name.contains("Jade FM")) {
+                eprintln!("Jade FM : {} ({})", p.full_name(), p.region);
+            }
+        }
     }
 }

@@ -78,6 +78,49 @@ impl FolderIndex {
 /// Nombre de morceaux et de sous-dossiers d'un dossier, et le morceau qui l'illustre.
 type FolderInfo = (usize, usize, Option<usize>);
 
+/// Icône de dossier dessinée à la main (couleur d'accent), avec la pochette `tex` qui en dépasse :
+/// un dossier ne se confond pas avec un morceau.
+fn paint_folder(painter: &egui::Painter, art: egui::Rect, tex: Option<&egui::TextureHandle>, seed: &str) {
+    use egui::{CornerRadius, Rect, Stroke};
+    let back = theme::accent().lerp_to_gamma(egui::Color32::BLACK, 0.35);
+    let front = theme::accent().lerp_to_gamma(egui::Color32::WHITE, 0.18);
+    let w = art.width();
+    // Onglet et dos du dossier.
+    let tab = Rect::from_min_size(art.min + vec2(1.0, 3.0), vec2(w * 0.42, 8.0));
+    painter.rect_filled(
+        tab,
+        CornerRadius {
+            nw: 3,
+            ne: 3,
+            ..Default::default()
+        },
+        back,
+    );
+    let body = Rect::from_min_max(art.min + vec2(1.0, 7.0), art.max - vec2(1.0, 2.0));
+    painter.rect_filled(body, 4, back);
+    // La pochette, glissée dedans.
+    let side = w - 14.0;
+    let cover = Rect::from_min_size(art.min + vec2(7.0, 5.0), vec2(side, side));
+    widgets::cover(painter, cover, tex, 3, seed);
+    // Le devant du dossier, qui cache le bas de la pochette.
+    let lid = Rect::from_min_max(pos2(art.left() + 1.0, art.top() + 17.0), art.max - vec2(1.0, 2.0));
+    painter.add(
+        egui::Shadow {
+            offset: [0, -1],
+            blur: 4,
+            spread: 0,
+            color: egui::Color32::from_black_alpha(70),
+        }
+        .as_shape(lid, CornerRadius::same(4)),
+    );
+    painter.rect_filled(lid, 4, front);
+    painter.hline(
+        lid.x_range().shrink(3.0),
+        lid.top() + 0.5,
+        Stroke::new(1.0_f32, theme::white(0x50)),
+    );
+}
+
 fn name_of(p: &Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -240,23 +283,13 @@ impl SterMusic {
                         ui.painter().rect_filled(r, 6, theme::white(0x03));
                     }
                     widgets::paint_interaction(ui, r, 6, &resp);
-                    // La pochette d'un de ses morceaux, et un petit dossier en coin.
+                    // Un dossier, d'où dépasse la pochette d'un de ses morceaux.
                     let art = egui::Rect::from_min_size(
                         pos2(r.left() + 12.0, r.center().y - 18.0),
                         vec2(36.0, 36.0),
                     );
                     let tex = thumbs[row].as_ref().and_then(|p| self.covers.thumb(p).cloned());
-                    widgets::cover(ui.painter(), art, tex.as_ref(), 5, &names[row]);
-                    let badge =
-                        egui::Rect::from_center_size(art.right_bottom() - vec2(3.0, 3.0), vec2(18.0, 18.0));
-                    ui.painter().rect_filled(badge, 5, theme::glass());
-                    icons::paint_centered(
-                        ui.painter(),
-                        Icon::FolderOpen,
-                        badge.center(),
-                        12.0,
-                        theme::accent_light(),
-                    );
+                    paint_folder(ui.painter(), art, tex.as_ref(), &names[row]);
                     let x = r.left() + 60.0;
                     let g = widgets::galley(
                         ui,

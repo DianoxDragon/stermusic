@@ -830,7 +830,7 @@ pub const EN: &[(&str, &str)] = &[
     ("Dézoomer", "Zoom out"),
     ("Glisse pour tourner, molette pour zoomer, clique un point pour voir ses stations.", "Drag to spin, scroll to zoom, click a dot to see its stations."),
     ("Globe", "Globe"),
-    ("Image : NASA · Stations : radio-browser.info", "Imagery: NASA · Stations: radio-browser.info"),
+    ("Image : NASA · Villes : GeoNames · Stations : radio-browser.info", "Imagery: NASA · Cities: GeoNames · Stations: radio-browser.info"),
     ("Revenir sur mon pays", "Back to my country"),
     ("Réponse de l'annuaire vide", "Empty answer from the directory"),
     ("Tous les genres", "All genres"),

@@ -39,6 +39,26 @@ pub struct GlobeState {
     selected: Option<usize>,
     /// Pays vers lequel le globe s'est tourné (il suit le choix de pays de l'annuaire).
     centered_on: Option<String>,
+    /// Image détaillée de la région affichée, celle en cours de téléchargement, et le moment
+    /// du dernier mouvement (on attend que la carte s'arrête pour la demander).
+    detail: Option<DetailTex>,
+    detail_rx: Option<Receiver<Option<(DetailRequest, egui::ColorImage)>>>,
+    last_motion: f64,
+    /// Échec du téléchargement : on réessaie plus tard.
+    detail_retry_at: f64,
+}
+
+/// Une image détaillée demandée : sa zone (degrés) et sa résolution (pixels par degré).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DetailRequest {
+    bounds: [f32; 4],
+    px_per_deg: f32,
+}
+
+struct DetailTex {
+    texture: egui::TextureHandle,
+    request: DetailRequest,
+    since: f64,
 }
 
 impl Default for GlobeState {
@@ -58,6 +78,10 @@ impl Default for GlobeState {
             fly_to: None,
             selected: None,
             centered_on: None,
+            detail: None,
+            detail_rx: None,
+            last_motion: 0.0,
+            detail_retry_at: 0.0,
         }
     }
 }
@@ -120,6 +144,28 @@ impl SterMusic {
                         mipmap_mode: Some(egui::TextureFilter::Linear),
                     };
                     g.earth = Some(ctx.load_texture("earth", img, options));
+                }
+            }
+        }
+        if let Some(rx) = &g.detail_rx {
+            if let Ok(result) = rx.try_recv() {
+                g.detail_rx = None;
+                let now = ctx.input(|i| i.time);
+                match result {
+                    Some((request, img)) => {
+                        let options = egui::TextureOptions {
+                            magnification: egui::TextureFilter::Linear,
+                            minification: egui::TextureFilter::Linear,
+                            wrap_mode: egui::TextureWrapMode::ClampToEdge,
+                            mipmap_mode: Some(egui::TextureFilter::Linear),
+                        };
+                        g.detail = Some(DetailTex {
+                            texture: ctx.load_texture("earth_detail", img, options),
+                            request,
+                            since: now,
+                        });
+                    }
+                    None => g.detail_retry_at = now + 15.0,
                 }
             }
         }
@@ -242,14 +288,39 @@ impl SterMusic {
         g.lon = view.lon;
         g.lat = view.lat;
         let moving = g.fly_to.is_some() || g.velocity != egui::Vec2::ZERO || (!g.touched && self.focused);
+        let now = ui.input(|i| i.time);
+        let scrolled = ui.input(|i| i.smooth_scroll_delta.y != 0.0);
+        if moving || resp.dragged() || scrolled {
+            g.last_motion = now;
+        }
+        let detail_frame = g.detail.as_ref().map(|d| globe::Detail {
+            texture: d.texture.id(),
+            bounds: d.request.bounds,
+            alpha: ((now - d.since) / 0.35).clamp(0.0, 1.0) as f32,
+        });
+        if detail_frame.is_some_and(|d| d.alpha < 1.0) {
+            ctx.request_repaint();
+        }
         if moving || resp.dragged() || shift > 0.0 && shift < 1.0 {
             ctx.request_repaint();
         }
 
+        self.request_detail(&ctx, &view, area, now);
+        let g = &mut self.radio.globe;
         let painter = ui.painter_at(area);
         let glow = theme::accent_light();
         match &g.earth {
-            Some(tex) if globe::available() => globe::paint(&painter, area, view, tex.id(), glow, 10.0),
+            Some(tex) if globe::available() => globe::paint(
+                &painter,
+                area,
+                globe::Frame {
+                    view,
+                    earth: tex.id(),
+                    detail: detail_frame,
+                    glow,
+                    corner: 10.0,
+                },
+            ),
             _ => {
                 painter.circle_filled(view.center, view.radius, Color32::from_rgb(0x0C, 0x16, 0x3A));
                 painter.circle_stroke(
@@ -278,7 +349,8 @@ impl SterMusic {
             let Some((p, z)) = view.project(place.lat, place.lon) else {
                 continue;
             };
-            if !area.expand(10.0).contains(p) {
+            // Rien sous le panneau : on n'en voit que des taches à travers son fond.
+            if !area.expand(10.0).contains(p) || (panel_open && panel.expand(4.0).contains(p)) {
                 continue;
             }
             // Les points s'effacent en approchant du bord du globe.
@@ -331,7 +403,7 @@ impl SterMusic {
             let place = &g.places[k];
             let label = format!(
                 "{} · {}",
-                place.name,
+                place.full_name(),
                 crate::i18n::plural(place.stations.len(), "station", "stations")
             );
             if let Some(ptr) = pointer {
@@ -386,6 +458,62 @@ impl SterMusic {
             Stroke::new(1.0_f32, theme::white(0x0C)),
             egui::StrokeKind::Inside,
         );
+    }
+
+    /// Demande l'image détaillée de la zone visible, une fois le globe immobile.
+    fn request_detail(&mut self, ctx: &egui::Context, view: &View, area: Rect, now: f64) {
+        let g = &mut self.radio.globe;
+        if g.zoom < 2.2 || g.detail_rx.is_some() || now < g.detail_retry_at || !globe::available() {
+            return;
+        }
+        let still = now - g.last_motion;
+        if still < 0.4 {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(0.45 - still));
+            return;
+        }
+        let Some(request) = detail_request(view, area, ctx.pixels_per_point()) else {
+            return;
+        };
+        // L'image déjà là couvre la zone, assez finement : rien à faire.
+        if let Some(d) = &g.detail {
+            let [a0, b0, a1, b1] = d.request.bounds;
+            let [c0, e0, c1, e1] = request.bounds;
+            let covers = a0 <= c0 + 0.01 && b0 <= e0 + 0.01 && a1 >= c1 - 0.01 && b1 >= e1 - 0.01;
+            if covers && d.request.px_per_deg >= request.px_per_deg * 0.7 {
+                return;
+            }
+        }
+        // Un peu de marge autour de ce qu'on voit : un petit déplacement reste détaillé.
+        let [lat0, lon0, lat1, lon1] = request.bounds;
+        let (mlat, mlon) = ((lat1 - lat0) * 0.2, (lon1 - lon0) * 0.2);
+        let bounds = [
+            (lat0 - mlat).max(-85.0),
+            (lon0 - mlon).max(-180.0),
+            (lat1 + mlat).min(85.0),
+            (lon1 + mlon).min(180.0),
+        ];
+        let mid_lat = ((bounds[0] + bounds[2]) * 0.5).to_radians().cos().max(0.2);
+        let mut w = (bounds[3] - bounds[1]) * request.px_per_deg * mid_lat;
+        let mut h = (bounds[2] - bounds[0]) * request.px_per_deg;
+        let fit = (2048.0 / w).min(2048.0 / h).min(1.0);
+        w *= fit;
+        h *= fit;
+        let request = DetailRequest {
+            bounds,
+            px_per_deg: request.px_per_deg * fit,
+        };
+        let (tx, rx) = channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let img = globe::fetch_detail(
+                request.bounds,
+                w.round().max(64.0) as u32,
+                h.round().max(64.0) as u32,
+            );
+            let _ = tx.send(img.map(|i| (request, i)));
+            ctx.request_repaint();
+        });
+        g.detail_rx = Some(rx);
     }
 
     /// Boutons et légende posés sur le globe.
@@ -471,7 +599,7 @@ impl SterMusic {
                 area.left() + 32.0,
             ),
             (
-                tr("Image : NASA · Stations : radio-browser.info"),
+                tr("Image : NASA · Villes : GeoNames · Stations : radio-browser.info"),
                 10.5,
                 Align2::RIGHT_BOTTOM,
                 if panel_open {
@@ -506,11 +634,21 @@ impl SterMusic {
         else {
             return;
         };
+        // Panneau posé sur la carte : ombre douce, fond presque opaque.
+        ui.painter().add(
+            egui::Shadow {
+                offset: [0, 6],
+                blur: 22,
+                spread: 0,
+                color: Color32::from_black_alpha(110),
+            }
+            .as_shape(rect, CornerRadius::same(12)),
+        );
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(10), theme::alpha(theme::bg(), 0xC8));
+            .rect_filled(rect, CornerRadius::same(12), theme::alpha(theme::bg(), 0xF0));
         ui.painter().rect_stroke(
             rect,
-            CornerRadius::same(10),
+            CornerRadius::same(12),
             Stroke::new(1.0_f32, theme::white(0x14)),
             egui::StrokeKind::Inside,
         );
@@ -533,11 +671,13 @@ impl SterMusic {
                         )
                         .wrap(),
                     );
-                    ui.label(
-                        RichText::new(crate::i18n::plural(place.stations.len(), "station", "stations"))
-                            .small()
-                            .color(theme::TEXT_3),
-                    );
+                    let count = crate::i18n::plural(place.stations.len(), "station", "stations");
+                    let sub = if place.region.is_empty() || place.region == place.name {
+                        count
+                    } else {
+                        format!("{} · {count}", place.region)
+                    };
+                    ui.add(egui::Label::new(RichText::new(sub).small().color(theme::TEXT_3)).wrap());
                 });
                 if widgets::icon_button(ui, Icon::Close, tr("Fermer"), 30.0, 15.0).clicked() {
                     self.radio.globe.selected = None;
@@ -571,4 +711,38 @@ fn vertical_fade(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Colo
     mesh.add_triangle(0, 1, 2);
     mesh.add_triangle(1, 3, 2);
     painter.add(mesh);
+}
+
+/// La zone de la Terre visible dans `area` (degrés), et la résolution qu'il y faudrait ; `None`
+/// si elle est trop grande (globe entier) ou qu'elle chevauche la ligne de changement de date.
+fn detail_request(view: &View, area: Rect, ppp: f32) -> Option<DetailRequest> {
+    let mut lats = Vec::new();
+    let mut lons = Vec::new();
+    for i in 0..=12 {
+        for j in 0..=12 {
+            let p = pos2(
+                area.left() + area.width() * i as f32 / 12.0,
+                area.top() + area.height() * j as f32 / 12.0,
+            );
+            if let Some((lat, lon)) = view.unproject(p) {
+                lats.push(lat);
+                lons.push(lon);
+            }
+        }
+    }
+    if lats.len() < 4 {
+        return None;
+    }
+    let min = |v: &[f32]| v.iter().copied().fold(f32::MAX, f32::min);
+    let max = |v: &[f32]| v.iter().copied().fold(f32::MIN, f32::max);
+    let (lat0, lat1, lon0, lon1) = (min(&lats), max(&lats), min(&lons), max(&lons));
+    if lon1 - lon0 > 120.0 || lat1 - lat0 > 90.0 {
+        return None;
+    }
+    // Pixels d'écran par degré au centre du globe.
+    let need = view.radius * ppp * std::f32::consts::PI / 180.0;
+    Some(DetailRequest {
+        bounds: [lat0, lon0, lat1, lon1],
+        px_per_deg: need.min(globe::DETAIL_MAX_PX_PER_DEG),
+    })
 }

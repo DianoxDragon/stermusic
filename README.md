@@ -32,8 +32,8 @@ vraie intégration au bureau Linux.
 - Annuaire [radio-browser.info](https://www.radio-browser.info) : recherche par nom, genre et
   pays, « Mes stations », ajout d'une station par son adresse (.pls, .m3u)
 - **Globe** : les stations géolocalisées du monde entier sur une Terre en 3D (image satellite
-  de la NASA, domaine public), que l'on fait tourner et zoomer ; un clic sur un lieu liste ses
-  stations
+  de la NASA, domaine public, plus détaillée quand on zoome), rangées par ville ; on la fait
+  tourner et zoomer, un clic sur une ville liste ses stations
 - Titre diffusé en direct (métadonnées ICY), reconnexion automatique
 
 **Bureau Linux**
@@ -98,8 +98,9 @@ cargo run --release -- ~/Musique
 - `src/mpris.rs` : intégration MPRIS (souvlaki, D-Bus en pur Rust)
 - `src/backdrop.rs` : fond Mica
 - `src/radio.rs`, `src/globe.rs`, `src/app/radio_view.rs`, `src/app/radio_globe.rs` :
-  webradios, annuaire et globe (`assets/earth.jpg` : « Whole world – land and oceans »,
-  NASA Visible Earth, domaine public)
+  webradios, annuaire et globe (`assets/earth.jpg` : Blue Marble avec relief, NASA GIBS,
+  domaine public ; détails téléchargés au zoom depuis GIBS ; `assets/cities.tsv` : villes de
+  plus de 15 000 habitants, [GeoNames](https://www.geonames.org), CC BY 4.0)
 - `src/theme.rs`, `src/anim.rs`, `src/icons.rs`, `src/widgets.rs` : charte, animations, icônes
   Lucide et widgets, repris de SterCode
 
