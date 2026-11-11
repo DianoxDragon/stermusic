@@ -81,9 +81,37 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, size: f32, icon_size:
 /// Bouton-icône à bascule : icône dans l'accent et petit point dessous quand il est actif
 /// (aléatoire, répétition), comme dans le lecteur de Windows 11.
 pub fn toggle_icon(ui: &mut Ui, on: bool, icon: Icon, tooltip: &str, size: f32, icon_size: f32) -> Response {
+    toggle_icon_ex(ui, on, icon, tooltip, size, icon_size, false)
+}
+
+/// Comme [`toggle_icon`], avec un fond teinté quand il est allumé : un mode qu'on voit d'un coup
+/// d'œil (aléatoire, répétition).
+pub fn mode_toggle(ui: &mut Ui, on: bool, icon: Icon, tooltip: &str, size: f32, icon_size: f32) -> Response {
+    toggle_icon_ex(ui, on, icon, tooltip, size, icon_size, true)
+}
+
+fn toggle_icon_ex(
+    ui: &mut Ui,
+    on: bool,
+    icon: Icon,
+    tooltip: &str,
+    size: f32,
+    icon_size: f32,
+    pill: bool,
+) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::click());
-    paint_interaction(ui, rect, 6, &response);
     let a = anim::toggle(ui.ctx(), response.id.with("on"), on, anim::NORMAL);
+    if pill && a > 0.0 {
+        let r = rect.shrink(2.0);
+        ui.painter().rect_filled(r, CornerRadius::same(8), theme::accent().gamma_multiply(0.28 * a));
+        ui.painter().rect_stroke(
+            r,
+            CornerRadius::same(8),
+            Stroke::new(1.0_f32, theme::accent_light().gamma_multiply(0.45 * a)),
+            StrokeKind::Inside,
+        );
+    }
+    paint_interaction(ui, rect, 6, &response);
     let t = hover_t(ui, response.id, response.hovered());
     let color = theme::mix(
         theme::mix(theme::icon_idle(), theme::TEXT, t),

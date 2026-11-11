@@ -2369,7 +2369,7 @@ impl SterMusic {
                 }
                 separator(ui);
                 let mut taste = self.settings.shuffle_taste;
-                card_row(ui, Icon::HeartFilled, tr("Aléatoire selon mes goûts"), tr("En lecture aléatoire, les morceaux que tu écoutes jusqu'au bout, que tu notes bien ou mets en favori viennent plus souvent ; ceux que tu passes, moins souvent. Aussi par clic droit sur le bouton aléatoire."), |_, ui| {
+                card_row(ui, Icon::HeartFilled, tr("Aléatoire selon mes goûts"), tr("En lecture aléatoire, la file est rangée par goût : d'abord les morceaux que tu écoutes jusqu'au bout, notes bien ou mets en favori ; à la fin, ceux que tu passes. Aussi par clic droit sur le bouton aléatoire."), |_, ui| {
                     widgets::switch(ui, &mut taste);
                 }, self);
                 if taste != self.settings.shuffle_taste {

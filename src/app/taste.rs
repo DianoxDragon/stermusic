@@ -52,18 +52,15 @@ pub fn weight(stat: Option<&PlayStat>, duration_secs: f64, rating: u8, favorite:
     w.clamp(0.05, 20.0)
 }
 
-/// Mélange `items` au hasard, les plus lourds ayant plus de chances de venir en tête (tirage
-/// pondéré sans remise : chaque élément reçoit une « horloge » exponentielle, la plus courte
-/// passe d'abord).
-pub fn weighted_shuffle<T>(items: &mut Vec<T>, weight: impl Fn(&T) -> f32) {
+/// Range `items` selon mes goûts : du plus lourd au plus léger. Un léger aléa (± 12 %) départage
+/// seulement les morceaux de poids voisin (tous les jamais lancés valent 1), pour que deux files
+/// de suite ne soient pas identiques ; un écart net de goût est toujours respecté.
+pub fn taste_order<T>(items: &mut Vec<T>, weight: impl Fn(&T) -> f32) {
     let mut keyed: Vec<(f32, T)> = items
         .drain(..)
-        .map(|item| {
-            let u = fastrand::f32().max(1e-7);
-            (-u.ln() / weight(&item).max(1e-4), item)
-        })
+        .map(|item| (weight(&item) * (0.88 + 0.24 * fastrand::f32()), item))
         .collect();
-    keyed.sort_by(|a, b| a.0.total_cmp(&b.0));
+    keyed.sort_by(|a, b| b.0.total_cmp(&a.0));
     items.extend(keyed.into_iter().map(|(_, item)| item));
 }
 
@@ -79,10 +76,10 @@ impl SterMusic {
         )
     }
 
-    /// Mélange des morceaux : au hasard pur, ou selon mes goûts si ce mode est choisi.
+    /// Mélange des morceaux : au hasard pur, ou rangés selon mes goûts si ce mode est choisi.
     pub(super) fn shuffle_tracks(&self, tracks: &mut Vec<usize>) {
         if self.settings.shuffle_taste {
-            weighted_shuffle(tracks, |&i| self.taste_weight(i));
+            taste_order(tracks, |&i| self.taste_weight(i));
         } else {
             fastrand::shuffle(tracks);
         }
@@ -90,7 +87,7 @@ impl SterMusic {
 
     /// Bouton « Aléatoire » avec sa petite flèche : le bouton mélange dans le mode retenu (au
     /// hasard au départ) ; la flèche, ou un clic droit, propose de mélanger au hasard ou selon mes
-    /// goûts (une file où mes morceaux préférés viennent plus souvent en premier).
+    /// goûts (une file rangée de mes morceaux préférés aux moins aimés).
     pub(super) fn shuffle_split(&mut self, ui: &mut egui::Ui, tracks: &[usize], label: &str) {
         let (main, arrow) = widgets::split_button(ui, Some(Icon::Shuffle), label);
         let tip = if self.settings.shuffle_taste {
@@ -117,7 +114,7 @@ impl SterMusic {
                 *chosen = Some(false);
             }
             if widgets::menu_item(ui, mark(taste, Icon::Heart), tr("Selon mes goûts"))
-                .on_hover_text(tr("Les morceaux que tu écoutes jusqu'au bout, que tu notes bien ou mets en favori viennent plus souvent ; ceux que tu passes, moins souvent."))
+                .on_hover_text(tr("La file est rangée par goût : d'abord les morceaux que tu écoutes jusqu'au bout, notes bien ou mets en favori ; à la fin, ceux que tu passes."))
                 .clicked()
             {
                 *chosen = Some(true);
@@ -195,21 +192,24 @@ mod tests {
         assert!(weight(None, 200.0, 1, false) < never && weight(None, 200.0, 4, false) > never);
     }
 
-    /// Sur beaucoup de tirages, le morceau lourd arrive bien plus souvent en tête, mais pas
-    /// toujours : cela reste un tirage au sort.
+    /// La file va du préféré au moins aimé ; seuls des goûts très proches peuvent s'échanger.
     #[test]
-    fn heavy_items_come_first_more_often() {
+    fn ordered_by_taste() {
         fastrand::seed(7);
-        let mut first_heavy = 0;
-        for _ in 0..2000 {
-            let mut v = vec![0usize, 1, 2, 3];
-            weighted_shuffle(&mut v, |&i| if i == 3 { 6.0 } else { 1.0 });
-            assert_eq!(v.len(), 4);
-            if v[0] == 3 {
-                first_heavy += 1;
+        let weights = [1.0, 6.0, 0.3, 2.5, 1.02];
+        let (mut swapped, mut same) = (0, 0);
+        for _ in 0..500 {
+            let mut v: Vec<usize> = (0..5).collect();
+            taste_order(&mut v, |&i| weights[i]);
+            assert_eq!(&v[..2], &[1, 3]);
+            assert_eq!(v[4], 2);
+            if v[2] == 4 {
+                swapped += 1
+            } else {
+                same += 1
             }
         }
-        // Attendu : 6 / 9 des tirages, soit ~1333.
-        assert!((1200..1470).contains(&first_heavy), "{first_heavy}");
+        // 1,0 et 1,02 : presque à égalité, l'ordre varie d'une file à l'autre.
+        assert!(swapped > 100 && same > 100, "{swapped} {same}");
     }
 }

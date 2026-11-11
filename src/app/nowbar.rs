@@ -451,12 +451,12 @@ impl SterMusic {
 
     /// Aléatoire, précédent, lecture, suivant, répétition.
     fn controls(&mut self, ui: &mut egui::Ui, playing: bool, size: f32, play_size: f32) {
-        let shuffle = widgets::toggle_icon(
+        let shuffle = widgets::mode_toggle(
             ui,
             self.settings.shuffle,
             Icon::Shuffle,
             match (self.settings.shuffle, self.settings.shuffle_taste) {
-                (true, true) => tr("Aléatoire selon mes goûts : tes morceaux préférés ont plus de chances de venir d'abord (clic droit : changer de mode)"),
+                (true, true) => tr("Selon mes goûts : la file va de tes morceaux préférés aux moins aimés (clic droit : changer de mode)"),
                 (true, false) => tr("Aléatoire au hasard (clic droit : selon mes goûts)"),
                 (false, true) => tr("Aléatoire : désactivé ; il sera selon mes goûts (clic droit : changer de mode)"),
                 (false, false) => tr("Aléatoire : désactivé (clic droit : au hasard ou selon mes goûts)"),
@@ -485,7 +485,7 @@ impl SterMusic {
                 self.actions.push(Action::SetShuffle { on: true, taste: false });
             }
             if widgets::menu_item(ui, mark(on && taste), tr("Selon mes goûts"))
-                .on_hover_text(tr("Les morceaux que tu écoutes jusqu'au bout, que tu notes bien ou mets en favori viennent plus souvent ; ceux que tu passes, moins souvent."))
+                .on_hover_text(tr("La file est rangée par goût : d'abord les morceaux que tu écoutes jusqu'au bout, notes bien ou mets en favori ; à la fin, ceux que tu passes."))
                 .clicked()
             {
                 self.actions.push(Action::SetShuffle { on: true, taste: true });
@@ -521,7 +521,7 @@ impl SterMusic {
             Repeat::All => (Icon::Repeat, tr("Répétition : toute la file")),
             Repeat::One => (Icon::Repeat1, tr("Répétition : ce morceau")),
         };
-        if widgets::toggle_icon(ui, self.settings.repeat != Repeat::Off, icon, tip, size, 17.0).clicked() {
+        if widgets::mode_toggle(ui, self.settings.repeat != Repeat::Off, icon, tip, size, 17.0).clicked() {
             self.actions.push(Action::CycleRepeat);
         }
     }

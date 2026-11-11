@@ -179,7 +179,7 @@ pub struct Settings {
     pub volume: f32,
     pub muted: bool,
     pub shuffle: bool,
-    /// Aléatoire « selon mes goûts » : les morceaux préférés ont plus de chances de venir d'abord.
+    /// Aléatoire « selon mes goûts » : la file est rangée des morceaux préférés aux moins aimés.
     pub shuffle_taste: bool,
     pub repeat: Repeat,
     pub theme: String,
@@ -1570,7 +1570,6 @@ impl SterMusic {
         self.play_current();
     }
 
-    /// Mélange la file en gardant le morceau en cours en tête.
     /// Change le mode aléatoire : on repart de l'ordre d'origine, puis on remélange.
     fn set_shuffle(&mut self, on: bool, taste: bool) {
         let changed = (on, taste) != (self.settings.shuffle, self.settings.shuffle_taste);
@@ -1583,13 +1582,14 @@ impl SterMusic {
         if on {
             self.shuffle_queue();
             self.toast(if taste {
-                tr("Aléatoire selon mes goûts : tes morceaux préférés viendront plus souvent en premier")
+                tr("Selon mes goûts : la file va de tes morceaux préférés aux moins aimés")
             } else {
                 tr("Aléatoire au hasard (clic droit sur le bouton : selon mes goûts)")
             });
         }
     }
 
+    /// Mélange la file en gardant le morceau en cours en tête.
     fn shuffle_queue(&mut self) {
         let Some(pos) = self.queue_pos else { return };
         self.unshuffled = Some(self.queue.clone());
@@ -2176,7 +2176,7 @@ impl SterMusic {
             Action::Play { tracks, start } => self.play_list(tracks, start),
             Action::PlayShuffledBy { tracks, taste } => {
                 if taste && !tracks.is_empty() {
-                    self.toast(tr("Aléatoire selon mes goûts : tes morceaux préférés viendront plus souvent en premier"));
+                    self.toast(tr("Selon mes goûts : la file va de tes morceaux préférés aux moins aimés"));
                 }
                 self.settings.shuffle_taste = taste;
                 self.actions.push(Action::PlayShuffled(tracks));
@@ -2189,7 +2189,7 @@ impl SterMusic {
                 // Le premier morceau est tiré comme les suivants : au hasard, ou selon mes goûts.
                 let mut order: Vec<usize> = (0..tracks.len()).collect();
                 if self.settings.shuffle_taste {
-                    taste::weighted_shuffle(&mut order, |&k| self.taste_weight(tracks[k]));
+                    taste::taste_order(&mut order, |&k| self.taste_weight(tracks[k]));
                 } else {
                     fastrand::shuffle(&mut order);
                 }
