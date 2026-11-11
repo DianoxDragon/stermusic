@@ -6,7 +6,8 @@
 #     (./install.sh dans le dossier décompressé).
 # Le binaire demande glibc 2.35 ou plus (Ubuntu 22.04, Debian 12, Fedora 36…) : voir src/compat.rs.
 #
-# Variable facultative : MAINTAINER="Nom <adresse>" (champ « Maintainer » du paquet .deb).
+# Variables facultatives : MAINTAINER="Nom <adresse>" (champ « Maintainer » du paquet .deb),
+# HOMEPAGE="https://…" (adresse du dépôt, où trouver le code source).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -14,6 +15,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 MAINTAINER="${MAINTAINER:-SterMusic <stermusic@localhost>}"
+HOMEPAGE="${HOMEPAGE:-}"
 
 cargo build --release
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
@@ -33,6 +35,9 @@ STAGE="$TARGET_DIR/package"
 rm -rf "$STAGE"
 mkdir -p "$STAGE" "$ROOT/dist"
 
+# Licences des bibliothèques compilées dans le programme (à joindre au binaire).
+python3 packaging/third_party.py "$STAGE/LICENCES-TIERS.txt"
+
 # ---------- Paquet .deb ----------
 DEB="$STAGE/deb"
 install -Dm755 "$BIN" "$DEB/usr/bin/stermusic"
@@ -43,18 +48,35 @@ install -Dm644 stermusic-tags.desktop "$DEB/usr/share/kio/servicemenus/stermusic
 install -Dm644 /dev/stdin "$DEB/usr/share/doc/stermusic/copyright" <<COPYRIGHT
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: SterMusic
+${HOMEPAGE:+Source: $HOMEPAGE}
 
 Files: *
-License: MIT
+Copyright: Dianox
+License: GPL-3+
+ This program is free software: you can redistribute it and/or modify it under the terms of the
+ GNU General Public License as published by the Free Software Foundation, either version 3 of the
+ License, or (at your option) any later version.
+ .
+ On Debian systems, the full text of the GNU General Public License version 3 can be found in
+ /usr/share/common-licenses/GPL-3.
 
-Files: earth image (embedded)
+Files: assets/earth.jpg
+Copyright: NASA
 License: public-domain
-Comment: NASA imagery (Blue Marble / GIBS).
 
-Files: city list (embedded)
+Files: assets/cities.tsv
+Copyright: GeoNames
 License: CC-BY-4.0
-Comment: GeoNames (cities15000).
+
+Files: assets/icons/*
+Copyright: Cole Bemis (Feather), Lucide Contributors
+License: ISC
+
+Comment: The Rust libraries compiled into the program, with their license texts, are listed in
+ /usr/share/doc/stermusic/LICENCES-TIERS.txt.
 COPYRIGHT
+install -Dm644 CREDITS.md "$DEB/usr/share/doc/stermusic/CREDITS.md"
+install -Dm644 "$STAGE/LICENCES-TIERS.txt" "$DEB/usr/share/doc/stermusic/LICENCES-TIERS.txt"
 SIZE_KB="$(du -sk "$DEB/usr" | cut -f1)"
 mkdir -p "$DEB/DEBIAN"
 cat > "$DEB/DEBIAN/control" <<CONTROL
@@ -66,7 +88,8 @@ Installed-Size: $SIZE_KB
 Depends: libc6 (>= 2.35), libasound2t64 | libasound2
 Recommends: ffmpeg, pulseaudio-utils
 Suggests: kio-extras
-Section: sound
+${HOMEPAGE:+Homepage: $HOMEPAGE
+}Section: sound
 Priority: optional
 Description: music player for Linux (Windows 11 look, KDE integration)
  SterMusic plays your music library (MP3, FLAC, OGG, Opus, M4A…), web radios
@@ -90,6 +113,9 @@ install -Dm644 stermusic-tags.desktop "$PORT/stermusic-tags.desktop"
 install -Dm755 packaging/portable-install.sh "$PORT/install.sh"
 install -Dm755 packaging/portable-uninstall.sh "$PORT/uninstall.sh"
 install -Dm644 packaging/LISEZ-MOI.txt "$PORT/LISEZ-MOI.txt"
+install -Dm644 LICENSE "$PORT/LICENSE"
+install -Dm644 CREDITS.md "$PORT/CREDITS.md"
+install -Dm644 "$STAGE/LICENCES-TIERS.txt" "$PORT/LICENCES-TIERS.txt"
 TAR_FILE="$ROOT/dist/$NAME.tar.gz"
 tar -C "$STAGE" --owner=0 --group=0 -czf "$TAR_FILE" "$NAME"
 

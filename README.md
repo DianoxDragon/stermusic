@@ -152,3 +152,14 @@ Données : `~/.local/share/stermusic/` (réglages, cache de la bibliothèque) et
 Le projet est sur une partition NTFS, où les scripts de compilation de Cargo plantent.
 `.cargo/config.toml` envoie donc le dossier de compilation vers `~/.cache/stermusic-target`.
 Sur une partition Linux (ext4, btrfs…), ce fichier peut être supprimé.
+
+## Licence
+
+SterMusic est un logiciel libre : tu peux le redistribuer et le modifier selon les termes de la
+**GNU General Public License version 3**, ou (à ton choix) de toute version ultérieure. Le texte
+complet est dans [LICENSE](LICENSE).
+
+Les images, icônes et polices intégrées, et les bibliothèques modifiées du dossier `vendor/`,
+gardent leurs propres licences : voir [CREDITS.md](CREDITS.md). Les installateurs joignent en plus
+la liste des bibliothèques Rust compilées dans le programme, avec leurs licences
+(`LICENCES-TIERS.txt`).

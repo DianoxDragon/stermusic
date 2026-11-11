@@ -3,7 +3,7 @@ name = "stermusic"
 version = "0.2.0"
 edition = "2021"
 description = "SterMusic — un lecteur de musique pour Linux"
-license = "MIT"
+license = "GPL-3.0-or-later"
 
 [dependencies]
 # Interface graphique (même version que SterCode) ; icônes SVG

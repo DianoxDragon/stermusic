@@ -321,7 +321,7 @@ pub const EN: &[(&str, &str)] = &[
     ("Le nivellement du volume est désactivé : le lecteur n'en tient pas compte.", "Volume leveling is off: the player ignores these values."),
     ("Le texte recherché est un motif : « \\d+ » trouve un nombre, « ^ » le début…", "The search text is a pattern: “\\d+” finds a number, “^” the start…"),
     ("Le thème « {name} » sera retiré de tes favoris.", "The theme “{name}” will be removed from your favorites."),
-    ("Lecteur de musique pour Linux, écrit en Rust (egui, rodio, Symphonia, lofty). Icônes Lucide (ISC).", "Music player for Linux, written in Rust (egui, rodio, Symphonia, lofty). Lucide icons (ISC)."),
+    ("Lecteur de musique pour Linux, logiciel libre sous licence GPL-3.0 ou ultérieure. Écrit en Rust (egui, rodio, Symphonia, lofty) ; icônes Lucide (ISC), Terre de la NASA, villes de GeoNames (CC BY 4.0).", "Music player for Linux, free software under the GPL-3.0 or later. Written in Rust (egui, rodio, Symphonia, lofty); Lucide icons (ISC), NASA Earth imagery, GeoNames cities (CC BY 4.0)."),
     ("Lecture (Espace)", "Play (Space)"),
     ("Lecture / pause", "Play / pause"),
     ("Lecture aléatoire", "Shuffle play"),

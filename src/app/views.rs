@@ -2526,7 +2526,7 @@ impl SterMusic {
 
             subtitle(ui, tr("À propos"));
             card(ui, |ui| {
-                card_row(ui, Icon::Info, &format!("SterMusic {}", env!("CARGO_PKG_VERSION")), tr("Lecteur de musique pour Linux, écrit en Rust (egui, rodio, Symphonia, lofty). Icônes Lucide (ISC)."), |_, _| {}, self);
+                card_row(ui, Icon::Info, &format!("SterMusic {}", env!("CARGO_PKG_VERSION")), tr("Lecteur de musique pour Linux, logiciel libre sous licence GPL-3.0 ou ultérieure. Écrit en Rust (egui, rodio, Symphonia, lofty) ; icônes Lucide (ISC), Terre de la NASA, villes de GeoNames (CC BY 4.0)."), |_, _| {}, self);
                 ui.horizontal(|ui| {
                     ui.add_space(52.0);
                     ui.label(RichText::new(trf!("Données : {0}", crate::library::data_dir().display())).small().color(theme::TEXT_3));
