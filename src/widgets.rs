@@ -339,6 +339,36 @@ pub fn secondary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response
     response
 }
 
+/// Bouton secondaire en deux parties : le bouton lui-même, et une petite flèche à droite qui
+/// ouvre un menu (renvoyés dans cet ordre).
+pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, Response) {
+    let (galley, w) = button_content(ui, icon, text, theme::TEXT);
+    let arrow_w = 28.0;
+    let (rect, whole) = ui.allocate_exact_size(vec2(w + arrow_w, 34.0), Sense::hover());
+    let split = rect.right() - arrow_w;
+    let main_rect = Rect::from_min_max(rect.min, pos2(split, rect.bottom()));
+    let arrow_rect = Rect::from_min_max(pos2(split, rect.top()), rect.max);
+    let main = ui.interact(main_rect, whole.id.with("main"), Sense::click());
+    let arrow = ui.interact(arrow_rect, whole.id.with("arrow"), Sense::click());
+    let painter = ui.painter();
+    let left = CornerRadius { nw: 6, sw: 6, ..Default::default() };
+    let right = CornerRadius { ne: 6, se: 6, ..Default::default() };
+    for (r, radius, resp) in [(main_rect, left, &main), (arrow_rect, right, &arrow)] {
+        let t = hover_t(ui, resp.id, resp.hovered());
+        painter.rect_filled(r, radius, theme::white(0x10 + (0x0A as f32 * t) as u8));
+        if resp.is_pointer_button_down_on() {
+            painter.rect_filled(r, radius, Color32::from_black_alpha(0x18));
+        }
+    }
+    let t = hover_t(ui, whole.id, main.hovered() || arrow.hovered());
+    let stroke = Stroke::new(1.0_f32, theme::mix(theme::stroke(), theme::stroke_strong(), t));
+    painter.rect_stroke(rect, CornerRadius::same(6), stroke, StrokeKind::Inside);
+    painter.vline(split, rect.y_range().shrink(7.0), stroke);
+    paint_button_content(ui, main_rect, icon, galley, theme::TEXT);
+    icons::paint_centered(painter, Icon::ChevronDown, arrow_rect.center(), 14.0, theme::TEXT_2);
+    (main, arrow)
+}
+
 /// Interrupteur animé.
 pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     let (rect, mut response) = ui.allocate_exact_size(vec2(40.0, 20.0), Sense::click());

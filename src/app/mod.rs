@@ -384,6 +384,8 @@ pub enum Action {
         start: usize,
     },
     PlayShuffled(Vec<usize>),
+    /// Lecture aléatoire au hasard, ou selon mes goûts (le mode est retenu pour la suite).
+    PlayShuffledBy { tracks: Vec<usize>, taste: bool },
     PlayNext(Vec<usize>),
     Enqueue(Vec<usize>),
     Go(View),
@@ -2172,6 +2174,13 @@ impl SterMusic {
     fn apply(&mut self, ctx: &egui::Context, action: Action) {
         match action {
             Action::Play { tracks, start } => self.play_list(tracks, start),
+            Action::PlayShuffledBy { tracks, taste } => {
+                if taste && !tracks.is_empty() {
+                    self.toast(tr("Aléatoire selon mes goûts : tes morceaux préférés viendront plus souvent en premier"));
+                }
+                self.settings.shuffle_taste = taste;
+                self.actions.push(Action::PlayShuffled(tracks));
+            }
             Action::PlayShuffled(tracks) => {
                 if tracks.is_empty() {
                     return;

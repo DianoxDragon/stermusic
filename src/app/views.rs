@@ -620,12 +620,9 @@ impl SterMusic {
             heading(ui, tr("Bibliothèque musicale"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add_space(12.0);
-                if !self.lib.is_empty()
-                    && widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Tout lire en aléatoire"))
-                        .clicked()
-                {
-                    self.actions
-                        .push(Action::PlayShuffled((0..self.lib.tracks.len()).collect()));
+                if !self.lib.is_empty() {
+                    let all: Vec<usize> = (0..self.lib.tracks.len()).collect();
+                    self.shuffle_split(ui, &all, tr("Tout lire en aléatoire"));
                 }
                 if self.scan_rx.is_some() {
                     ui.spinner();
@@ -889,9 +886,7 @@ impl SterMusic {
                     },
                     |s, ui| {
                         s.play_all_button(ui, &tracks);
-                        if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
-                            s.actions.push(Action::PlayShuffled(tracks.clone()));
-                        }
+                        s.shuffle_split(ui, &tracks, tr("Aléatoire"));
                         let resp = widgets::secondary_button(ui, Some(Icon::Plus), tr("Ajouter à"));
                         let popup_id = ui.make_persistent_id("album_add_to");
                         if resp.clicked() {
@@ -997,9 +992,7 @@ impl SterMusic {
                     },
                     |s, ui| {
                         s.play_all_button(ui, &tracks);
-                        if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
-                            s.actions.push(Action::PlayShuffled(tracks.clone()));
-                        }
+                        s.shuffle_split(ui, &tracks, tr("Aléatoire"));
                         if widgets::secondary_button(ui, Some(Icon::ListEnd), tr("Ajouter à la file"))
                             .clicked()
                         {
@@ -1641,9 +1634,7 @@ impl SterMusic {
             |s, ui| {
                 ui.add_enabled_ui(!tracks.is_empty(), |ui| {
                     s.play_all_button(ui, &tracks);
-                    if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
-                        s.actions.push(Action::PlayShuffled(tracks.clone()));
-                    }
+                    s.shuffle_split(ui, &tracks, tr("Aléatoire"));
                 });
                 if let PlaylistId::User(i) = id {
                     if widgets::icon_button(ui, Icon::Pencil, tr("Renommer"), 34.0, 16.0).clicked() {

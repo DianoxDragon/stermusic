@@ -6,7 +6,12 @@
 
 use std::path::PathBuf;
 
-use super::{PlayStat, SterMusic};
+use eframe::egui;
+
+use super::{Action, PlayStat, SterMusic};
+use crate::i18n::tr;
+use crate::icons::Icon;
+use crate::widgets;
 
 /// Engagement d'un morceau (voir le module) ; `None` s'il n'a jamais été lancé.
 pub fn engagement(stat: &PlayStat, duration_secs: f64) -> Option<f32> {
@@ -80,6 +85,55 @@ impl SterMusic {
             weighted_shuffle(tracks, |&i| self.taste_weight(i));
         } else {
             fastrand::shuffle(tracks);
+        }
+    }
+
+    /// Bouton « Aléatoire » avec sa petite flèche : le bouton mélange dans le mode retenu (au
+    /// hasard au départ) ; la flèche, ou un clic droit, propose de mélanger au hasard ou selon mes
+    /// goûts (une file où mes morceaux préférés viennent plus souvent en premier).
+    pub(super) fn shuffle_split(&mut self, ui: &mut egui::Ui, tracks: &[usize], label: &str) {
+        let (main, arrow) = widgets::split_button(ui, Some(Icon::Shuffle), label);
+        let tip = if self.settings.shuffle_taste {
+            tr("Lecture aléatoire selon mes goûts (flèche : changer)")
+        } else {
+            tr("Lecture aléatoire au hasard (flèche : selon mes goûts)")
+        };
+        let main = main.on_hover_text(tip);
+        let arrow = arrow.on_hover_text(tr("Choisir le mélange"));
+        if main.clicked() {
+            self.actions.push(Action::PlayShuffled(tracks.to_vec()));
+        }
+        let popup_id = ui.make_persistent_id(("shuffle_split", main.id));
+        if arrow.clicked() {
+            ui.memory_mut(|m| m.toggle_popup(popup_id));
+        }
+        let mut chosen = None;
+        let taste = self.settings.shuffle_taste;
+        let menu = |ui: &mut egui::Ui, chosen: &mut Option<bool>| {
+            ui.set_min_width(240.0);
+            // Le mode retenu est coché ; l'autre garde son icône.
+            let mark = |yes: bool, icon: Icon| Some(if yes { Icon::Check } else { icon });
+            if widgets::menu_item(ui, mark(!taste, Icon::Shuffle), tr("Au hasard")).clicked() {
+                *chosen = Some(false);
+            }
+            if widgets::menu_item(ui, mark(taste, Icon::Heart), tr("Selon mes goûts"))
+                .on_hover_text(tr("Les morceaux que tu écoutes jusqu'au bout, que tu notes bien ou mets en favori viennent plus souvent ; ceux que tu passes, moins souvent."))
+                .clicked()
+            {
+                *chosen = Some(true);
+            }
+        };
+        egui::popup::popup_above_or_below_widget(
+            ui,
+            popup_id,
+            &arrow,
+            egui::AboveOrBelow::Below,
+            egui::PopupCloseBehavior::CloseOnClick,
+            |ui| menu(ui, &mut chosen),
+        );
+        main.context_menu(|ui| menu(ui, &mut chosen));
+        if let Some(taste) = chosen {
+            self.actions.push(Action::PlayShuffledBy { tracks: tracks.to_vec(), taste });
         }
     }
 

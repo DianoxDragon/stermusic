@@ -377,9 +377,7 @@ impl SterMusic {
                     },
                     |s, ui| {
                         s.play_all_button(ui, &tracks);
-                        if widgets::secondary_button(ui, Some(Icon::Shuffle), tr("Aléatoire")).clicked() {
-                            s.actions.push(Action::PlayShuffled(tracks.clone()));
-                        }
+                        s.shuffle_split(ui, &tracks, tr("Aléatoire"));
                         if widgets::secondary_button(ui, Some(Icon::ListEnd), tr("Ajouter à la file"))
                             .clicked()
                         {
