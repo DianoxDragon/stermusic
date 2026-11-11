@@ -1032,4 +1032,8 @@ pub const EN: &[(&str, &str)] = &[
     ("Régler « {0} »", "Tune “{0}”"),
     ("Teinte", "Hue"),
     ("Zoom", "Zoom"),
+    ("Thème adaptatif", "Adaptive theme"),
+    ("Les couleurs de SterMusic suivent la pochette du morceau en cours, en fondu d'un morceau à l'autre. Sans pochette (ou rien en lecture), on revient au thème choisi ci-dessus.", "SterMusic's colors follow the cover of the current track, fading from one track to the next. Without a cover (or when nothing is playing), the theme chosen above comes back."),
+    ("Quitter le plein écran (Échap)", "Exit full screen (Esc)"),
+    ("Plein écran (F11, ou double-clic sur la pochette)", "Full screen (F11, or double-click the cover)"),
 ];

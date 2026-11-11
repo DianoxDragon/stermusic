@@ -5,7 +5,7 @@
 //! icônes du thème Breeze, boutons de fenêtre ronds.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -182,6 +182,10 @@ pub const THEMES: [Theme; 16] = [
 /// système, favoris), d'où un simple pointeur : `current()` est appelé des centaines de fois par image.
 static CURRENT: AtomicPtr<Theme> = AtomicPtr::new(std::ptr::null_mut());
 static BREEZE: AtomicBool = AtomicBool::new(false);
+/// Thème adaptatif : couleurs qui remplacent celles du thème choisi (fond, accent, second
+/// accent, accent clair), tirées de la pochette du morceau en cours.
+static ADAPTIVE_ON: AtomicBool = AtomicBool::new(false);
+static ADAPTIVE: [AtomicU32; 4] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
 static RADIUS: AtomicU8 = AtomicU8::new(0);
 
 /// Thème « système » : couleurs de KDE (`~/.config/kdeglobals`) ou accent de GNOME. L'identifiant
@@ -481,6 +485,32 @@ pub fn set(ctx: &egui::Context, id: &str) {
     ctx.style_mut_of(egui::Theme::Dark, style);
 }
 
+/// Remplace (ou rend, avec `None`) les couleurs du thème choisi par celles-ci : fond, accent,
+/// second accent, accent clair. Les couleurs d'egui ne sont refaites que si quelque chose change.
+pub fn set_adaptive(ctx: &egui::Context, colors: Option<[Color32; 4]>) {
+    let pack = |c: Color32| u32::from_be_bytes([c.r(), c.g(), c.b(), 255]);
+    let was = ADAPTIVE_ON.load(Ordering::Relaxed);
+    let mut changed = was != colors.is_some();
+    if let Some(colors) = colors {
+        for (slot, c) in ADAPTIVE.iter().zip(colors) {
+            changed |= slot.swap(pack(c), Ordering::Relaxed) != pack(c);
+        }
+    }
+    ADAPTIVE_ON.store(colors.is_some(), Ordering::Relaxed);
+    if changed {
+        ctx.style_mut_of(egui::Theme::Dark, style);
+    }
+}
+
+/// Couleur `i` du thème adaptatif, s'il est en place.
+fn adaptive(i: usize) -> Option<Color32> {
+    if !ADAPTIVE_ON.load(Ordering::Relaxed) {
+        return None;
+    }
+    let [r, g, b, _] = ADAPTIVE[i].load(Ordering::Relaxed).to_be_bytes();
+    Some(Color32::from_rgb(r, g, b))
+}
+
 fn lighten(c: Color32, r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(
         c.r().saturating_add(r),
@@ -491,7 +521,7 @@ fn lighten(c: Color32, r: u8, g: u8, b: u8) -> Color32 {
 
 /// Fond de la fenêtre.
 pub fn bg() -> Color32 {
-    current().bg
+    adaptive(0).unwrap_or(current().bg)
 }
 
 /// Menus et fenêtres flottantes.
@@ -500,15 +530,15 @@ pub fn glass() -> Color32 {
 }
 
 pub fn accent() -> Color32 {
-    current().accent
+    adaptive(1).unwrap_or(current().accent)
 }
 
 pub fn accent_2() -> Color32 {
-    current().accent_2
+    adaptive(2).unwrap_or(current().accent_2)
 }
 
 pub fn accent_light() -> Color32 {
-    current().accent_light
+    adaptive(3).unwrap_or(current().accent_light)
 }
 
 pub const TEXT: Color32 = Color32::from_rgb(0xEB, 0xEE, 0xFA);
@@ -602,9 +632,13 @@ pub fn brand_fill(painter: &egui::Painter, rect: Rect, radius: impl Into<CornerR
 }
 
 fn brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
-    let id = egui::Id::new(("brand_gradient_texture", current().id));
-    if let Some(texture) = ctx.data(|d| d.get_temp::<egui::TextureHandle>(id)) {
-        return texture;
+    // Une seule texture gardée, refaite quand les couleurs changent (thème adaptatif compris).
+    let id = egui::Id::new("brand_gradient_texture");
+    let key = (accent(), accent_2());
+    if let Some((k, texture)) = ctx.data(|d| d.get_temp::<((Color32, Color32), egui::TextureHandle)>(id)) {
+        if k == key {
+            return texture;
+        }
     }
     let size = 32;
     let mut pixels = Vec::with_capacity(size * size);
@@ -619,7 +653,7 @@ fn brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
         pixels,
     };
     let texture = ctx.load_texture("brand_gradient", image, egui::TextureOptions::LINEAR);
-    ctx.data_mut(|d| d.insert_temp(id, texture.clone()));
+    ctx.data_mut(|d| d.insert_temp(id, (key, texture.clone())));
     texture
 }
 

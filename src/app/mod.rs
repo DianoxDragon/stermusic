@@ -1,5 +1,6 @@
 //! SterMusic : état de l'application, file d'attente, actions.
 
+mod ambience;
 mod browse;
 mod cast_view;
 mod chrome;
@@ -194,6 +195,8 @@ pub struct Settings {
     pub bit_perfect: bool,
     /// Icône dans la zone de notification ; fermer la fenêtre y garde alors SterMusic.
     pub tray: bool,
+    /// Thème adaptatif : les couleurs de l'interface suivent la pochette du morceau en cours.
+    pub adaptive_theme: bool,
     /// Nivellement du volume (ReplayGain, sinon automatique).
     pub leveling: bool,
     /// Visualiseur (animations qui suivent la musique).
@@ -290,6 +293,7 @@ impl Default for Settings {
             crossfade_albums: false,
             bit_perfect: false,
             tray: false,
+            adaptive_theme: false,
             leveling: false,
             visualizer: true,
             viz_style: 0,
@@ -378,6 +382,8 @@ pub enum Action {
     SetVolume(f32),
     ToggleMute,
     ToggleMini,
+    /// Vrai plein écran, sur « En cours de lecture ».
+    ToggleFullscreen,
     ToggleSidebar,
     SetTheme(&'static str),
     SetLang(crate::i18n::Lang),
@@ -650,6 +656,25 @@ pub struct SterMusic {
     pending_note: Option<(PathBuf, f64)>,
     /// Notes inscrites dans les fichiers (thread à part).
     ratings: ratings::RatingWriter,
+    /// Couleurs et pochettes qui changent en douceur d'un morceau à l'autre.
+    ambience: ambience::Ambience,
+    /// « En cours de lecture » : le morceau affiché (il suit la pochette, qui attend d'être
+    /// chargée), et les textes du précédent, qui s'effacent.
+    np_track: Option<usize>,
+    np_prev_text: Option<[String; 3]>,
+    np_dir: f32,
+    /// Barre de lecture : le morceau affiché et le précédent (chemin, titre, artiste, album), qui
+    /// s'efface.
+    bar_track: Option<(usize, [String; 4])>,
+    bar_prev: Option<[String; 4]>,
+    /// Vrai plein écran : la vue d'avant, et le dernier mouvement de la souris (les commandes se
+    /// cachent quand elle ne bouge plus).
+    fullscreen: bool,
+    fs_navigated: bool,
+    fs_last_move: f64,
+    fs_changed: f64,
+    /// Plein écran : les commandes sont à l'écran (la souris a bougé récemment).
+    fs_controls: bool,
     /// Molette = volume : la zone du réglage de volume, et la page « En cours de lecture »
     /// (sa zone, moins ce qui défile déjà à la molette). Redonnées à chaque image.
     volume_zone: Option<egui::Rect>,
@@ -908,6 +933,17 @@ impl SterMusic {
             notifier: Default::default(),
             pending_note: None,
             ratings: ratings::RatingWriter::new(&cc.egui_ctx),
+            ambience: Default::default(),
+            np_track: None,
+            np_prev_text: None,
+            np_dir: 1.0,
+            bar_track: None,
+            bar_prev: None,
+            fullscreen: false,
+            fs_navigated: false,
+            fs_last_move: 0.0,
+            fs_changed: 0.0,
+            fs_controls: true,
             volume_zone: None,
             np_wheel: (None, Vec::new()),
             tray: None,
@@ -1117,6 +1153,11 @@ impl SterMusic {
         self.selected.clear();
         self.refresh_search();
         self.sync_ratings();
+        // Les numéros de morceaux ont changé : les fondus repartent du morceau en cours.
+        self.np_track = None;
+        self.np_prev_text = None;
+        self.bar_track = None;
+        self.bar_prev = None;
     }
 
     /// Reprend la file d'attente et la position du dernier lancement (en pause).
@@ -1447,15 +1488,6 @@ impl SterMusic {
         } else {
             allowed
         }
-    }
-
-    /// Couleurs du visualiseur : celles de la pochette en cours, sinon celles du thème.
-    pub(super) fn viz_palette(&mut self) -> [egui::Color32; 3] {
-        let from_cover = self.current().and_then(|i| {
-            let path = self.lib.tracks[i].path.clone();
-            self.covers.large(&path).and_then(|l| l.palette)
-        });
-        from_cover.unwrap_or([theme::accent(), theme::accent_2(), theme::accent_light()])
     }
 
     /// Transmet les réglages de l'égaliseur et du nivellement au son (effet immédiat).
@@ -2274,6 +2306,7 @@ impl SterMusic {
                 self.apply_volume();
             }
             Action::ToggleMini => self.toggle_mini(ctx),
+            Action::ToggleFullscreen => self.toggle_fullscreen(ctx),
             Action::ToggleSidebar => self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed,
             Action::SetBreeze(on) => {
                 self.settings.breeze = on;
@@ -2315,7 +2348,75 @@ impl SterMusic {
         }
     }
 
+    /// Vrai plein écran : la fenêtre prend tout l'écran sur « En cours de lecture », sans barre de
+    /// titre ; la barre de lecture et le pointeur se cachent quand la souris ne bouge plus.
+    fn toggle_fullscreen(&mut self, ctx: &egui::Context) {
+        if self.mini {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        self.fullscreen = !self.fullscreen;
+        self.fs_changed = now;
+        self.fs_last_move = now;
+        ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
+        if self.fullscreen {
+            // On y entre par « En cours de lecture » ; en sortant, on revient d'où l'on venait.
+            self.fs_navigated = self.view != View::NowPlaying && self.current().is_some();
+            if self.fs_navigated {
+                self.actions.push(Action::Go(View::NowPlaying));
+            }
+        } else if std::mem::take(&mut self.fs_navigated) && self.view == View::NowPlaying {
+            self.actions.push(Action::Back);
+        }
+    }
+
+    /// Plein écran sur « En cours de lecture » : l'interface s'efface (ailleurs, elle reste).
+    pub(super) fn immersive(&self) -> bool {
+        self.fullscreen && self.view == View::NowPlaying && !self.mini
+    }
+
+    /// En plein écran : vrai tant que la souris a bougé récemment, qu'elle est en bas de l'écran,
+    /// qu'une bulle est ouverte ou que rien ne joue.
+    pub(super) fn fs_controls_visible(&mut self, ctx: &egui::Context) -> bool {
+        let now = ctx.input(|i| i.time);
+        let active = ctx.input(|i| {
+            i.pointer.delta() != egui::Vec2::ZERO || i.pointer.any_down() || !i.events.is_empty()
+        });
+        if active {
+            self.fs_last_move = now;
+        }
+        let low = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|p| p.y > ctx.screen_rect().bottom() - 110.0);
+        let busy = ctx.memory(|m| m.any_popup_open()) || self.viz_strip || self.viz_strip_tune || self.dialog.is_some();
+        let visible = now - self.fs_last_move < 3.0 || low || busy || !self.is_playing();
+        if visible {
+            // Pour se replier à l'heure, même sans nouvel événement.
+            ctx.request_repaint_after(Duration::from_millis(500));
+        } else {
+            ctx.set_cursor_icon(egui::CursorIcon::None);
+        }
+        self.fs_controls = visible;
+        visible
+    }
+
+    /// Suit un plein écran mis ou retiré par le bureau lui-même (raccourci de KWin…).
+    fn sync_fullscreen(&mut self, ctx: &egui::Context) {
+        let now = ctx.input(|i| i.time);
+        if now - self.fs_changed < 1.5 {
+            return;
+        }
+        if let Some(real) = ctx.input(|i| i.viewport().fullscreen) {
+            if real != self.fullscreen {
+                self.fullscreen = real;
+                self.fs_navigated = false;
+                self.fs_last_move = now;
+            }
+        }
+    }
+
     fn toggle_mini(&mut self, ctx: &egui::Context) {
+        if self.fullscreen {
+            self.toggle_fullscreen(ctx);
+        }
         self.mini = !self.mini;
         if self.mini {
             let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -2495,6 +2596,13 @@ impl SterMusic {
             return;
         }
         self.viz_keys(ctx);
+        if ctx.input_mut(|i| i.consume_key(none, Key::F11)) {
+            self.actions.push(Action::ToggleFullscreen);
+        }
+        // Échap quitte le plein écran (après avoir fermé ce qui était ouvert par-dessus).
+        if self.fullscreen && ctx.input_mut(|i| i.consume_key(none, Key::Escape)) {
+            self.actions.push(Action::ToggleFullscreen);
+        }
         let keys = [
             (none, Key::Space, Action::TogglePlay),
             (cmd, Key::ArrowRight, Action::Next),
@@ -2713,6 +2821,7 @@ impl eframe::App for SterMusic {
                 ctx.request_repaint_after(crate::player::RELEASE_AFTER + Duration::from_millis(50));
             }
         }
+        self.update_ambience(ctx);
         self.handle_keys(ctx);
         self.volume_wheel(ctx);
         self.update_visualizer(ctx);
@@ -2737,8 +2846,11 @@ impl eframe::App for SterMusic {
         if self.mini {
             self.mini_player(ctx);
         } else {
+            self.sync_fullscreen(ctx);
             let resize = chrome::resize_direction(ctx);
-            self.title_bar(ctx);
+            if !self.immersive() {
+                self.title_bar(ctx);
+            }
             self.now_bar(ctx);
             if self.view != View::NowPlaying {
                 self.sidebar(ctx);
@@ -2806,25 +2918,36 @@ impl SterMusic {
     fn paint_cover_backdrop(&mut self, ctx: &egui::Context) {
         let Some(idx) = self.current() else { return };
         let path = self.lib.tracks[idx].path.clone();
-        let blurred = self.covers.large(&path).and_then(|l| l.blurred.clone());
-        let t = crate::anim::toggle(
+        let now = ctx.input(|i| i.time);
+        // L'ancien fond reste le temps que le nouveau soit chargé, puis ils se fondent.
+        let loaded = self.covers.large(&path).map(|l| l.blurred.clone());
+        self.ambience.backdrop.update(now, &path, loaded);
+        let fade = self.ambience.backdrop.t(now);
+        let back = &self.ambience.backdrop;
+        let shown = crate::anim::toggle(
             ctx,
             egui::Id::new("cover_backdrop"),
-            blurred.is_some(),
+            back.current().is_some() || back.previous(now).flatten().is_some(),
             crate::anim::SLOW,
         );
-        if let Some(tex) = blurred {
-            let painter = ctx.layer_painter(egui::LayerId::background());
-            let screen = ctx.screen_rect();
-            let radius = egui::CornerRadius::same(theme::window_radius());
-            backdrop::paint_fill(
-                &painter,
-                &tex,
-                screen,
-                egui::Color32::from_gray(150).gamma_multiply(t),
-                radius,
-            );
-            painter.rect_filled(screen, radius, theme::alpha(theme::bg(), (0x70 as f32 * t) as u8));
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let screen = ctx.screen_rect();
+        let radius = egui::CornerRadius::same(theme::window_radius());
+        let gray = egui::Color32::from_gray(150);
+        let old = back.previous(now).flatten();
+        if let Some(tex) = old {
+            backdrop::paint_fill(&painter, tex, screen, gray.gamma_multiply(shown), radius);
+        }
+        if let Some(tex) = back.current() {
+            // Par-dessus l'ancien : opaque à la fin du fondu. Sans ancien, il monte seul.
+            let a = if old.is_some() { fade } else { shown };
+            backdrop::paint_fill(&painter, tex, screen, gray.gamma_multiply(a), radius);
+        }
+        if back.current().is_some() || old.is_some() {
+            painter.rect_filled(screen, radius, theme::alpha(theme::bg(), (0x70 as f32 * shown) as u8));
+        }
+        if back.fading(now) {
+            ctx.request_repaint();
         }
     }
 

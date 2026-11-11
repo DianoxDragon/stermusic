@@ -1585,6 +1585,24 @@ impl SterMusic {
             );
             return;
         };
+        // Le morceau affiché suit sa pochette : l'ancien reste à l'écran le temps que la nouvelle
+        // soit chargée, puis pochette et textes changent ensemble, en fondu.
+        let now = ui.input(|i| i.time);
+        let current_path = self.lib.tracks[idx].path.clone();
+        let loaded = self.covers.large(&current_path).map(|l| l.cover.clone());
+        if self.ambience.cover.update(now, &current_path, loaded) {
+            self.np_prev_text = self.np_track.and_then(|p| self.lib.tracks.get(p)).map(|p| {
+                [p.title.clone(), p.artist_or_unknown().to_owned(), p.album_or_unknown().to_owned()]
+            });
+            self.np_track = Some(idx);
+            self.np_dir = self.ambience.dir;
+        }
+        let real_idx = idx;
+        let idx = self.np_track.filter(|&i| i < self.lib.tracks.len()).unwrap_or(idx);
+        let fade = self.ambience.cover.t(now);
+        if self.ambience.cover.fading(now) {
+            ui.ctx().request_repaint();
+        }
         let t = self.lib.tracks[idx].clone();
         let album = self.lib.track_album[idx];
         let artist = self.lib.album_artist[album];
@@ -1595,16 +1613,20 @@ impl SterMusic {
             .queue_pos
             .map(|p| self.queue.iter().skip(p + 1).take(5).copied().collect())
             .unwrap_or_default();
+        // En plein écran, la pochette et les textes grandissent avec l'écran.
+        let immersive = self.immersive();
+        let max_side = if immersive { (rect.height() * 0.58).max(420.0) } else { 420.0 };
         let side = (rect.height() - 140.0)
             .min(rect.width() * 0.38)
-            .clamp(160.0, 420.0);
-        let total_w = side + 40.0 + (rect.width() * 0.42).min(480.0);
+            .clamp(160.0, max_side);
+        let big = (side / 420.0).clamp(1.0, 1.7);
+        let total_w = side + 40.0 + (rect.width() * 0.42).min(480.0 * big);
         let left = rect.center().x - total_w / 2.0;
         let cover = Rect::from_min_size(
             pos2(left, rect.top() + (rect.height() - side) / 2.0 - 30.0),
             vec2(side, side),
         );
-        let appear = anim::appear(ui.ctx(), egui::Id::new(("np_cover", idx)), anim::SLOW);
+        let appear = anim::appear(ui.ctx(), egui::Id::new("np_cover"), anim::SLOW);
         // En pause, la pochette se rétracte légèrement ; elle reprend sa taille à la lecture.
         let playing = self.is_playing();
         let live = anim::value(
@@ -1637,7 +1659,7 @@ impl SterMusic {
                         .pick(now, self.current(), setting, &allowed, self.settings.viz_auto_secs);
                 let blur = self
                     .covers
-                    .large(&t.path)
+                    .large(&current_path)
                     .and_then(|l| l.blurred.as_ref().map(|x| x.id()));
                 if let Some((old, f)) = fading {
                     self.paint_np_style(ui, area, palette, intensity * (1.0 - f), old, (cover, blur));
@@ -1662,7 +1684,6 @@ impl SterMusic {
             }
             crate::viz::halo(ui.painter(), cover, &self.spectrum, palette[0], intensity);
         }
-        let tex = self.covers.large(&t.path).and_then(|l| l.cover.clone());
         ui.painter().add(
             egui::Shadow {
                 offset: [0, 18],
@@ -1672,10 +1693,68 @@ impl SterMusic {
             }
             .as_shape(cover, CornerRadius::same(14)),
         );
-        widgets::cover(ui.painter(), cover, tex.as_ref(), 14, &t.album);
+        // Changement de morceau : l'ancienne pochette glisse et s'efface, la nouvelle arrive de
+        // l'autre côté (à droite pour le morceau suivant, à gauche pour le précédent).
+        let dir = self.np_dir;
+        let slide = cover.width() * 0.10;
+        let cover_fade = &self.ambience.cover;
+        if let Some(prev) = cover_fade.previous(now) {
+            let mut p = ui.painter().clone();
+            p.set_opacity(1.0 - fade);
+            let old_seed = self.np_prev_text.as_ref().map(|s| s[2].as_str()).unwrap_or("");
+            let r = cover.translate(vec2(-dir * slide * fade, 0.0));
+            widgets::cover(&p, r.shrink(cover.width() * 0.02 * fade), prev, 14, old_seed);
+        }
+        {
+            let mut p = ui.painter().clone();
+            p.set_opacity(fade);
+            let r = cover.translate(vec2(dir * slide * (1.0 - fade), 0.0));
+            widgets::cover(&p, r, cover_fade.current(), 14, &t.album);
+        }
 
-        let x = cover.right() + 40.0;
-        let tw = rect.right() - x - 24.0;
+        // Double-clic sur la pochette : plein écran. Un bouton discret le dit, en haut à gauche.
+        let cover_resp = ui.interact(cover, ui.id().with("np_cover_click"), Sense::click());
+        if cover_resp.double_clicked() {
+            self.actions.push(Action::ToggleFullscreen);
+        }
+        let fs_tip = if self.fullscreen {
+            tr("Quitter le plein écran (Échap)")
+        } else {
+            tr("Plein écran (F11, ou double-clic sur la pochette)")
+        };
+        let fs_rect = Rect::from_min_size(pos2(rect.left() + 14.0, rect.top() + 10.0), vec2(34.0, 34.0));
+        // En plein écran, il s'efface avec les commandes quand la souris ne bouge plus.
+        if (!immersive || self.fs_controls)
+            && ui
+            .put(fs_rect, |ui: &mut egui::Ui| {
+                widgets::icon_button(ui, if self.fullscreen { Icon::Minimize } else { Icon::Maximize }, fs_tip, 34.0, 16.0)
+            })
+            .clicked()
+        {
+            self.actions.push(Action::ToggleFullscreen);
+        }
+
+        let x0 = cover.right() + 40.0;
+        let tw = rect.right() - x0 - 24.0;
+        // Les textes de l'ancien morceau s'effacent en glissant ; ceux du nouveau arrivent.
+        if let Some(old) = self.np_prev_text.as_ref().filter(|_| fade < 1.0) {
+            let mut p = ui.painter().clone();
+            p.set_opacity(1.0 - fade);
+            let ox = x0 - dir * 28.0 * fade;
+            let mut oy = cover.top() + 38.0;
+            for (text, font, color) in [
+                (&old[0], theme::semibold(36.0 * big), theme::TEXT),
+                (&old[1], FontId::proportional(18.0 * big), theme::TEXT),
+                (&old[2], FontId::proportional(15.0 * big), theme::TEXT_2),
+            ] {
+                let g = widgets::galley(ui, text, font, color, tw);
+                let h = g.size().y;
+                p.galley(pos2(ox, oy), g, color);
+                oy += h + 8.0;
+            }
+        }
+        ui.set_opacity(fade);
+        let x = x0 + dir * 28.0 * (1.0 - fade);
         let mut y = cover.top() + 16.0;
         let p = ui.painter();
         widgets::equalizer(p, pos2(x + 7.0, y + 7.0), 13.0, theme::accent_light(), playing);
@@ -1693,7 +1772,7 @@ impl SterMusic {
         y += 22.0;
         let mut job = egui::text::LayoutJob::single_section(
             t.title.clone(),
-            egui::TextFormat::simple(theme::semibold(36.0), theme::TEXT),
+            egui::TextFormat::simple(theme::semibold(36.0 * big), theme::TEXT),
         );
         job.wrap = egui::text::TextWrapping {
             max_width: tw,
@@ -1708,13 +1787,13 @@ impl SterMusic {
         for (text, size, color, target) in [
             (
                 t.artist_or_unknown().to_owned(),
-                18.0,
+                18.0 * big,
                 theme::TEXT,
                 View::Artist(artist),
             ),
             (
                 t.album_or_unknown().to_owned(),
-                15.0,
+                15.0 * big,
                 theme::TEXT_2,
                 View::Album(album),
             ),
@@ -1784,6 +1863,11 @@ impl SterMusic {
             icons::paint_centered(ui.painter(), if on { Icon::StarFilled } else { Icon::Star }, c, 12.0, color);
         }
         y += 34.0;
+        ui.set_opacity(1.0);
+        let x = x0;
+        // Paroles et « À suivre » sont ceux du morceau réellement en cours.
+        let idx = real_idx;
+        let _ = idx;
 
         // Paroles ou « À suivre », au choix quand le morceau a des paroles.
         self.want_lyrics(ui.ctx());
@@ -2057,6 +2141,12 @@ impl SterMusic {
                     });
                     ui.add_space(4.0);
                 }
+                separator(ui);
+                let mut adaptive = self.settings.adaptive_theme;
+                card_row(ui, Icon::Image, tr("Thème adaptatif"), tr("Les couleurs de SterMusic suivent la pochette du morceau en cours, en fondu d'un morceau à l'autre. Sans pochette (ou rien en lecture), on revient au thème choisi ci-dessus."), |_, ui| {
+                    widgets::switch(ui, &mut adaptive);
+                }, self);
+                self.settings.adaptive_theme = adaptive;
             });
 
             subtitle(ui, tr("Son"));

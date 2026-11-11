@@ -100,6 +100,7 @@ cargo run --release -- ~/Musique
 | Ctrl + ↑ / ↓      | Volume                          |
 | Ctrl + F          | Rechercher                      |
 | Ctrl + M          | Mini lecteur                    |
+| F11               | Plein écran (En cours de lecture) ; Échap pour en sortir |
 | V / Maj + V       | Visualiseur suivant / précédent (En cours de lecture) |
 | Échap             | Retour                          |
 | Double-clic       | Lancer un morceau               |

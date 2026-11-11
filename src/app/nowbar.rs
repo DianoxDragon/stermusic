@@ -105,11 +105,13 @@ impl SterMusic {
     }
 
     pub(super) fn now_bar(&mut self, ctx: &egui::Context) {
+        // En plein écran, la barre se replie quand la souris ne bouge plus.
+        let visible = !self.immersive() || self.fs_controls_visible(ctx);
         egui::TopBottomPanel::bottom("now_bar")
             .exact_height(NOWBAR_HEIGHT)
             .frame(egui::Frame::NONE)
             .show_separator_line(false)
-            .show(ctx, |ui| {
+            .show_animated(ctx, visible, |ui| {
                 let rect = ui.max_rect();
                 let painter = ui.painter();
                 // Les coins du bas touchent ceux de la fenêtre.
@@ -270,7 +272,33 @@ impl SterMusic {
                         let lift = 1.5 * hover;
                         let r = cover_rect.expand(lift);
                         widgets::cover(ui.painter(), r, tex.as_ref(), 6, &t.album);
-                        let slide = vec2(10.0 * (1.0 - appear), 0.0);
+                        // L'ancien morceau s'efface par-dessus : sa pochette en fondu, ses textes
+                        // en glissant de l'autre côté.
+                        let dir = self.ambience.dir;
+                        if self.bar_track.as_ref().map(|(k, _)| *k) != Some(i) {
+                            self.bar_prev = self.bar_track.take().map(|(_, texts)| texts);
+                            self.bar_track = Some((
+                                i,
+                                [
+                                    t.path.to_string_lossy().into_owned(),
+                                    t.title.clone(),
+                                    t.artist_or_unknown().to_owned(),
+                                    t.album.clone(),
+                                ],
+                            ));
+                        }
+                        if let Some(old) = self.bar_prev.as_ref().filter(|_| appear < 1.0) {
+                            let mut p = ui.painter().clone();
+                            p.set_opacity(1.0 - appear);
+                            let old_tex = self.covers.thumb(std::path::Path::new(&old[0])).cloned();
+                            widgets::cover(&p, r, old_tex.as_ref(), 6, &old[3]);
+                            let out = vec2(-dir * 12.0 * appear, 0.0);
+                            let g = widgets::galley(ui, &old[1], theme::semibold(14.0), theme::TEXT, max_w);
+                            p.galley(pos2(tx, cy - 19.0) + out, g, theme::TEXT);
+                            let g = widgets::galley(ui, &old[2], FontId::proportional(12.5), theme::TEXT_2, max_w);
+                            p.galley(pos2(tx, cy + 3.0) + out, g, theme::TEXT_2);
+                        }
+                        let slide = vec2(dir * 12.0 * (1.0 - appear), 0.0);
                         let title_pos = pos2(tx, cy - 19.0) + slide;
                         ui.painter().galley_with_override_text_color(
                             title_pos,
