@@ -76,27 +76,13 @@ impl SterMusic {
         )
     }
 
-    /// Mélange des morceaux : au hasard pur, ou rangés selon mes goûts si ce mode est choisi.
-    pub(super) fn shuffle_tracks(&self, tracks: &mut Vec<usize>) {
-        if self.settings.shuffle_taste {
-            taste_order(tracks, |&i| self.taste_weight(i));
-        } else {
-            fastrand::shuffle(tracks);
-        }
-    }
-
-    /// Bouton « Aléatoire » avec sa petite flèche : le bouton mélange dans le mode retenu (au
-    /// hasard au départ) ; la flèche, ou un clic droit, propose de mélanger au hasard ou selon mes
-    /// goûts (une file rangée de mes morceaux préférés aux moins aimés).
+    /// Bouton « Aléatoire » avec sa petite flèche : le bouton lance la lecture au hasard ; la
+    /// flèche (ou un clic droit) propose aussi « Selon mes goûts » : une file rangée de mes
+    /// morceaux préférés aux moins aimés, sans rien changer au bouton aléatoire de la barre.
     pub(super) fn shuffle_split(&mut self, ui: &mut egui::Ui, tracks: &[usize], label: &str) {
         let (main, arrow) = widgets::split_button(ui, Some(Icon::Shuffle), label);
-        let tip = if self.settings.shuffle_taste {
-            tr("Lecture aléatoire selon mes goûts (flèche : changer)")
-        } else {
-            tr("Lecture aléatoire au hasard (flèche : selon mes goûts)")
-        };
-        let main = main.on_hover_text(tip);
-        let arrow = arrow.on_hover_text(tr("Choisir le mélange"));
+        let main = main.on_hover_text(tr("Lecture aléatoire (flèche : selon mes goûts)"));
+        let arrow = arrow.on_hover_text(tr("Autres façons de lire"));
         if main.clicked() {
             self.actions.push(Action::PlayShuffled(tracks.to_vec()));
         }
@@ -105,15 +91,12 @@ impl SterMusic {
             ui.memory_mut(|m| m.toggle_popup(popup_id));
         }
         let mut chosen = None;
-        let taste = self.settings.shuffle_taste;
         let menu = |ui: &mut egui::Ui, chosen: &mut Option<bool>| {
             ui.set_min_width(240.0);
-            // Le mode retenu est coché ; l'autre garde son icône.
-            let mark = |yes: bool, icon: Icon| Some(if yes { Icon::Check } else { icon });
-            if widgets::menu_item(ui, mark(!taste, Icon::Shuffle), tr("Au hasard")).clicked() {
+            if widgets::menu_item(ui, Some(Icon::Shuffle), tr("Au hasard")).clicked() {
                 *chosen = Some(false);
             }
-            if widgets::menu_item(ui, mark(taste, Icon::Heart), tr("Selon mes goûts"))
+            if widgets::menu_item(ui, Some(Icon::Heart), tr("Selon mes goûts"))
                 .on_hover_text(tr("La file est rangée par goût : d'abord les morceaux que tu écoutes jusqu'au bout, notes bien ou mets en favori ; à la fin, ceux que tu passes."))
                 .clicked()
             {
@@ -129,8 +112,10 @@ impl SterMusic {
             |ui| menu(ui, &mut chosen),
         );
         main.context_menu(|ui| menu(ui, &mut chosen));
-        if let Some(taste) = chosen {
-            self.actions.push(Action::PlayShuffledBy { tracks: tracks.to_vec(), taste });
+        match chosen {
+            Some(true) => self.actions.push(Action::PlayByTaste(tracks.to_vec())),
+            Some(false) => self.actions.push(Action::PlayShuffled(tracks.to_vec())),
+            None => {}
         }
     }
 

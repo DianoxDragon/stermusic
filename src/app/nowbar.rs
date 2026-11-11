@@ -451,46 +451,12 @@ impl SterMusic {
 
     /// Aléatoire, précédent, lecture, suivant, répétition.
     fn controls(&mut self, ui: &mut egui::Ui, playing: bool, size: f32, play_size: f32) {
-        let shuffle = widgets::mode_toggle(
-            ui,
-            self.settings.shuffle,
-            Icon::Shuffle,
-            match (self.settings.shuffle, self.settings.shuffle_taste) {
-                (true, true) => tr("Selon mes goûts : la file va de tes morceaux préférés aux moins aimés (clic droit : changer de mode)"),
-                (true, false) => tr("Aléatoire au hasard (clic droit : selon mes goûts)"),
-                (false, true) => tr("Aléatoire : désactivé ; il sera selon mes goûts (clic droit : changer de mode)"),
-                (false, false) => tr("Aléatoire : désactivé (clic droit : au hasard ou selon mes goûts)"),
-            },
-            size,
-            17.0,
-        );
-        // Selon mes goûts : un petit cœur sur l'icône.
-        if self.settings.shuffle && self.settings.shuffle_taste {
-            let c = pos2(shuffle.rect.right() - 9.0, shuffle.rect.top() + 11.0);
-            icons::paint_centered(ui.painter(), Icon::HeartFilled, c, 9.0, theme::accent_light());
-        }
-        if shuffle.clicked() {
+        // Simple interrupteur : la file selon mes goûts est une autre chose (flèche des boutons
+        // « Aléatoire » de la bibliothèque), qui n'a rien à voir avec ce bouton.
+        let tip = if self.settings.shuffle { tr("Aléatoire : activé") } else { tr("Aléatoire : désactivé") };
+        if widgets::mode_toggle(ui, self.settings.shuffle, Icon::Shuffle, tip, size, 17.0).clicked() {
             self.actions.push(Action::ToggleShuffle);
         }
-        // Clic droit : choisir le mode.
-        shuffle.context_menu(|ui| {
-            ui.set_max_width(230.0);
-            ui.label(egui::RichText::new(tr("Lecture aléatoire")).small().color(theme::TEXT_3));
-            let (on, taste) = (self.settings.shuffle, self.settings.shuffle_taste);
-            let mark = |yes: bool| yes.then_some(Icon::Check);
-            if widgets::menu_item(ui, mark(!on), tr("Désactivée")).clicked() {
-                self.actions.push(Action::SetShuffle { on: false, taste });
-            }
-            if widgets::menu_item(ui, mark(on && !taste), tr("Au hasard")).clicked() {
-                self.actions.push(Action::SetShuffle { on: true, taste: false });
-            }
-            if widgets::menu_item(ui, mark(on && taste), tr("Selon mes goûts"))
-                .on_hover_text(tr("La file est rangée par goût : d'abord les morceaux que tu écoutes jusqu'au bout, notes bien ou mets en favori ; à la fin, ceux que tu passes."))
-                .clicked()
-            {
-                self.actions.push(Action::SetShuffle { on: true, taste: true });
-            }
-        });
         if widgets::icon_button(ui, Icon::SkipBack, tr("Précédent (Ctrl+←)"), size, 19.0).clicked() {
             self.actions.push(Action::Previous);
         }

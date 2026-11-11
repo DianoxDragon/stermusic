@@ -1026,6 +1026,8 @@ pub const EN: &[(&str, &str)] = &[
     ("Nombre de pétales", "Number of petals"),
     ("Nombre de rayons", "Number of rays"),
     ("Relief", "Relief"),
+    ("Lecture aléatoire (flèche : selon mes goûts)", "Shuffle play (arrow: by my taste)"),
+    ("Autres façons de lire", "Other ways to play"),
     ("Lecture aléatoire selon mes goûts (flèche : changer)", "Shuffle play by my taste (arrow: change)"),
     ("Lecture aléatoire au hasard (flèche : selon mes goûts)", "Random shuffle play (arrow: by my taste)"),
     ("Choisir le mélange", "Choose how to shuffle"),
