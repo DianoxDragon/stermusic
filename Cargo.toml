@@ -1,6 +1,6 @@
 [package]
 name = "stermusic"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 description = "SterMusic — un lecteur de musique pour Linux"
 license = "GPL-3.0-or-later"
