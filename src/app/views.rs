@@ -150,7 +150,7 @@ impl SterMusic {
         let on = self.settings.eq_on;
         ui.scope(|ui| {
             if !on {
-                ui.set_opacity(0.45);
+                ui.multiply_opacity(0.45);
             }
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -297,7 +297,7 @@ impl SterMusic {
         // Le globe des webradios occupe toute la zone, d'un bord à l'autre.
         if view == View::Page(Page::Radio) && self.settings.radio_globe {
             ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
-                ui.set_opacity(t);
+                ui.multiply_opacity(t);
                 self.globe_view(ui, rect);
             });
             return;
@@ -305,7 +305,7 @@ impl SterMusic {
         let inner = Rect::from_min_max(rect.min + vec2(PAD_X, 24.0), rect.max - vec2(PAD_X * 0.5, 0.0))
             .translate(vec2(0.0, 18.0 * (1.0 - t)));
         ui.scope_builder(UiBuilder::new().max_rect(inner), |ui| {
-            ui.set_opacity(t);
+            ui.multiply_opacity(t);
             match view {
                 View::Page(Page::Home) => self.home(ui),
                 View::Page(Page::Library) => self.library_page(ui),
@@ -742,7 +742,7 @@ impl SterMusic {
             lists::restart_cascade(ui.ctx());
         }
         let t = anim::value_from(ui.ctx(), tab_in, 0.0, 1.0, anim::SLOW, anim::Easing::OutExpo);
-        ui.set_opacity(t);
+        ui.multiply_opacity(t);
 
         let query = self.lib_filter.trim().to_owned();
         match self.settings.lib_tab {
@@ -1906,14 +1906,14 @@ impl SterMusic {
         let cover_fade = &self.ambience.cover;
         if let Some(prev) = cover_fade.previous(now) {
             let mut p = ui.painter().clone();
-            p.set_opacity(1.0 - fade);
+            p.multiply_opacity(1.0 - fade);
             let old_seed = self.np_prev_text.as_ref().map(|s| s[2].as_str()).unwrap_or("");
             let r = cover.translate(vec2(-dir * slide * fade, 0.0));
             widgets::cover_now(&p, r.shrink(cover.width() * 0.02 * fade), prev, 14, old_seed);
         }
         {
             let mut p = ui.painter().clone();
-            p.set_opacity(fade);
+            p.multiply_opacity(fade);
             let r = cover.translate(vec2(dir * slide * (1.0 - fade), 0.0));
             widgets::cover_now(&p, r, cover_fade.current(), 14, &t.album);
         }
@@ -1929,7 +1929,7 @@ impl SterMusic {
         // Les textes de l'ancien morceau s'effacent en glissant ; ceux du nouveau arrivent.
         if let Some(old) = self.np_prev_text.as_ref().filter(|_| fade < 1.0) {
             let mut p = ui.painter().clone();
-            p.set_opacity(1.0 - fade);
+            p.multiply_opacity(1.0 - fade);
             let ox = x0 - dir * 28.0 * fade;
             let mut oy = cover.top() + 38.0;
             for (text, font, color) in [
@@ -1943,7 +1943,8 @@ impl SterMusic {
                 oy += h + 8.0;
             }
         }
-        ui.set_opacity(fade);
+        let base_opacity = ui.opacity();
+        ui.multiply_opacity(fade);
         let x = x0 + dir * 28.0 * (1.0 - fade);
         let mut y = cover.top() + 16.0;
         let p = ui.painter();
@@ -2053,7 +2054,7 @@ impl SterMusic {
             icons::paint_centered(ui.painter(), if on { Icon::StarFilled } else { Icon::Star }, c, 12.0, color);
         }
         y += 34.0;
-        ui.set_opacity(1.0);
+        ui.set_opacity(base_opacity);
         let x = x0;
         // Paroles et « À suivre » sont ceux du morceau réellement en cours.
         let idx = real_idx;

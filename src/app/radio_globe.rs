@@ -37,6 +37,8 @@ pub struct GlobeState {
     /// Vol vers un point (latitude, longitude en radians, zoom visé).
     fly_to: Option<(f32, f32, f32)>,
     selected: Option<usize>,
+    /// Dernier lieu ouvert : le panneau le garde affiché le temps de glisser hors de la carte.
+    shown: Option<usize>,
     /// Pays vers lequel le globe s'est tourné (il suit le choix de pays de l'annuaire).
     centered_on: Option<String>,
     /// Images détaillées de la région affichée : la nouvelle, et l'ancienne qui reste dessous
@@ -82,6 +84,7 @@ impl Default for GlobeState {
             touched: false,
             fly_to: None,
             selected: None,
+            shown: None,
             centered_on: None,
             detail: None,
             detail_prev: None,
@@ -185,6 +188,7 @@ impl SterMusic {
                         g.places = radio::places(&world);
                         g.world = world;
                         g.selected = None;
+                        g.shown = None;
                     }
                     Err(e) => g.error = Some(trf!("Annuaire injoignable : {e}", e)),
                 }
@@ -395,9 +399,27 @@ impl SterMusic {
                 live_place = Some(p);
             }
         }
+        // Lieu choisi : l'anneau se resserre sur le point, avec une onde qui s'en échappe.
+        let ring = crate::anim::pulse(
+            &ctx,
+            egui::Id::new("globe_ring"),
+            g.selected.map_or(u64::MAX, |k| k as u64),
+            crate::anim::SLOW * 2.0,
+        );
         if let Some(sel) = g.selected.and_then(|k| g.places.get(k)) {
             if let Some((p, _)) = view.project(sel.lat, sel.lon) {
-                painter.circle_stroke(p, 11.0, Stroke::new(2.0_f32, Color32::WHITE));
+                painter.circle_stroke(
+                    p,
+                    11.0 + 8.0 * ring,
+                    Stroke::new(2.0_f32, Color32::WHITE.gamma_multiply(1.0 - 0.6 * ring)),
+                );
+                if ring > 0.0 {
+                    painter.circle_stroke(
+                        p,
+                        11.0 + 26.0 * (1.0 - ring),
+                        Stroke::new(1.5_f32, Color32::WHITE.gamma_multiply(0.6 * ring)),
+                    );
+                }
             }
         }
         if let Some(p) = live_place {
@@ -420,10 +442,17 @@ impl SterMusic {
                 crate::i18n::plural(place.stations.len(), "station", "stations")
             );
             if let Some(ptr) = pointer {
+                // La bulle du lieu survolé apparaît en fondu, en remontant un peu.
+                let t = crate::anim::appear_each(
+                    &ctx,
+                    egui::Id::new(("globe_tip", k)),
+                    crate::anim::FAST * 1.5,
+                    crate::anim::Easing::Out,
+                );
                 let galley = widgets::galley(ui, &label, FontId::proportional(13.0), theme::TEXT, 320.0);
-                let r = Rect::from_min_size(ptr + vec2(14.0, -30.0), galley.size() + vec2(16.0, 10.0));
-                painter.rect_filled(r, CornerRadius::same(6), theme::alpha(theme::bg(), 0xE8));
-                painter.galley(r.min + vec2(8.0, 5.0), galley, theme::TEXT);
+                let r = Rect::from_min_size(ptr + vec2(14.0, -30.0 + 6.0 * (1.0 - t)), galley.size() + vec2(16.0, 10.0));
+                painter.rect_filled(r, CornerRadius::same(6), theme::alpha(theme::bg(), 0xE8).gamma_multiply(t));
+                painter.galley(r.min + vec2(8.0, 5.0), galley, theme::TEXT.gamma_multiply(t));
             }
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -461,8 +490,22 @@ impl SterMusic {
             });
         });
         self.globe_overlay(ui, area, toolbar, panel_open);
-        if panel_open {
-            self.place_panel(ui, panel);
+        // Le panneau glisse depuis la droite en s'ouvrant, et repart de même en se fermant.
+        if let Some(k) = self.radio.globe.selected {
+            // Ouverture du panneau : ses stations arrivent en cascade (un changement de lieu
+            // relance aussi la cascade, dans `place_panel`).
+            if self.radio.globe.shown.is_none() {
+                super::lists::restart_cascade(&ctx);
+            }
+            self.radio.globe.shown = Some(k);
+        }
+        if shift > 0.01 {
+            if let Some(k) = self.radio.globe.shown {
+                let slide = panel.translate(vec2((PANEL_W * 0.35) * (1.0 - shift), 0.0));
+                self.place_panel(ui, slide, k, shift);
+            }
+        } else if !panel_open {
+            self.radio.globe.shown = None;
         }
         // Liseré de la zone de contenu, par-dessus la carte.
         ui.painter().rect_stroke(
@@ -624,16 +667,17 @@ impl SterMusic {
     }
 
     /// Panneau des stations du lieu choisi.
-    fn place_panel(&mut self, ui: &mut egui::Ui, rect: Rect) {
-        let Some(place) = self
-            .radio
-            .globe
-            .selected
-            .and_then(|k| self.radio.globe.places.get(k))
-            .cloned()
-        else {
+    fn place_panel(&mut self, ui: &mut egui::Ui, rect: Rect, k: usize, opacity: f32) {
+        let Some(place) = self.radio.globe.places.get(k).cloned() else {
             return;
         };
+        // Autre lieu : les stations repartent en cascade.
+        if crate::anim::key_changed(ui.ctx(), egui::Id::new("globe_place"), k as u64) {
+            super::lists::restart_cascade(ui.ctx());
+        }
+        let mut scoped = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
+        scoped.multiply_opacity(opacity);
+        let ui = &mut scoped;
         // Panneau posé sur la carte : ombre douce, fond presque opaque.
         ui.painter().add(
             egui::Shadow {

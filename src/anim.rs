@@ -123,16 +123,10 @@ pub fn key_changed(ctx: &Context, id: Id, key: u64) -> bool {
 /// rebondit quand son nombre change…).
 pub fn pulse(ctx: &Context, id: Id, key: u64, duration: f32) -> f32 {
     if key_changed(ctx, id, key) {
-        ctx.data_mut(|d| {
-            d.insert_temp(
-                id,
-                Tween {
-                    from: 1.0,
-                    to: 0.0,
-                    start: ctx.input(|i| i.time),
-                },
-            )
-        });
+        // L'heure est lue avant : `ctx.input` dans `ctx.data_mut` reprendrait le verrou d'egui
+        // déjà tenu, et l'interface se figerait (la musique, elle, continue).
+        let start = ctx.input(|i| i.time);
+        ctx.data_mut(|d| d.insert_temp(id, Tween { from: 1.0, to: 0.0, start }));
     }
     value(ctx, id, 0.0, duration, Easing::Out)
 }

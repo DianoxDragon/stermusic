@@ -289,7 +289,7 @@ impl SterMusic {
                         }
                         if let Some(old) = self.bar_prev.as_ref().filter(|_| appear < 1.0) {
                             let mut p = ui.painter().clone();
-                            p.set_opacity(1.0 - appear);
+                            p.multiply_opacity(1.0 - appear);
                             let old_tex = self.covers.thumb(std::path::Path::new(&old[0])).cloned();
                             widgets::cover_now(&p, r, old_tex.as_ref(), 6, &old[3]);
                             let out = vec2(-dir * 12.0 * appear, 0.0);

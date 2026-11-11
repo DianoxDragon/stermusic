@@ -270,7 +270,7 @@ pub struct RowOut {
 pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) -> RowOut {
     let a = stagger(ui.ctx(), i);
     ui.scope(|ui| {
-        ui.set_opacity(a);
+        ui.multiply_opacity(a);
         track_row_inner(ui, c, list, i, opts)
     })
     .inner
@@ -787,7 +787,7 @@ pub fn grid(
                 for k in r * cols..((r + 1) * cols).min(n) {
                     let a = stagger(ui.ctx(), k);
                     ui.scope(|ui| {
-                        ui.set_opacity(a);
+                        ui.multiply_opacity(a);
                         card(ui, k, w);
                     });
                 }
@@ -812,7 +812,7 @@ pub fn virtual_grid(ui: &mut Ui, id: &str, n: usize, mut card: impl FnMut(&mut U
                     for k in r * cols..((r + 1) * cols).min(n) {
                         let a = stagger(ui.ctx(), k);
                         ui.scope(|ui| {
-                            ui.set_opacity(a);
+                            ui.multiply_opacity(a);
                             card(ui, k, w);
                         });
                     }

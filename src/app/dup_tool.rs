@@ -375,7 +375,7 @@ impl SterMusic {
                         ui.scope(|ui| {
                             if count == 0 {
                                 ui.disable();
-                                ui.set_opacity(0.5);
+                                ui.multiply_opacity(0.5);
                             }
                             if widgets::primary_button(ui, Some(Icon::Trash), tr("Mettre à la corbeille…"))
                                 .clicked()

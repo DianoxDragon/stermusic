@@ -246,7 +246,7 @@ impl SterMusic {
                             };
                             let a = super::lists::stagger(ui.ctx(), k);
                             ui.scope(|ui| {
-                                ui.set_opacity(a);
+                                ui.multiply_opacity(a);
                                 if tool_card(ui, icon, title, desc, cw) {
                                     self.actions.push(action);
                                 }

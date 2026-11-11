@@ -284,7 +284,11 @@ impl SterMusic {
             if let Ok(result) = rx.try_recv() {
                 self.radio.searching = None;
                 match result {
-                    Ok(list) => self.radio.results = list,
+                    Ok(list) => {
+                        self.radio.results = list;
+                        // Les nouveaux résultats arrivent en cascade, comme à l'ouverture de la page.
+                        super::lists::restart_cascade(ctx);
+                    }
                     Err(e) => {
                         self.radio.results.clear();
                         self.radio.error = Some(trf!("Annuaire injoignable : {e}", e));
@@ -659,11 +663,20 @@ impl SterMusic {
     /// Ligne d'un résultat de l'annuaire.
     pub(super) fn station_row(&mut self, ui: &mut egui::Ui, s: &Station, i: usize) {
         let w = ui.available_width();
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, 56.0), Sense::click());
-        if !ui.is_rect_visible(rect) {
+        let (slot, resp) = ui.allocate_exact_size(vec2(w, 56.0), Sense::click());
+        if !ui.is_rect_visible(slot) {
             return;
         }
+        // Arrivée en cascade : chaque ligne glisse un peu depuis la droite en apparaissant.
         let a = super::lists::stagger(ui.ctx(), i);
+        let rect = slot.translate(vec2(14.0 * (1.0 - a), 0.0));
+        ui.scope(|ui| {
+            ui.multiply_opacity(a);
+            self.station_row_inner(ui, s, rect, resp);
+        });
+    }
+
+    fn station_row_inner(&mut self, ui: &mut egui::Ui, s: &Station, rect: Rect, resp: egui::Response) {
         let on_air = self.station_state(s);
         let h = widgets::hover_t(ui, resp.id, resp.hovered());
         if on_air.is_some() {
@@ -679,16 +692,15 @@ impl SterMusic {
         let heart = Rect::from_center_size(pos2(rect.right() - 26.0, rect.center().y), vec2(34.0, 34.0));
         let tx = logo.right() + 12.0;
         let tw = heart.left() - tx - 12.0;
-        let color = theme::TEXT.gamma_multiply(a);
         let g = widgets::galley(ui, &s.name, theme::semibold(14.0), theme::TEXT, tw);
         ui.painter()
-            .galley_with_override_text_color(pos2(tx, rect.top() + 10.0), g, color);
+            .galley_with_override_text_color(pos2(tx, rect.top() + 10.0), g, theme::TEXT);
         let sub = on_air.unwrap_or_else(|| s.details());
         let g = widgets::galley(ui, &sub, FontId::proportional(12.5), theme::TEXT_2, tw);
         ui.painter().galley_with_override_text_color(
             pos2(tx, rect.top() + 30.0),
             g,
-            theme::TEXT_2.gamma_multiply(a),
+            theme::TEXT_2,
         );
         let (icon, tip) = if saved {
             (Icon::HeartFilled, tr("Retirer de mes stations"))
@@ -731,9 +743,17 @@ impl SterMusic {
         let radius = CornerRadius::same((rect.width() * 0.18) as u8);
         match self.radio.logo(ui.ctx(), s) {
             Some(tex) => {
-                ui.painter().rect_filled(rect, radius, Color32::WHITE);
+                // Logo tout juste téléchargé : il se pose en fondu.
+                let t = widgets::texture_in(ui.ctx(), &tex);
+                let mut p = ui.painter().clone();
+                p.multiply_opacity(t);
+                if t < 1.0 {
+                    let (c1, _) = theme::seeded_colors(&s.name);
+                    ui.painter().rect_filled(rect, radius, c1.gamma_multiply(1.0 - t));
+                }
+                p.rect_filled(rect, radius, Color32::WHITE);
                 let inner = rect.shrink(rect.width() * 0.06);
-                ui.painter().add(
+                p.add(
                     egui::epaint::RectShape::filled(inner, radius, Color32::WHITE)
                         .with_texture(tex.id(), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))),
                 );

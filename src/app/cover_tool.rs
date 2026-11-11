@@ -338,7 +338,7 @@ impl SterMusic {
                         ui.scope(|ui| {
                             if found == 0 || searching {
                                 ui.disable();
-                                ui.set_opacity(0.5);
+                                ui.multiply_opacity(0.5);
                             }
                             if widgets::primary_button(ui, None, tr("Intégrer aux fichiers"))
                                 .on_hover_text(tr(

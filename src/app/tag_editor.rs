@@ -931,7 +931,7 @@ impl SterMusic {
                     ui.scope(|ui| {
                         if n == 0 {
                             ui.disable();
-                            ui.set_opacity(0.5);
+                            ui.multiply_opacity(0.5);
                         }
                         let label = match (n, partial) {
                             (0, _) => tr("Enregistrer").to_owned(),
@@ -1198,7 +1198,7 @@ fn loading_bar(ui: &mut egui::Ui, ed: &TagEditor) -> bool {
             .max_rect(bar.shrink2(vec2(12.0, 0.0)))
             .layout(Layout::left_to_right(Align::Center)),
         |ui| {
-            ui.set_opacity(((t - 0.6) / 0.4).clamp(0.0, 1.0));
+            ui.multiply_opacity(((t - 0.6) / 0.4).clamp(0.0, 1.0));
             ui.add(egui::Spinner::new().size(16.0).color(theme::accent_light()));
             ui.add_space(4.0);
             match ed.load_progress() {

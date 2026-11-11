@@ -474,7 +474,7 @@ impl SterMusic {
                         ui.scope(|ui| {
                             if tool.preview.changes == 0 || tool.preview.error.is_some() {
                                 ui.disable();
-                                ui.set_opacity(0.5);
+                                ui.multiply_opacity(0.5);
                             }
                             if widgets::primary_button(ui, None, verb).clicked() {
                                 apply = true;

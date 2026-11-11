@@ -575,7 +575,7 @@ pub fn seek_bar_marked(
 
 /// Progression (0 → 1) de l'arrivée d'une image tout juste chargée : elle se pose en fondu
 /// sur son dégradé d'attente au lieu d'apparaître d'un coup.
-fn texture_in(ctx: &egui::Context, tex: &TextureHandle) -> f32 {
+pub fn texture_in(ctx: &egui::Context, tex: &TextureHandle) -> f32 {
     anim::value_from(ctx, egui::Id::new(("tex_in", tex.id())), 0.0, 1.0, anim::NORMAL, anim::Easing::Out)
 }
 
@@ -760,7 +760,7 @@ pub fn empty_state(ui: &mut Ui, icon: Icon, title: &str, subtitle: &str) {
             40.0 * scale,
             theme::accent_light().gamma_multiply(pop.clamp(0.0, 1.0)),
         );
-        ui.set_opacity(text_in);
+        ui.multiply_opacity(text_in);
         ui.add_space(14.0 + 8.0 * (1.0 - text_in));
         ui.label(
             egui::RichText::new(title)

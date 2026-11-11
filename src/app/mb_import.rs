@@ -317,7 +317,7 @@ impl SterMusic {
                         ui.scope(|ui| {
                             if !available {
                                 ui.disable();
-                                ui.set_opacity(0.4);
+                                ui.multiply_opacity(0.4);
                             }
                             if super::views::segment(ui, tr(name), mb.options[i] && available).clicked() {
                                 mb.options[i] = !mb.options[i];
@@ -328,7 +328,7 @@ impl SterMusic {
                         ui.scope(|ui| {
                             if mb.release.is_none() {
                                 ui.disable();
-                                ui.set_opacity(0.5);
+                                ui.multiply_opacity(0.5);
                             }
                             if widgets::primary_button(ui, None, tr("Appliquer")).clicked() {
                                 apply = true;

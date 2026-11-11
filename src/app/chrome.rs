@@ -194,7 +194,7 @@ impl SterMusic {
                 if t > 0.01 {
                     let r = Rect::from_center_size(pos2(x + 16.0, rect.center().y), vec2(32.0, 32.0));
                     let resp = ui.put(r, |ui: &mut egui::Ui| {
-                        ui.set_opacity(t);
+                        ui.multiply_opacity(t);
                         widgets::icon_button(ui, Icon::ArrowLeft, tr("Retour (Échap)"), 32.0, 16.0)
                     });
                     if resp.clicked() && can_back {
@@ -431,7 +431,7 @@ impl SterMusic {
                                     let t = anim::appear(ui.ctx(), egui::Id::new(("pin_in", format!("{id:?}"))), anim::SLOW);
                                     let resp = ui
                                         .scope(|ui| {
-                                            ui.set_opacity(t);
+                                            ui.multiply_opacity(t);
                                             sub_item(ui, r.translate(vec2(-10.0 * (1.0 - t), 0.0)), icon, &name, current_pl == Some(id))
                                         })
                                         .inner;
@@ -799,7 +799,7 @@ impl SterMusic {
             .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -120.0) + offset)
             .interactable(false)
             .show(ctx, |ui| {
-                ui.set_opacity(fade);
+                ui.multiply_opacity(fade);
                 let frame = egui::Frame::popup(ui.style())
                     .corner_radius(10)
                     .inner_margin(egui::Margin::symmetric(16, 12))
