@@ -124,6 +124,53 @@ pub fn cover_url(path: &Path) -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
+/// Morceaux qui ne doivent pas prendre l'image de leur dossier pour pochette (voir
+/// [`without_folder_art`]).
+static NO_FOLDER_ART: std::sync::RwLock<Option<std::collections::HashSet<PathBuf>>> =
+    std::sync::RwLock::new(None);
+
+/// Vrai si l'image du dossier (cover.jpg, Folder.jpg…) peut servir de pochette à ce morceau.
+pub fn folder_art_allowed(path: &Path) -> bool {
+    !NO_FOLDER_ART
+        .read()
+        .ok()
+        .is_some_and(|s| s.as_ref().is_some_and(|s| s.contains(path)))
+}
+
+/// Dans un dossier où se mélangent plusieurs albums, l'image du dossier (souvent un Folder.jpg
+/// laissé par le lecteur Windows Media) n'est la pochette que d'un seul : un morceau sans
+/// pochette y recevait celle d'un autre. Elle ne vaut donc que pour l'album qui occupe plus de
+/// la moitié du dossier, s'il y en a un ; les autres morceaux sont listés ici.
+fn without_folder_art(tracks: &[Track]) -> std::collections::HashSet<PathBuf> {
+    let mut dirs: HashMap<&Path, Vec<&Track>> = HashMap::new();
+    for t in tracks.iter().filter(|t| t.is_plain_file()) {
+        if let Some(dir) = t.path.parent() {
+            dirs.entry(dir).or_default().push(t);
+        }
+    }
+    let mut denied = std::collections::HashSet::new();
+    for list in dirs.values() {
+        let mut albums: HashMap<String, usize> = HashMap::new();
+        for t in list {
+            *albums.entry(fold(t.album.trim())).or_default() += 1;
+        }
+        if albums.len() < 2 {
+            continue;
+        }
+        let main = albums
+            .iter()
+            .filter(|(name, n)| !name.is_empty() && **n * 2 > list.len())
+            .map(|(name, _)| name.clone())
+            .next();
+        for t in list {
+            if main.as_deref() != Some(fold(t.album.trim()).as_str()) {
+                denied.insert(t.path.clone());
+            }
+        }
+    }
+    denied
+}
+
 /// Voir `Track::schema`.
 pub const TRACK_SCHEMA: u8 = 2;
 
@@ -251,6 +298,9 @@ impl Library {
             .collect();
         if let Ok(mut r) = RESOLVE.write() {
             *r = Some(special);
+        }
+        if let Ok(mut s) = NO_FOLDER_ART.write() {
+            *s = Some(without_folder_art(&tracks));
         }
         tracks.sort_by(|a, b| {
             lower(a.album_artist_or_artist())
@@ -869,5 +919,56 @@ mod cue_tests {
         assert_eq!(t[0].duration_ms, 240_493);
         assert!(t[1].path.to_string_lossy().ends_with("Album.flac#02"));
         assert!(!t[0].is_plain_file());
+    }
+}
+
+#[cfg(test)]
+mod folder_art_tests {
+    use super::*;
+
+    fn track(path: &str, album: &str) -> Track {
+        Track {
+            path: path.into(),
+            title: String::new(),
+            artist: String::new(),
+            album: album.into(),
+            album_artist: String::new(),
+            genre: String::new(),
+            year: None,
+            track_no: None,
+            disc_no: None,
+            duration_ms: 0,
+            mtime: 0,
+            composer: String::new(),
+            schema: TRACK_SCHEMA,
+            cue: None,
+            rating: None,
+            remote: None,
+        }
+    }
+
+    /// L'image d'un dossier ne sert qu'à l'album qui l'occupe : jamais aux morceaux d'un
+    /// dossier fourre-tout, ni aux quelques intrus d'un dossier d'album.
+    #[test]
+    fn folder_art_only_for_the_album_of_the_folder() {
+        let tracks = vec![
+            // Dossier d'un seul album : tous y ont droit.
+            track("/m/Album/01.mp3", "Album"),
+            track("/m/Album/02.mp3", "album"),
+            // Fourre-tout : personne.
+            track("/m/Vrac/a.mp3", "Un"),
+            track("/m/Vrac/b.mp3", "Deux"),
+            track("/m/Vrac/c.mp3", ""),
+            // Album avec un intrus : l'album oui, l'intrus non.
+            track("/m/Live/1.mp3", "Live"),
+            track("/m/Live/2.mp3", "Live"),
+            track("/m/Live/3.mp3", "Live"),
+            track("/m/Live/bonus.mp3", "Autre"),
+        ];
+        let denied = without_folder_art(&tracks);
+        let no = |p: &str| denied.contains(Path::new(p));
+        assert!(!no("/m/Album/01.mp3") && !no("/m/Album/02.mp3"));
+        assert!(no("/m/Vrac/a.mp3") && no("/m/Vrac/b.mp3") && no("/m/Vrac/c.mp3"));
+        assert!(!no("/m/Live/1.mp3") && no("/m/Live/bonus.mp3"));
     }
 }

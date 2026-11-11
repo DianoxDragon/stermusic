@@ -60,6 +60,7 @@ impl SterMusic {
             Rect::from_min_max(pos2(area.left(), area.bottom() - area.height() * 0.62), area.max)
         };
         set_cover(&mut w, rect, cover);
+        self.viz_tune(style).apply(&mut w, style, rect.size());
         crate::shader::paint(ui.painter(), rect, w);
     }
 
@@ -89,6 +90,7 @@ impl SterMusic {
         w.left = if fill { 0.0 } else { 1.0 };
         w.radius = 14.0;
         set_cover(&mut w, rect, cover);
+        self.viz_tune(style).apply(&mut w, style, rect.size());
         crate::shader::paint(ui.painter(), rect, w);
     }
 
@@ -1587,6 +1589,8 @@ impl SterMusic {
         let album = self.lib.track_album[idx];
         let artist = self.lib.album_artist[album];
         let rect = ui.max_rect();
+        // Sur cette page, la molette règle le volume (voir `volume_wheel`).
+        self.np_wheel = (Some(ui.clip_rect()), Vec::new());
         let upcoming: Vec<usize> = self
             .queue_pos
             .map(|p| self.queue.iter().skip(p + 1).take(5).copied().collect())
@@ -1806,6 +1810,8 @@ impl SterMusic {
         if show_lyrics {
             let panel = Rect::from_min_max(pos2(x, y), pos2(x + tw.min(560.0), rect.bottom() - 8.0));
             if panel.height() > 60.0 {
+                // Les paroles défilent à la molette : elle n'y règle pas le volume.
+                self.np_wheel.1.push(panel);
                 self.lyrics_panel(ui, panel);
             }
             return;

@@ -104,7 +104,12 @@ pub fn toggle_icon(ui: &mut Ui, on: bool, icon: Icon, tooltip: &str, size: f32, 
         ui.painter()
             .circle_filled(dot, 1.8 * a, theme::accent_light().gamma_multiply(a));
     }
-    response.on_hover_text(tooltip)
+    // Sans texte, pas de bulle (sinon une bulle vide apparaît au survol).
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
 }
 
 /// Gros bouton rond Lecture / Pause, dans le dégradé de marque.
@@ -374,10 +379,25 @@ pub struct Seek {
     pub preview: Option<f32>,
     /// Valeur choisie (clic ou fin du glissement).
     pub commit: Option<f32>,
+    /// Zone occupée par la barre.
+    pub rect: Rect,
 }
 
 /// Barre de progression / de volume, fine, qui s'épaissit au survol, avec son curseur rond.
 pub fn seek_bar(ui: &mut Ui, id_salt: &str, value: f32, width: f32, enabled: bool) -> Seek {
+    seek_bar_marked(ui, id_salt, value, width, enabled, None)
+}
+
+/// Comme [`seek_bar`], avec un repère à `mark` (0 → 1) : la partie remplie au-delà du repère
+/// passe à l'orange (volume amplifié, au-dessus de 100 %).
+pub fn seek_bar_marked(
+    ui: &mut Ui,
+    id_salt: &str,
+    value: f32,
+    width: f32,
+    enabled: bool,
+    mark: Option<f32>,
+) -> Seek {
     let sense = if enabled {
         Sense::click_and_drag()
     } else {
@@ -422,17 +442,31 @@ pub fn seek_bar(ui: &mut Ui, id_salt: &str, value: f32, width: f32, enabled: boo
             painter.rect_filled(fill, CornerRadius::same(3), theme::accent());
         }
     }
+    let over = mark.is_some_and(|m| shown > m + 0.001);
+    if let Some(m) = mark {
+        let x = track.left() + track.width() * m;
+        if over && enabled {
+            let hot = Rect::from_min_max(
+                pos2(x, track.top()),
+                pos2(track.left() + track.width() * shown, track.bottom()),
+            );
+            painter.rect_filled(hot, CornerRadius::same(3), theme::BOOST);
+        }
+        // Le repère : un petit trait qui dépasse de la barre.
+        let tick = Rect::from_center_size(pos2(x, track.center().y), vec2(2.0, h + 6.0));
+        painter.rect_filled(tick, CornerRadius::same(1), theme::white(if over { 0xD0 } else { 0x70 }));
+    }
     if enabled {
         let c = pos2(track.left() + track.width() * shown, track.center().y);
         painter.circle_filled(c + vec2(0.0, 1.0), 8.0, Color32::from_black_alpha(60));
         painter.circle_filled(c, 7.5, theme::glass());
         painter.circle_stroke(c, 7.5, Stroke::new(1.0_f32, theme::white(0x22)));
-        painter.circle_filled(c, 3.5 + 1.5 * t, theme::accent_light());
+        painter.circle_filled(c, 3.5 + 1.5 * t, if over { theme::BOOST } else { theme::accent_light() });
     }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand);
     }
-    Seek { preview, commit }
+    Seek { preview, commit, rect }
 }
 
 /// Pochette dans un rectangle arrondi ; sans image, un dégradé avec une note de musique.

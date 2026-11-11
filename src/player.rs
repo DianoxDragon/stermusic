@@ -826,6 +826,27 @@ mod tests {
         assert_eq!(chain.count(), 10);
     }
 
+    /// Au-delà de 100 % : un son faible est amplifié d'autant, un son fort est retenu par le
+    /// limiteur (jamais au-dessus de 1), et à 100 % rien ne change.
+    #[test]
+    fn boost_amplifies_without_clipping() {
+        let quiet: Vec<f32> = (0..2000).map(|i| ((i as f32) * 0.21).sin() * 0.2).collect();
+        let loud: Vec<f32> = (0..2000).map(|i| ((i as f32) * 0.21).sin() * 0.95).collect();
+        let run = |input: &Vec<f32>, boost: f32| -> Vec<f32> {
+            let settings = dsp::AudioSettings::new();
+            settings.set_boost(boost);
+            Processor::new(SamplesBuffer::new(2, 44_100, input.clone()), settings, None, None).collect()
+        };
+        assert_eq!(run(&quiet, 1.0), quiet);
+        let boosted = run(&quiet, 2.25);
+        for (o, i) in boosted.iter().zip(&quiet) {
+            assert!((o - i * 2.25).abs() < 1e-5);
+        }
+        let limited = run(&loud, 2.25);
+        let peak = limited.iter().fold(0f32, |m, x| m.max(x.abs()));
+        assert!(peak <= 1.0 && peak > 0.97, "{peak}");
+    }
+
     /// En bit-perfect, le traitement rend le son exactement tel qu'il est entré (même au-delà
     /// du seuil du limiteur), égaliseur et nivellement allumés ou non.
     #[test]

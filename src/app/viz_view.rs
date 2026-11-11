@@ -70,6 +70,24 @@ impl SterMusic {
         self.set_slot(Slot::NowPlaying, next as usize);
     }
 
+    /// Réglages propres au visualiseur `style` (ceux d'origine s'il n'y a pas touché).
+    pub(super) fn viz_tune(&self, style: usize) -> crate::viz::Tune {
+        STYLES
+            .get(style)
+            .and_then(|(name, _)| self.settings.viz_tunes.get(*name))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn set_viz_tune(&mut self, style: usize, tune: crate::viz::Tune) {
+        let name = STYLES[style].0;
+        if tune == crate::viz::Tune::default() {
+            self.settings.viz_tunes.remove(name);
+        } else {
+            self.settings.viz_tunes.insert(name.to_owned(), tune);
+        }
+    }
+
     // ---------- Aperçus ----------
 
     /// Ce qu'il faut pour dessiner les aperçus d'une image : le son en cours (ou un son
@@ -98,6 +116,7 @@ impl SterMusic {
         });
         Previews {
             waves: w,
+            tunes: (0..AUTO).map(|i| self.viz_tune(i)).collect(),
             pool: self.auto_allowed(),
             intensity: self.settings.viz_intensity,
             now,
@@ -119,11 +138,16 @@ impl SterMusic {
         let font = FontId::proportional(13.0);
         let text_w = ui.fonts(|f| f.layout_no_wrap(name.clone(), font.clone(), Color32::WHITE).size().x);
         let h = 34.0;
-        let w = text_w + 34.0 + 2.0 * 30.0 + 8.0;
+        let w = text_w + 34.0 + 3.0 * 30.0 + 8.0;
         let pill = Rect::from_min_size(pos2(area.right() - 16.0 - w, area.top() + 10.0), vec2(w, h));
         let resp = ui.interact(pill, ui.id().with("np_viz_pill"), Sense::hover());
+        // Sur la pastille, la molette change de visualiseur, pas le volume.
+        self.np_wheel.1.push(pill.expand(4.0));
         let flash = ((now - self.viz_flash) as f32 / 1.2).clamp(0.0, 1.0);
-        let hot = resp.hovered() || self.viz_strip || flash < 1.0;
+        // Les flèches et le nom, posés par-dessus, prennent le survol : on regarde le pointeur.
+        let over_pill = ui.rect_contains_pointer(pill);
+        let _ = resp;
+        let hot = over_pill || self.viz_strip || self.viz_strip_tune || flash < 1.0;
         let a = crate::anim::value(
             ui.ctx(),
             ui.id().with("np_viz_pill_a"),
@@ -157,8 +181,28 @@ impl SterMusic {
         if r.clicked() {
             step = 1;
         }
+        // Réglages de l'effet à l'écran : une carte sous la pastille.
+        let gear = Rect::from_min_size(pos2(right.left() - 30.0, pill.top()), vec2(30.0, h));
+        let g = ui
+            .interact(gear, ui.id().with("np_viz_tune"), Sense::click())
+            .on_hover_text(tr("Régler cet effet"));
+        let tuned = self.viz_tune(shown) != crate::viz::Tune::default();
+        if g.hovered() || self.viz_strip_tune {
+            painter.rect_filled(gear.shrink(3.0), CornerRadius::same(14), theme::white(0x16));
+        }
+        icons::paint_centered(
+            painter,
+            Icon::Equalizer,
+            gear.center(),
+            14.0,
+            if tuned || self.viz_strip_tune { theme::accent_light() } else { text_color },
+        );
+        if g.clicked() {
+            self.viz_strip_tune = !self.viz_strip_tune;
+            self.viz_strip = false;
+        }
         // Le nom : ouvre ou ferme le bandeau d'aperçus.
-        let mid = Rect::from_min_max(pos2(left.right(), pill.top()), pos2(right.left(), pill.bottom()));
+        let mid = Rect::from_min_max(pos2(left.right(), pill.top()), pos2(gear.left(), pill.bottom()));
         let m = ui
             .interact(mid, ui.id().with("np_viz_name"), Sense::click())
             .on_hover_text(tr("Choisir le visualiseur (molette : changer)"));
@@ -177,9 +221,10 @@ impl SterMusic {
         if m.clicked() {
             self.viz_strip = !self.viz_strip;
             self.viz_strip_scroll = self.viz_strip;
+            self.viz_strip_tune = false;
         }
         // Molette sur la pastille : visualiseur suivant ou précédent.
-        if resp.hovered() {
+        if over_pill {
             let dy = ui.input(|i| i.raw_scroll_delta.y);
             if dy.abs() > 0.5 {
                 step = if dy < 0.0 { 1 } else { -1 };
@@ -194,6 +239,66 @@ impl SterMusic {
         if self.viz_strip {
             self.np_viz_strip(ui, area, now);
         }
+        if self.viz_strip_tune {
+            self.np_viz_tune_card(ui, pill);
+        }
+    }
+
+    /// Carte des réglages de l'effet à l'écran, sous la pastille : elle laisse voir la pochette
+    /// et le bas de la page, où vivent la plupart des effets.
+    fn np_viz_tune_card(&mut self, ui: &mut egui::Ui, pill: Rect) {
+        let shown = self.np_shown.min(AUTO - 1);
+        let tune = self.viz_tune(shown);
+        let open = crate::anim::appear(ui.ctx(), egui::Id::new("np_viz_tune_card"), crate::anim::FAST);
+        let width = 372.0;
+        let pos = pos2(pill.right() - width, pill.bottom() + 8.0 - 10.0 * (1.0 - open));
+        let mut tuned = None;
+        let mut close = false;
+        egui::Area::new(egui::Id::new("np_viz_tune_area"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(pos)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(theme::alpha(theme::bg(), (235.0 * open) as u8))
+                    .stroke(Stroke::new(1.0_f32, theme::white(0x1C)))
+                    .corner_radius(14)
+                    .inner_margin(14.0)
+                    .shadow(egui::Shadow {
+                        offset: [0, 10],
+                        blur: 36,
+                        spread: 0,
+                        color: Color32::from_black_alpha((130.0 * open) as u8),
+                    })
+                    .show(ui, |ui| {
+                        ui.set_width(width - 28.0);
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(trf!("Régler « {0} »", tr(STYLES[shown].0)))
+                                    .font(theme::semibold(15.0))
+                                    .color(theme::TEXT),
+                            );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if widgets::icon_button(ui, Icon::Close, tr("Fermer (Échap)"), 26.0, 13.0).clicked() {
+                                    close = true;
+                                }
+                            });
+                        });
+                        ui.label(
+                            egui::RichText::new(tr("Ces réglages ne valent que pour cet effet."))
+                                .small()
+                                .color(theme::TEXT_3),
+                        );
+                        ui.add_space(8.0);
+                        tuned = tune_sliders(ui, shown, tune);
+                    });
+            });
+        if close {
+            self.viz_strip_tune = false;
+        }
+        if let Some(t) = tuned {
+            self.set_viz_tune(shown, t);
+        }
+        ui.ctx().request_repaint();
     }
 
     /// Bandeau d'aperçus au bas de « En cours de lecture », au premier plan (par-dessus la
@@ -238,13 +343,16 @@ impl SterMusic {
                     theme::semibold(15.0),
                     theme::TEXT,
                 );
-                painter.text(
-                    pos2(title.right() + 14.0, panel.top() + 22.0),
-                    Align2::LEFT_CENTER,
-                    tr("Un clic pour l'essayer, la musique continue. V / Maj+V : suivant, précédent."),
-                    FontId::proportional(12.0),
-                    theme::TEXT_3,
-                );
+                let hint_x = title.right() + 14.0;
+                if hint_x + 460.0 < panel.right() - 48.0 {
+                    ui.painter().text(
+                        pos2(hint_x, panel.top() + 22.0),
+                        Align2::LEFT_CENTER,
+                        tr("Un clic pour l'essayer, la musique continue. V / Maj+V : suivant, précédent."),
+                        FontId::proportional(12.0),
+                        theme::TEXT_3,
+                    );
+                }
                 let close_r = Rect::from_center_size(pos2(panel.right() - 24.0, panel.top() + 22.0), vec2(28.0, 28.0));
                 if ui
                     .put(close_r, |ui: &mut egui::Ui| widgets::icon_button(ui, Icon::Close, tr("Fermer (Échap)"), 28.0, 14.0))
@@ -489,10 +597,14 @@ impl SterMusic {
     pub(super) fn viz_keys(&mut self, ctx: &egui::Context) {
         if self.view != View::NowPlaying || !self.settings.visualizer {
             self.viz_strip = false;
+            self.viz_strip_tune = false;
             return;
         }
-        if self.viz_strip && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        if (self.viz_strip || self.viz_strip_tune)
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
             self.viz_strip = false;
+            self.viz_strip_tune = false;
         }
         if ctx.input_mut(|i| i.consume_key(egui::Modifiers::SHIFT, egui::Key::V)) {
             self.step_viz(-1);
@@ -506,6 +618,8 @@ impl SterMusic {
 /// Voir [`SterMusic::previews`].
 struct Previews {
     waves: crate::shader::Waves,
+    /// Réglages propres à chaque visualiseur.
+    tunes: Vec<crate::viz::Tune>,
     pool: Vec<usize>,
     intensity: f32,
     now: f64,
@@ -530,6 +644,7 @@ fn paint_preview(pv: &Previews, painter: &egui::Painter, rect: Rect, style: usiz
     }
     // Une « pochette » imaginaire au centre, pour ceux qui tournent autour d'elle.
     w.focus = [rect.width() / 2.0, rect.height() / 2.0, rect.height() * 0.27];
+    pv.tunes[style].apply(&mut w, style, rect.size());
     painter.rect_filled(rect, CornerRadius::same(10), Color32::from_black_alpha((90.0 * alpha) as u8));
     crate::shader::paint(painter, rect, w);
 }
@@ -604,4 +719,75 @@ fn viz_tile(
         },
     );
     resp
+}
+
+/// Curseurs des réglages propres au visualiseur `style` ; renvoie les nouveaux réglages s'ils
+/// ont changé.
+fn tune_sliders(ui: &mut egui::Ui, style: usize, tune: crate::viz::Tune) -> Option<crate::viz::Tune> {
+    let percent: fn(f32) -> String = |v| crate::i18n::percent(v * 100.0);
+    let degrees: fn(f32) -> String = |v| format!("{:+.0}°", v * 360.0);
+    // (nom, minimum, maximum, valeur d'origine, texte affiché), dans l'ordre de `values`.
+    type Row<'a> = (&'a str, f32, f32, f32, fn(f32) -> String);
+    let mut rows: Vec<Row> = vec![
+        (tr("Luminosité"), 0.3, 2.0, 1.0, percent),
+        (tr("Vitesse"), 0.25, 3.0, 1.0, percent),
+        (tr("Réactivité"), 0.0, 2.0, 1.0, percent),
+        (tr("Zoom"), 0.5, 2.5, 1.0, percent),
+        (tr("Teinte"), -0.5, 0.5, 0.0, degrees),
+    ];
+    if let Some(label) = crate::shader::DETAILS[style] {
+        rows.push((tr(label), 0.0, 1.0, 0.5, percent));
+    }
+    let mut values = [tune.intensity, tune.speed, tune.react, tune.zoom, tune.hue, tune.detail];
+    let mut reset = false;
+    for ((label, min, max, origin, show), value) in rows.into_iter().zip(values.iter_mut()) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.add_sized([158.0, 24.0], egui::Label::new(egui::RichText::new(label).color(theme::TEXT_2)).truncate());
+            // Le curseur est linéaire de part et d'autre de la valeur d'origine, qui tombe au milieu.
+            let to_ratio = |v: f32| {
+                if v < origin {
+                    0.5 * (v - min) / (origin - min)
+                } else {
+                    0.5 + 0.5 * (v - origin) / (max - origin)
+                }
+            };
+            let from_ratio = |r: f32| {
+                if r < 0.5 {
+                    min + (origin - min) * r * 2.0
+                } else {
+                    origin + (max - origin) * (r - 0.5) * 2.0
+                }
+            };
+            let seek = widgets::seek_bar(ui, label, to_ratio(*value), 118.0, true);
+            if let Some(r) = seek.preview.or(seek.commit) {
+                // Cran magnétique sur la valeur d'origine.
+                *value = if (r - 0.5).abs() < 0.03 { origin } else { from_ratio(r) };
+            }
+            let changed = (*value - origin).abs() > 0.001;
+            ui.label(
+                egui::RichText::new(show(*value))
+                    .small()
+                    .color(if changed { theme::accent_light() } else { theme::TEXT_3 }),
+            );
+        });
+    }
+    ui.add_space(6.0);
+    ui.add_enabled_ui(tune != crate::viz::Tune::default(), |ui| {
+        if widgets::secondary_button(ui, Some(Icon::Undo), tr("Réglages d'origine")).clicked() {
+            reset = true;
+        }
+    });
+    if reset {
+        return Some(crate::viz::Tune::default());
+    }
+    let t = crate::viz::Tune {
+        intensity: values[0],
+        speed: values[1],
+        react: values[2],
+        zoom: values[3],
+        hue: values[4],
+        detail: values[5],
+    };
+    (t != tune).then_some(t)
 }

@@ -74,6 +74,8 @@ pub struct AudioSettings {
     leveling: AtomicBool,
     /// Sortie bit-perfect : aucun traitement.
     exact: AtomicBool,
+    /// Amplification au-delà de 100 % de volume (1 : aucune).
+    boost: AtomicU32,
     /// Nivellement automatique : dernier état (gain, puissance moyenne), repris par le morceau
     /// suivant pour que le volume ne saute pas d'un morceau à l'autre.
     last_gain: AtomicU32,
@@ -91,6 +93,7 @@ impl AudioSettings {
             preamp: AtomicU32::new(0f32.to_bits()),
             leveling: AtomicBool::new(false),
             exact: AtomicBool::new(false),
+            boost: AtomicU32::new(1f32.to_bits()),
             last_gain: AtomicU32::new(1f32.to_bits()),
             last_power: AtomicU32::new((TARGET_RMS * TARGET_RMS).to_bits()),
             version: AtomicU64::new(1),
@@ -106,6 +109,16 @@ impl AudioSettings {
             .store(preamp.clamp(-MAX_DB, MAX_DB).to_bits(), Ordering::Relaxed);
         self.leveling.store(leveling, Ordering::Relaxed);
         self.version.fetch_add(1, Ordering::Release);
+    }
+
+    /// Volume au-delà de 100 % : gain appliqué avant un second limiteur doux, pour amplifier
+    /// les morceaux faibles sans saturation dure (le volume jusqu'à 100 % reste celui du lecteur).
+    pub fn set_boost(&self, boost: f32) {
+        let boost = boost.clamp(1.0, 4.0);
+        if f32::from_bits(self.boost.load(Ordering::Relaxed)) != boost {
+            self.boost.store(boost.to_bits(), Ordering::Relaxed);
+            self.version.fetch_add(1, Ordering::Release);
+        }
     }
 
     /// Sortie bit-perfect : le son ne passe plus par aucun traitement.
@@ -201,6 +214,7 @@ pub struct Processor<S: Source> {
     eq_on: bool,
     leveling: bool,
     exact: bool,
+    boost: f32,
     replaygain: Option<f32>,
     /// Nivellement automatique : puissance moyenne et gain courant.
     mean_square: f32,
@@ -232,6 +246,7 @@ impl<S: Source> Processor<S> {
             eq_on: false,
             leveling: false,
             exact: false,
+            boost: 1.0,
             replaygain,
             mean_square,
             level_gain,
@@ -256,6 +271,7 @@ impl<S: Source> Processor<S> {
             return;
         }
         self.exact = self.settings.exact.load(Ordering::Relaxed);
+        self.boost = f32::from_bits(self.settings.boost.load(Ordering::Relaxed));
         self.version = version;
         let (eq_on, gains, preamp, leveling) = self.settings.snapshot();
         self.eq_on = eq_on;
@@ -357,7 +373,11 @@ impl<S: Source> Iterator for Processor<S> {
         x = self.level(x);
         let y = soft_clip(x);
         self.channel = (self.channel + 1) % self.channels;
+        // Le visualiseur voit le son d'avant l'amplification : il ne dépend pas du volume.
         self.feed_tap(y);
+        if self.boost > 1.0 {
+            return Some(soft_clip(y * self.boost));
+        }
         Some(y)
     }
 

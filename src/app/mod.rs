@@ -211,6 +211,8 @@ pub struct Settings {
     pub viz_speed: f32,
     /// Poussières de lumière par-dessus le visualiseur.
     pub viz_particles: bool,
+    /// Réglages propres à chaque visualiseur (par son nom) ; absents : ceux d'origine.
+    pub viz_tunes: HashMap<String, crate::viz::Tune>,
     /// Éditeur de tags : ID3v2.3 plutôt que 2.4, et date de modification conservée.
     pub tag_id3v23: bool,
     pub tag_keep_mtime: bool,
@@ -297,6 +299,7 @@ impl Default for Settings {
             viz_intensity: 1.0,
             viz_speed: 1.0,
             viz_particles: true,
+            viz_tunes: HashMap::new(),
             tag_id3v23: false,
             tag_keep_mtime: true,
             tag_prefs: Default::default(),
@@ -630,6 +633,8 @@ pub struct SterMusic {
     /// (la pastille s'allume), visualiseur à l'écran.
     viz_strip: bool,
     viz_strip_scroll: bool,
+    /// Carte des réglages de l'effet en cours, ouverte sous la pastille.
+    viz_strip_tune: bool,
     viz_gallery: Option<viz_view::Gallery>,
     viz_flash: f64,
     np_shown: usize,
@@ -645,6 +650,10 @@ pub struct SterMusic {
     pending_note: Option<(PathBuf, f64)>,
     /// Notes inscrites dans les fichiers (thread à part).
     ratings: ratings::RatingWriter,
+    /// Molette = volume : la zone du réglage de volume, et la page « En cours de lecture »
+    /// (sa zone, moins ce qui défile déjà à la molette). Redonnées à chaque image.
+    volume_zone: Option<egui::Rect>,
+    np_wheel: (Option<egui::Rect>, Vec<egui::Rect>),
     /// Icône dans la zone de notification, et fenêtre cachée dedans.
     tray: Option<crate::tray::Tray>,
     hidden: bool,
@@ -737,6 +746,9 @@ fn perceptual(v: f32) -> f32 {
     v * v
 }
 
+/// Volume maximal : 150 % (au-delà de 100 %, le son est amplifié, voir `dsp::set_boost`).
+pub const VOLUME_MAX: f32 = 1.5;
+
 impl SterMusic {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
         let Launch {
@@ -807,7 +819,7 @@ impl SterMusic {
         let volume = if settings.muted {
             0.0
         } else {
-            perceptual(settings.volume)
+            perceptual(settings.volume.min(1.0))
         };
         let audio = crate::dsp::AudioSettings::new();
         audio.set(
@@ -885,6 +897,7 @@ impl SterMusic {
             auto_banner: crate::viz::AutoViz::default(),
             viz_strip: false,
             viz_strip_scroll: false,
+            viz_strip_tune: false,
             viz_gallery: None,
             viz_flash: f64::NEG_INFINITY,
             np_shown: 0,
@@ -895,6 +908,8 @@ impl SterMusic {
             notifier: Default::default(),
             pending_note: None,
             ratings: ratings::RatingWriter::new(&cc.egui_ctx),
+            volume_zone: None,
+            np_wheel: (None, Vec::new()),
             tray: None,
             hidden: false,
             pacer: Default::default(),
@@ -933,6 +948,7 @@ impl SterMusic {
             let tracks = app.lib.tracks.clone();
             app.set_library(tracks);
         }
+        app.apply_volume();
         app.restore_queue();
         if app.settings.tray {
             app.start_tray();
@@ -1608,6 +1624,42 @@ impl SterMusic {
         self.seeked = true;
     }
 
+    /// Molette sur le réglage de volume, ou sur la page « En cours de lecture » : un cran, 5 %.
+    /// Les zones sont celles de l'image précédente ; rien ne se passe sous une fenêtre flottante.
+    fn volume_wheel(&mut self, ctx: &egui::Context) {
+        let zone = self.volume_zone.take();
+        let (page, excluded) = std::mem::take(&mut self.np_wheel);
+        if self.settings.bit_perfect || self.dialog.is_some() {
+            return;
+        }
+        let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else { return };
+        let on_page = page.is_some_and(|r| r.contains(pos)) && !excluded.iter().any(|r| r.contains(pos));
+        if !(zone.is_some_and(|r| r.contains(pos)) || on_page) {
+            return;
+        }
+        // Une bulle, un menu ou le bandeau des visualiseurs est au-dessus : la molette est à eux.
+        if ctx.layer_id_at(pos).is_some_and(|l| l.order > egui::Order::Middle) {
+            return;
+        }
+        let steps: f32 = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::MouseWheel { unit, delta, .. } => Some(match unit {
+                        egui::MouseWheelUnit::Line => delta.y,
+                        egui::MouseWheelUnit::Page => delta.y * 4.0,
+                        // Pavé tactile : une quarantaine de points pour un cran.
+                        egui::MouseWheelUnit::Point => delta.y / 40.0,
+                    }),
+                    _ => None,
+                })
+                .sum()
+        });
+        if steps.abs() > 0.001 {
+            self.actions.push(Action::SetVolume(self.settings.volume + 0.05 * steps.clamp(-4.0, 4.0)));
+        }
+    }
+
     fn apply_volume(&mut self) {
         let v = if self.settings.muted {
             0.0
@@ -1616,8 +1668,15 @@ impl SterMusic {
             // sommeil fait son fondu).
             self.sleep_gain
         } else {
-            perceptual(self.settings.volume) * self.sleep_gain
+            perceptual(self.settings.volume.min(1.0)) * self.sleep_gain
         };
+        // Au-delà de 100 % : le reste du gain passe par l'amplification (avec limiteur).
+        let boost = if self.settings.bit_perfect {
+            1.0
+        } else {
+            perceptual(self.settings.volume.max(1.0))
+        };
+        self.audio.set_boost(boost);
         if let Some(p) = &mut self.player {
             p.set_volume(v);
         }
@@ -2203,7 +2262,10 @@ impl SterMusic {
                 };
             }
             Action::SetVolume(v) => {
-                self.settings.volume = v.clamp(0.0, 1.0);
+                // Un cran magnétique à 100 % : on ne passe pas en amplification sans le vouloir.
+                let was = self.settings.volume;
+                let v = if (was - 1.0).abs() > 0.001 && (was - 1.0) * (v - 1.0) < 0.0 { 1.0 } else { v };
+                self.settings.volume = v.clamp(0.0, VOLUME_MAX);
                 self.settings.muted = false;
                 self.apply_volume();
             }
@@ -2652,6 +2714,7 @@ impl eframe::App for SterMusic {
             }
         }
         self.handle_keys(ctx);
+        self.volume_wheel(ctx);
         self.update_visualizer(ctx);
 
         // Coins arrondis, sauf fenêtre agrandie ou plein écran.

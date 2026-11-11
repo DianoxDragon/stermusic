@@ -520,6 +520,8 @@ pub fn icon_idle() -> Color32 {
 
 pub const TEXT_3: Color32 = Color32::from_rgb(0x75, 0x78, 0x86);
 pub const DANGER: Color32 = Color32::from_rgb(0xE5, 0x48, 0x4D);
+/// Volume amplifié (au-dessus de 100 %).
+pub const BOOST: Color32 = Color32::from_rgb(0xFF, 0xA0, 0x3C);
 
 /// Couleur translucide mélangée comme en CSS (dans l'espace sRGB).
 pub fn rgba(r: u8, g: u8, b: u8, alpha: u8) -> Color32 {

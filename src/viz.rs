@@ -230,10 +230,12 @@ fn rgb(c: Color32) -> [f32; 3] {
 pub fn harmonize(palette: [Color32; 3]) -> [Color32; 3] {
     let main = palette[0];
     let light = crate::theme::mix(crate::theme::mix(main, palette[1], 0.25), Color32::WHITE, 0.35);
+    // Assombrie par un bleu nuit presque neutre : la teinte de la pochette reste la sienne
+    // (un violet, ici, tirait toutes les pochettes vers le violet).
     let deep = crate::theme::mix(
         crate::theme::mix(main, palette[2], 0.2),
-        Color32::from_rgb(40, 20, 80),
-        0.25,
+        Color32::from_rgb(18, 20, 34),
+        0.3,
     );
     [main, light, deep]
 }
@@ -482,7 +484,88 @@ pub fn waves(s: &Spectrum, palette: [Color32; 3], intensity: f32) -> crate::shad
         wave: s.wave,
         texture: None,
         focus: [0.0; 3],
+        detail: 0.5,
+        zoom: 1.0,
+        zoom_center: [0.0; 2],
     }
+}
+
+/// Réglages propres à un visualiseur (bandeau « Réglages » d'« En cours de lecture »).
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Tune {
+    /// Luminosité (0,3 → 2).
+    pub intensity: f32,
+    /// Vitesse (0,25 → 3).
+    pub speed: f32,
+    /// Réactivité à la musique (0 : figé → 2).
+    pub react: f32,
+    /// Zoom (0,5 → 2,5).
+    pub zoom: f32,
+    /// Décalage de teinte, en tours (−0,5 → 0,5).
+    pub hue: f32,
+    /// Réglage « détail » propre à l'effet (0 → 1), voir `shader::DETAILS`.
+    pub detail: f32,
+}
+
+impl Default for Tune {
+    fn default() -> Self {
+        Self {
+            intensity: 1.0,
+            speed: 1.0,
+            react: 1.0,
+            zoom: 1.0,
+            hue: 0.0,
+            detail: 0.5,
+        }
+    }
+}
+
+impl Tune {
+    /// Applique ces réglages à une image du visualiseur `style` dessinée dans un rectangle de
+    /// taille `size` (à appeler en dernier : le centre du zoom dépend de la pochette).
+    pub fn apply(&self, w: &mut crate::shader::Waves, style: usize, size: egui::Vec2) {
+        w.detail = self.detail;
+        w.zoom = self.zoom;
+        // Le zoom part de ce qui fait le cœur de l'effet : la pochette, la ligne de base d'une
+        // bande, sinon le milieu de la page.
+        w.zoom_center = if crate::shader::FOCUSED.contains(&style) {
+            [w.focus[0], w.focus[1]]
+        } else if !crate::shader::STYLES[style].1 {
+            [size.x / 2.0, size.y * w.base]
+        } else {
+            [size.x / 2.0, size.y / 2.0]
+        };
+        if *self == Self::default() {
+            return;
+        }
+        w.intensity *= self.intensity;
+        w.time *= self.speed;
+        let k = self.react;
+        for l in &mut w.levels {
+            *l = (*l * k).min(1.0);
+        }
+        for v in &mut w.wave {
+            *v = (*v * k).clamp(-1.0, 1.0);
+        }
+        w.kick = (w.kick * k).min(1.0);
+        w.bass = (w.bass * k).min(1.0);
+        w.energy = (w.energy * k).min(1.0);
+        if self.hue.abs() > 0.002 {
+            for c in &mut w.colors {
+                *c = rotate_hue(*c, self.hue);
+            }
+        }
+    }
+}
+
+/// Fait tourner la teinte d'une couleur de `turns` tours (rotation autour de l'axe des gris).
+fn rotate_hue(c: [f32; 3], turns: f32) -> [f32; 3] {
+    let (sin, cos) = (turns * std::f32::consts::TAU).sin_cos();
+    let k = (1.0 - cos) / 3.0;
+    let s = sin / 3f32.sqrt();
+    let m = [[cos + k, k - s, k + s], [k + s, cos + k, k - s], [k - s, k + s, cos + k]];
+    std::array::from_fn(|i| (m[i][0] * c[0] + m[i][1] * c[1] + m[i][2] * c[2]).clamp(0.0, 1.0))
 }
 
 /// Poussières de lumière qui montent doucement, scintillent et s'illuminent sur les coups de
@@ -618,5 +701,42 @@ mod auto_tests {
         assert_eq!(fade.map(|(old, _)| old), Some(a));
         // Sans changement de morceau ni minuterie (0), il reste.
         assert_eq!(v.pick(100.0, Some(2), AUTO, &pool, 0.0).0, b);
+    }
+}
+
+#[cfg(test)]
+mod tune_tests {
+    use super::*;
+
+    /// Les réglages d'origine ne changent rien ; les autres agissent chacun sur ce qu'ils disent.
+    #[test]
+    fn tune_applies() {
+        let s = Spectrum::default();
+        let palette = [Color32::from_rgb(200, 40, 40); 3];
+        let base = {
+            let mut w = waves(&s, palette, 1.0);
+            w.levels = [0.5; crate::shader::LEVELS];
+            w.time = 10.0;
+            w
+        };
+        let size = egui::vec2(800.0, 400.0);
+        let mut w = base;
+        Tune::default().apply(&mut w, 1, size);
+        assert_eq!((w.intensity, w.time, w.levels[0], w.colors), (base.intensity, base.time, base.levels[0], base.colors));
+        assert_eq!(w.zoom_center, [400.0, 200.0]);
+        let tune = Tune { intensity: 2.0, speed: 0.5, react: 1.5, zoom: 2.0, hue: 1.0 / 3.0, detail: 1.0 };
+        let mut w = base;
+        w.focus = [120.0, 90.0, 60.0];
+        tune.apply(&mut w, 12, size);
+        assert_eq!((w.intensity, w.time, w.zoom, w.detail), (2.0, 5.0, 2.0, 1.0));
+        assert!((w.levels[0] - 0.75).abs() < 1e-6);
+        // Centré sur la pochette (Anneau), et le rouge tourné d'un tiers de tour devient vert.
+        assert_eq!(w.zoom_center, [120.0, 90.0]);
+        assert!(w.colors[0][1] > w.colors[0][0] && w.colors[0][1] > w.colors[0][2], "{:?}", w.colors[0]);
+        // Une bande : zoom depuis sa ligne de base.
+        let mut w = base;
+        w.base = 0.84;
+        Tune::default().apply(&mut w, 3, size);
+        assert_eq!(w.zoom_center, [400.0, 336.0]);
     }
 }

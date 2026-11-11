@@ -6,7 +6,7 @@ use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect
 
 use super::{Action, Repeat, SterMusic, View};
 use crate::i18n::tr;
-use crate::icons::Icon;
+use crate::icons::{self, Icon};
 use crate::library::fmt_duration;
 use crate::trf;
 use crate::{anim, theme, widgets};
@@ -459,6 +459,7 @@ impl SterMusic {
     /// Bouton muet + barre de volume (mise en page de droite à gauche).
     fn volume(&mut self, ui: &mut egui::Ui, width: f32) {
         let exact = self.settings.bit_perfect;
+        let max = super::VOLUME_MAX;
         let vol = if self.settings.muted {
             0.0
         } else if exact {
@@ -466,12 +467,18 @@ impl SterMusic {
         } else {
             self.settings.volume
         };
-        let seek = widgets::seek_bar(ui, "volume", vol, width, !exact);
+        // La barre va jusqu'à 150 % ; un repère marque 100 %, au-delà elle passe à l'orange.
+        let seek = widgets::seek_bar_marked(ui, "volume", vol / max, width, !exact, (!exact).then_some(1.0 / max));
         if let Some(v) = seek.preview.or(seek.commit).filter(|_| !exact) {
+            // Cran magnétique autour de 100 %.
+            let v = v * max;
+            let v = if (v - 1.0).abs() < 0.04 { 1.0 } else { v };
             if (v - self.settings.volume).abs() > f32::EPSILON || self.settings.muted {
+                self.settings.volume = v; // pas de second cran dans `SetVolume`
                 self.actions.push(Action::SetVolume(v));
             }
         }
+        let boosted = vol > 1.001;
         let icon = match vol {
             v if v <= 0.0 => Icon::VolumeX,
             v if v < 0.34 => Icon::Volume0,
@@ -480,13 +487,31 @@ impl SterMusic {
         };
         let tip = if exact {
             tr("Sortie bit-perfect : le son part tel quel, le volume se règle dans le système (clic : couper le son)").to_owned()
+        } else if boosted {
+            trf!(
+                "Volume : {0} %, amplifié au-delà de 100 % (clic : couper le son ; molette : régler)",
+                format!("{:.0}", vol * 100.0)
+            )
         } else {
             trf!(
-                "Volume : {0} % (clic : couper le son)",
+                "Volume : {0} % (clic : couper le son ; molette : régler)",
                 format!("{:.0}", vol * 100.0)
             )
         };
         let resp = widgets::icon_button(ui, icon, &tip, 34.0, 17.0);
+        if boosted {
+            // Au-dessus de 100 % : l'icône passe à l'orange, avec le pourcentage en petit.
+            icons::paint_centered(ui.painter(), icon, resp.rect.center(), 17.0, theme::BOOST);
+            ui.painter().text(
+                egui::pos2(seek.rect.center().x, seek.rect.top() - 3.0),
+                egui::Align2::CENTER_BOTTOM,
+                crate::i18n::percent(vol * 100.0),
+                egui::FontId::proportional(10.5),
+                theme::BOOST,
+            );
+        }
+        // Molette sur le volume (barre ou icône) : voir `volume_wheel`.
+        self.volume_zone = Some(seek.rect.union(resp.rect).expand(4.0));
         if resp.clicked() {
             self.actions.push(Action::ToggleMute);
         }
