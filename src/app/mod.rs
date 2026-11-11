@@ -241,6 +241,9 @@ pub struct Settings {
     /// Playlists intelligentes, et vrai une fois les quatre proposées d'office ajoutées.
     pub smart_playlists: Vec<smart::SmartPlaylist>,
     pub smart_seeded: bool,
+    /// Version des playlists d'office déjà proposées (2 : celles sur les sauts et l'engagement).
+    #[serde(default)]
+    pub smart_presets: u32,
     /// Playlists épinglées dans la barre latérale : les favoris (les autres portent leur propre
     /// marque), et vrai une fois les premières épinglées d'office.
     pub favorites_pinned: bool,
@@ -335,6 +338,7 @@ impl Default for Settings {
             lang: crate::i18n::Lang::from_env(),
             smart_playlists: Vec::new(),
             smart_seeded: false,
+            smart_presets: 0,
             favorites_pinned: false,
             pins_seeded: false,
             pl_sort: Default::default(),
@@ -407,7 +411,10 @@ pub enum Action {
     Previous,
     SeekTo(f32),
     SeekBy(f32),
+    /// Aléatoire activé ou non, dans le mode choisi (au hasard ou selon mes goûts).
     ToggleShuffle,
+    /// Aléatoire : activé ou non, et selon mes goûts ou au hasard.
+    SetShuffle { on: bool, taste: bool },
     CycleRepeat,
     SetVolume(f32),
     ToggleMute,
@@ -712,8 +719,6 @@ pub struct SterMusic {
     fs_navigated: bool,
     fs_last_move: f64,
     fs_changed: f64,
-    /// Plein écran : les commandes sont à l'écran (la souris a bougé récemment).
-    fs_controls: bool,
     /// Molette = volume : la zone du réglage de volume, et la page « En cours de lecture »
     /// (sa zone, moins ce qui défile déjà à la molette). Redonnées à chaque image.
     volume_zone: Option<egui::Rect>,
@@ -986,7 +991,6 @@ impl SterMusic {
             fs_navigated: false,
             fs_last_move: 0.0,
             fs_changed: 0.0,
-            fs_controls: true,
             volume_zone: None,
             np_wheel: (None, Vec::new()),
             tray: None,
@@ -1008,9 +1012,16 @@ impl SterMusic {
         };
         if !app.settings.smart_seeded {
             app.settings.smart_seeded = true;
+            app.settings.smart_presets = smart::PRESETS_V2;
             app.settings
                 .smart_playlists
                 .extend(smart::SmartPlaylist::presets());
+        } else if app.settings.smart_presets < smart::PRESETS_V2 {
+            // Playlists d'office arrivées depuis : ajoutées une fois, à la suite des autres.
+            app.settings.smart_presets = smart::PRESETS_V2;
+            app.settings
+                .smart_playlists
+                .extend(smart::SmartPlaylist::presets().into_iter().skip(smart::PRESETS_V1));
         }
         for p in &mut app.settings.smart_playlists {
             p.guess_icon();
@@ -1558,6 +1569,25 @@ impl SterMusic {
     }
 
     /// Mélange la file en gardant le morceau en cours en tête.
+    /// Change le mode aléatoire : on repart de l'ordre d'origine, puis on remélange.
+    fn set_shuffle(&mut self, on: bool, taste: bool) {
+        let changed = (on, taste) != (self.settings.shuffle, self.settings.shuffle_taste);
+        self.settings.shuffle = on;
+        self.settings.shuffle_taste = taste;
+        if !changed {
+            return;
+        }
+        self.unshuffle_queue();
+        if on {
+            self.shuffle_queue();
+            self.toast(if taste {
+                tr("Aléatoire selon mes goûts : tes morceaux préférés viendront plus souvent en premier")
+            } else {
+                tr("Aléatoire au hasard (clic droit sur le bouton : selon mes goûts)")
+            });
+        }
+    }
+
     fn shuffle_queue(&mut self) {
         let Some(pos) = self.queue_pos else { return };
         self.unshuffled = Some(self.queue.clone());
@@ -2411,23 +2441,12 @@ impl SterMusic {
                     .unwrap_or(0.0);
                 self.seek_to(pos + d);
             }
-            // Trois états : ordre de la file, aléatoire, aléatoire selon mes goûts.
+            // Le clic sur le bouton garde le mode choisi (clic droit ou Paramètres pour le changer).
             Action::ToggleShuffle => {
-                let s = &mut self.settings;
-                (s.shuffle, s.shuffle_taste) = match (s.shuffle, s.shuffle_taste) {
-                    (false, _) => (true, false),
-                    (true, false) => (true, true),
-                    (true, true) => (false, false),
-                };
-                // On repart de l'ordre d'origine, puis on remélange selon le nouveau mode.
-                self.unshuffle_queue();
-                if self.settings.shuffle {
-                    self.shuffle_queue();
-                }
-                if self.settings.shuffle_taste {
-                    self.toast(tr("Aléatoire selon mes goûts : tes morceaux préférés viendront plus souvent en premier"));
-                }
+                let (on, taste) = (!self.settings.shuffle, self.settings.shuffle_taste);
+                self.set_shuffle(on, taste);
             }
+            Action::SetShuffle { on, taste } => self.set_shuffle(on, taste),
             Action::CycleRepeat => {
                 self.settings.repeat = match self.settings.repeat {
                     Repeat::Off => Repeat::All,
@@ -2537,7 +2556,6 @@ impl SterMusic {
         } else {
             ctx.set_cursor_icon(egui::CursorIcon::None);
         }
-        self.fs_controls = visible;
         visible
     }
 

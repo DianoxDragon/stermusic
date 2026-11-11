@@ -117,55 +117,55 @@ pub const STYLES: [(&str, bool); 50] = [
 /// s'il n'en a pas.
 pub const DETAILS: [Option<&str>; 50] = [
     Some(crate::i18n::n_("Finesse des rayons")),
-    None,
-    None,
+    Some(crate::i18n::n_("Finesse des reflets")),
+    Some(crate::i18n::n_("Finesse")),
     Some(crate::i18n::n_("Nombre de colonnes")),
-    None,
+    Some(crate::i18n::n_("Nombre d'ondes")),
     Some(crate::i18n::n_("Nombre de lignes")),
-    None,
+    Some(crate::i18n::n_("Finesse")),
     Some(crate::i18n::n_("Nombre de projecteurs")),
-    None,
+    Some(crate::i18n::n_("Densité")),
     Some(crate::i18n::n_("Nombre de rayons")),
-    None,
-    None,
-    None,
+    Some(crate::i18n::n_("Ondulation")),
+    Some(crate::i18n::n_("Nombre de disques")),
+    Some(crate::i18n::n_("Nombre de rayons")),
     Some(crate::i18n::n_("Amplitude")),
-    None,
-    None,
+    Some(crate::i18n::n_("Turbulence")),
+    Some(crate::i18n::n_("Nombre de lucioles")),
     Some(crate::i18n::n_("Relief")),
-    None,
-    None,
-    None,
+    Some(crate::i18n::n_("Fréquence des éclairs")),
+    Some(crate::i18n::n_("Nombre de rayons")),
+    Some(crate::i18n::n_("Nombre de bras")),
     Some(crate::i18n::n_("Densité")),
     Some(crate::i18n::n_("Nombre de miroirs")),
     Some(crate::i18n::n_("Nombre de pétales")),
-    None,
+    Some(crate::i18n::n_("Hauteur des flammes")),
     Some(crate::i18n::n_("Enroulement des bras")),
-    None,
-    None,
+    Some(crate::i18n::n_("Nombre de facettes")),
+    Some(crate::i18n::n_("Nombre de bulles")),
     Some(crate::i18n::n_("Nombre de colonnes")),
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    Some(crate::i18n::n_("Nombre de pendules")),
-    None,
+    Some(crate::i18n::n_("Nombre de plages")),
+    Some(crate::i18n::n_("Nombre de pointes")),
+    Some(crate::i18n::n_("Nombre de points")),
+    Some(crate::i18n::n_("Relief des plis")),
+    Some(crate::i18n::n_("Nombre de nervures")),
+    Some(crate::i18n::n_("Nombre de courbes")),
+    Some(crate::i18n::n_("Nombre de colonnes")),
+    Some(crate::i18n::n_("Finesse des traînées")),
+    Some(crate::i18n::n_("Finesse de la trame")),
+    Some(crate::i18n::n_("Taille de la boucle")),
     Some(crate::i18n::n_("Relief")),
-    None,
-    None,
-    None,
-    None,
+    Some(crate::i18n::n_("Nombre de carreaux")),
+    Some(crate::i18n::n_("Nombre d'éclats")),
+    Some(crate::i18n::n_("Nombre d'échos")),
+    Some(crate::i18n::n_("Nombre de barreaux")),
+    Some(crate::i18n::n_("Nombre de pendules")),
+    Some(crate::i18n::n_("Nombre d'étoiles")),
+    Some(crate::i18n::n_("Relief")),
+    Some(crate::i18n::n_("Nombre de bulles")),
+    Some(crate::i18n::n_("Taille de la couronne")),
+    Some(crate::i18n::n_("Écart des cercles")),
+    Some(crate::i18n::n_("Halo des tubes")),
 ];
 
 /// Visualiseurs centrés sur la pochette (leur zoom se fait autour d'elle).
@@ -347,7 +347,7 @@ float caustic_layer(vec2 p, float t) {
     return exp(-e / 0.045);
 }
 vec3 caustics(vec2 px, float H, float v) {
-    vec2 p = px / (H * 0.42 * u_scale);
+    vec2 p = px / (H * 0.42 * u_scale) * detail(0.55, 1.0, 1.9);
     float t = u_time * 0.8;
     float a = caustic_layer(p, t);
     float b = caustic_layer(p * 1.35 + vec2(3.7, 1.9), t * 1.2);
@@ -363,6 +363,7 @@ vec3 caustics(vec2 px, float H, float v) {
 vec3 nebula(vec2 px, float H) {
     vec2 p = px / (H * u_scale) * 1.3;
     float t = u_time * 0.12;
+    p *= detail(0.45, 1.0, 2.4);
     float n = fbm(p + vec2(t, -t * 0.6) + 1.5 * fbm(p * 0.7 - vec2(t * 0.8, t * 0.3)));
     vec3 col = mix(u_colors[2], u_colors[0], smoothstep(0.30, 0.75, n));
     col = mix(col, u_colors[1], smoothstep(0.62, 0.92, n));
@@ -375,8 +376,10 @@ vec3 ripples(vec2 px, float W, float H, float u) {
     vec2 c = vec2(0.5 * W, H * 1.02);
     float r = length(px - c) / H;
     vec3 acc = vec3(0.0);
-    for (int k = 0; k < 6; k++) {
-        float rk = fract(u_time * 0.10 + float(k) / 6.0) * 1.5;
+    int count = int(floor(detail(3.0, 6.0, 12.0)));
+    for (int k = 0; k < 12; k++) {
+        if (k >= count) break;
+        float rk = fract(u_time * 0.10 + float(k) / float(count)) * 1.5;
         float width = 0.010 + 0.025 * level(u) + 0.015 * u_kick;
         float ring = exp(-pow((r - rk) / width, 2.0)) * (1.0 - rk / 1.5);
         acc += mix(u_colors[k - (k / 3) * 3], vec3(1.0), 0.2) * ring * (0.35 + 0.7 * u_energy);
@@ -388,7 +391,7 @@ vec3 ripples(vec2 px, float W, float H, float u) {
 // ---------- 6. Plasma : couleurs douces qui se mélangent ----------
 
 vec3 plasma(vec2 px, float H) {
-    vec2 p = px / (H * u_scale);
+    vec2 p = px / (H * u_scale) * detail(0.5, 1.0, 2.2);
     float t = u_time * 0.35;
     float v = sin(p.x * 2.6 + t) + sin(p.y * 3.1 - t * 1.2) + sin((p.x + p.y) * 2.0 + t * 0.7)
             + sin(length(p - vec2(1.0, 0.6)) * 4.5 - t);
@@ -406,7 +409,7 @@ vec3 stars(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
     for (int i = 0; i < 3; i++) {
         float z = fract(u_time * 0.06 + float(i) / 3.0);
-        float zoom = mix(10.0, 1.2, z);
+        float zoom = mix(10.0, 1.2, z) * detail(0.5, 1.0, 1.9);
         vec2 q = p * zoom + float(i) * 17.0;
         vec2 g0 = floor(q);
         vec2 f0 = fract(q);
@@ -441,7 +444,7 @@ vec3 liquid(vec2 px, float W, float H) {
     float a = t * 0.5;
     q = mat2(cos(a), -sin(a), sin(a), cos(a)) * q / (1.4 * u_scale);
     vec2 warp = vec2(fbm(q * 2.0 + vec2(t, -t)), fbm(q * 2.0 + vec2(-t, t) + 5.3)) - 0.5;
-    q += warp * (0.55 + 0.30 * u_bass + 0.25 * u_kick);
+    q += warp * (detail(0.12, 0.55, 1.2) + 0.30 * u_bass + 0.25 * u_kick);
     vec2 uv = q + 0.5;
     uv = 1.0 - abs(1.0 - mod(uv, 2.0));  // miroir : jamais de bord visible
     vec3 col;
@@ -460,7 +463,9 @@ vec3 liquid(vec2 px, float W, float H) {
 
 vec3 bokeh(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
-    for (int i = 0; i < 22; i++) {
+    int count = int(floor(detail(8.0, 22.0, 44.0)));
+    for (int i = 0; i < 44; i++) {
+        if (i >= count) break;
         float fi = float(i);
         vec2 h = vec2(hash(vec2(fi, 1.3)), hash(vec2(fi, 7.1)));
         vec2 c = vec2(W * h.x, H * h.y)
@@ -483,7 +488,7 @@ vec3 ring(vec2 px, float W, float H) {
     vec2 d = px - c;
     float r = length(d);
     float u = fract(atan(d.y, d.x) / 6.28318 + 0.25);
-    float n = 120.0;
+    float n = floor(detail(40.0, 120.0, 240.0));
     float lvq = level(floor(u * n) / n + 0.5 / n);
     float ang = (fract(u * n) - 0.5) / n * 6.28318;
     float line = exp(-pow(abs(ang) * r / (0.9 * u_ppp + 0.6), 2.0));
@@ -502,7 +507,8 @@ vec3 smoke(vec2 px, float H) {
     vec2 p = px / (H * u_scale) * 1.6;
     float t = u_time * 0.10;
     vec2 q = vec2(fbm(p + vec2(0.0, t)), fbm(p + vec2(5.2, -t)));
-    vec2 r = vec2(fbm(p + 3.0 * q + vec2(1.7, 9.2) + t * 0.7), fbm(p + 3.0 * q + vec2(8.3, 2.8) - t * 0.5));
+    float swirl = detail(0.8, 3.0, 6.0);
+    vec2 r = vec2(fbm(p + swirl * q + vec2(1.7, 9.2) + t * 0.7), fbm(p + swirl * q + vec2(8.3, 2.8) - t * 0.5));
     float f = fbm(p + 2.5 * r);
     vec3 col = mix(u_colors[2], u_colors[0], clamp(f * f * 2.0, 0.0, 1.0));
     col = mix(col, u_colors[1], clamp(length(q) * 0.8, 0.0, 1.0) * 0.6);
@@ -514,7 +520,9 @@ vec3 smoke(vec2 px, float H) {
 vec3 fireflies(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
     vec3 warm = mix(u_colors[1], vec3(1.0, 0.95, 0.75), 0.4);
-    for (int i = 0; i < 26; i++) {
+    int count = int(floor(detail(8.0, 26.0, 48.0)));
+    for (int i = 0; i < 48; i++) {
+        if (i >= count) break;
         float fi = float(i);
         vec2 seed = vec2(hash(vec2(fi, 2.1)), hash(vec2(fi, 5.9)));
         // u_time avance déjà plus vite quand la musique est forte : le multiplier par l'énergie
@@ -548,7 +556,9 @@ vec3 storm(vec2 px, float W, float H) {
     col += mix(u_colors[1], vec3(0.85, 0.9, 1.0), 0.6) * clouds * near * flash * 2.2;
     float bx = fx + (fbm(vec2(px.y / H * 6.0, seed)) - 0.5) * H * 0.35;
     float bolt = exp(-pow((px.x - bx) / (1.5 * u_ppp), 2.0)) * smoothstep(H * 0.75, H * 0.35, px.y);
-    col += vec3(0.95, 0.95, 1.0) * bolt * smoothstep(0.35, 0.8, u_kick);
+    // Réglage : plus il est haut, plus un petit coup suffit à faire tomber un éclair.
+    float th = detail(0.6, 0.35, 0.10);
+    col += vec3(0.95, 0.95, 1.0) * bolt * smoothstep(th, th + 0.45, u_kick);
     return col;
 }
 
@@ -563,7 +573,8 @@ vec3 tunnel(vec2 px, float W, float H) {
     // Largeur d'un pixel en profondeur : les anneaux lointains, serrés, restent nets.
     float pixel = u_ppp / H * 0.3 / (r * r);
     float rings = exp(-pow((fract(z) - 0.5) / max(0.045, pixel * 1.5), 2.0));
-    float ds = abs(fract(u * 24.0) - 0.5) / 24.0 * 6.28318 * r * H;
+    float nsp = floor(detail(8.0, 24.0, 48.0));
+    float ds = abs(fract(u * nsp) - 0.5) / nsp * 6.28318 * r * H;
     float spokes = exp(-pow(ds / (1.2 * u_ppp), 2.0));
     float fog = smoothstep(0.03, 0.45, r);
     vec3 col = mix(u_colors[0], u_colors[1], 0.5 + 0.5 * sin(z * 0.8));
@@ -580,7 +591,7 @@ vec3 spiral(vec2 px, float W, float H) {
     float a = atan(p.y, p.x);
     float u = fract(a / 6.28318 + 0.5);
     float lv = level(u);
-    float band = 0.5 + 0.5 * cos(a * 5.0 + log(r + 1e-3) * 9.0 - u_time * 1.2);
+    float band = 0.5 + 0.5 * cos(a * floor(detail(2.0, 5.0, 10.0)) + log(r + 1e-3) * 9.0 - u_time * 1.2);
     float line = pow(band, 8.0 - 4.0 * lv);
     vec3 col = mix(u_colors[0], u_colors[1], 0.5 + 0.5 * sin(a * 2.0 + u_time * 0.3));
     float fade = smoothstep(0.0, 0.08, r) * exp(-r * 1.6);
@@ -596,7 +607,7 @@ vec3 flames(vec2 px, float W, float H, float u) {
     float t = u_time * 0.9;
     float lv = level(u) * envelope(u);
     float n = fbm(vec2(p.x * 3.0, p.y * 2.0 - t) + fbm(vec2(p.x * 1.5 + 3.0, p.y - t * 0.6)));
-    float height = 0.22 + 0.45 * lv + 0.15 * u_bass + 0.15 * u_kick;
+    float height = (0.22 + 0.45 * lv + 0.15 * u_bass + 0.15 * u_kick) * detail(0.55, 1.0, 1.6);
     float f = clamp(1.0 - p.y / height + (n - 0.5) * 1.1, 0.0, 1.0);
     f *= f;
     vec3 col = mix(u_colors[2] * 0.4, u_colors[0], smoothstep(0.0, 0.5, f));
@@ -607,7 +618,7 @@ vec3 flames(vec2 px, float W, float H, float u) {
 // ---------- 25. Cristaux : facettes qui s'allument sur leurs fréquences ----------
 
 vec3 crystals(vec2 px, float W, float H) {
-    float size = H * 0.18 * u_scale;
+    float size = H * detail(0.34, 0.18, 0.08) * u_scale;
     vec2 p = px / size;
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -637,7 +648,9 @@ vec3 lava(vec2 px, float W, float H) {
     vec2 p = px / H;
     float field = 0.0;
     vec3 tint = vec3(0.0);
-    for (int i = 0; i < 9; i++) {
+    int count = int(floor(detail(4.0, 9.0, 16.0)));
+    for (int i = 0; i < 16; i++) {
+        if (i >= count) break;
         float fi = float(i);
         vec2 h = vec2(hash(vec2(fi, 2.7)), hash(vec2(fi, 9.4)));
         float speed = 0.05 + 0.06 * h.y;
@@ -672,7 +685,7 @@ vec3 vinyl(vec2 px, float W, float H) {
     float f = clamp((1.0 - r) / 0.64, 0.0, 1.0);
     float lv = band(f);
     float groove = 0.55 + 0.45 * sin(rr / u_ppp * 1.9);
-    float track = smoothstep(0.0, 0.015, abs(fract(r * 7.0 + 0.3) - 0.5) - 0.025);
+    float track = smoothstep(0.0, 0.015, abs(fract(r * floor(detail(3.0, 7.0, 14.0)) + 0.3) - 0.5) - 0.025);
     // La lampe est fixe, le disque tourne dessous : les reflets restent, la poussière défile.
     float hl = pow(abs(cos(a - 0.7)), 22.0) + 0.55 * pow(abs(cos(a + 0.9)), 40.0);
     float dust = smoothstep(0.82, 1.0, noise(vec2((a - spin) * 40.0, r * 90.0)));
@@ -702,7 +715,7 @@ vec3 ferrofluid(vec2 px, float W, float H) {
     float r = length(d);
     float a = atan(d.y, d.x) + u_time * 0.04;
     float base = u_focus.z * 1.16 * (1.0 + 0.04 * u_bass + 0.05 * u_kick);
-    float N = 30.0;
+    float N = floor(detail(12.0, 30.0, 60.0));
     float s = a / 6.28318 * N;
     float idx = floor(s);
     float local = fract(s) - 0.5;
@@ -735,7 +748,7 @@ vec3 hologram(vec2 px, float W, float H) {
     acc += u_colors[1] * exp(-pow((sqrt(r2) - 1.0) * R / (H * 0.015), 2.0)) * (0.10 + 0.35 * u_kick);
     if (r2 >= 1.0) return acc;
     float z = sqrt(1.0 - r2);
-    float rows = 15.0;
+    float rows = floor(detail(8.0, 15.0, 26.0));
     for (int side = 0; side < 2; side++) {
         vec3 p = vec3(q.x, -q.y, side == 0 ? z : -z);
         p.xz = rot(u_time * 0.22) * p.xz;
@@ -769,7 +782,7 @@ float silk_h(vec2 p, float t) {
 vec3 silk(vec2 px, float H) {
     vec2 p = px / (H * 0.24 * u_scale);
     float t = u_time * 0.6;
-    float amp = 0.9 + 0.6 * u_bass + 0.4 * u_kick;
+    float amp = (0.9 + 0.6 * u_bass + 0.4 * u_kick) * detail(0.35, 1.0, 1.9);
     float e = 0.01;
     float h = silk_h(p, t);
     vec2 g = vec2(silk_h(p + vec2(e, 0.0), t) - h, silk_h(p + vec2(0.0, e), t) - h) / e;
@@ -796,7 +809,7 @@ vec3 iridescence(vec2 px, float H) {
     vec3 film = 0.5 + 0.5 * cos(6.28318 * (th * 2.4 + vec3(0.0, 0.33, 0.67)));
     vec3 tint = mix(u_colors[0], u_colors[1], w.x);
     vec3 col = mix(film, tint * (0.6 + 0.8 * film), 0.6);
-    float ridge = 1.0 - abs(fract(th * 6.0) - 0.5) * 2.0;
+    float ridge = 1.0 - abs(fract(th * detail(2.5, 6.0, 12.0)) - 0.5) * 2.0;
     float glint = pow(ridge, 10.0);
     // Une pellicule sombre où seules les nervures brillent vraiment.
     return col * (0.03 + 0.07 * th) * (0.8 + 0.5 * u_energy) + col * glint * (0.16 + 0.35 * u_kick + 0.2 * u_energy);
@@ -815,7 +828,7 @@ vec3 topography(vec2 px, float W, float H) {
         float lv = band(fi / 5.0);
         h += (0.10 + 0.65 * lv + 0.15 * u_kick) * exp(-dot(p - c, p - c) * 2.5);
     }
-    float k = h * 14.0;
+    float k = h * detail(6.0, 14.0, 28.0);
     float fw = max(fwidth(k), 1e-4);
     float d = abs(fract(k + 0.5) - 0.5);
     float line = 1.0 - smoothstep(0.5 * fw, 1.6 * fw, d);
@@ -828,7 +841,7 @@ vec3 topography(vec2 px, float W, float H) {
 // ---------- 34. Verre : colonnes de verre dépoli, un reflet sur leur flanc ----------
 
 vec3 glass(vec2 px, float W, float H, float u) {
-    float n = 24.0;
+    float n = floor(detail(10.0, 24.0, 48.0));
     float cell = floor(u * n);
     float cu = (cell + 0.5) / n;
     float lv = level(cu) * envelope(cu);
@@ -867,9 +880,10 @@ vec3 flux(vec2 px, float H) {
     float ang = fbm(p * 0.45 + vec2(t * 0.3, -t * 0.2)) * 6.28318 * 1.3;
     vec2 dir = vec2(cos(ang), sin(ang));
     vec2 nrm = vec2(-dir.y, dir.x);
-    float streak = noise(vec2(dot(p, dir) * 0.6 - u_time * 0.6, dot(p, nrm) * 40.0));
+    float thin = detail(0.4, 1.0, 2.0);
+    float streak = noise(vec2(dot(p, dir) * 0.6 - u_time * 0.6, dot(p, nrm) * 40.0 * thin));
     streak = pow(streak, 5.0);
-    float fine = pow(noise(vec2(dot(p, dir) * 1.2 - u_time * 1.1, dot(p, nrm) * 110.0)), 7.0);
+    float fine = pow(noise(vec2(dot(p, dir) * 1.2 - u_time * 1.1, dot(p, nrm) * 110.0 * thin)), 7.0);
     vec3 col = mix(u_colors[0], u_colors[1], 0.5 + 0.5 * sin(ang));
     float lv = band(fract(ang / 6.28318));
     return col * (streak * (0.30 + 0.8 * lv + 0.5 * u_kick) + fine * (0.2 + 0.6 * u_energy))
@@ -879,7 +893,7 @@ vec3 flux(vec2 px, float H) {
 // ---------- 36. Trame : une trame de points, comme une affiche imprimée, qui respire ----------
 
 vec3 halftone(vec2 px, float W, float H) {
-    float cell = max(H * u_scale / 34.0, 7.0 * u_ppp);
+    float cell = max(H * u_scale / detail(16.0, 34.0, 64.0), 5.0 * u_ppp);
     mat2 m = rot(0.52);
     vec2 q = m * px / cell;
     vec2 id = floor(q);
@@ -922,7 +936,7 @@ vec3 lissajous(vec2 px, float W, float H) {
         pts[i] = vec2(x, y);
         peak = max(peak, max(abs(x), abs(y)));
     }
-    float gain = 0.95 / peak;
+    float gain = detail(0.72, 0.95, 1.25) / peak;
     float best = 1e9;
     for (int i = 1; i < 64; i++) {
         vec2 a = m * pts[i - 1] * gain;
@@ -956,7 +970,7 @@ vec3 retro(vec2 px, float W, float H) {
         acc += u_colors[0] * exp(-pow(max(d - sr, 0.0) / (H * 0.10), 2.0)) * 0.22 * (1.0 - sun);
         // Montagnes : leur crête suit le spectre.
         float u = px.x / W;
-        float ridge = hy - H * (0.015 + 0.11 * level(u) * envelope(u) + 0.03 * noise(vec2(u * 14.0, 1.0)));
+        float ridge = hy - H * (0.015 + detail(0.03, 0.11, 0.24) * level(u) * envelope(u) + 0.03 * noise(vec2(u * 14.0, 1.0)));
         float inside = smoothstep(ridge - u_ppp, ridge + u_ppp, px.y);
         acc *= 1.0 - inside * 0.92;
         acc += u_colors[1] * exp(-pow((px.y - ridge) / (1.3 * u_ppp), 2.0)) * 0.9;
@@ -980,7 +994,7 @@ vec3 retro(vec2 px, float W, float H) {
 // ---------- 39. Mosaïque : la pochette en carreaux qui pivotent et s'allument sur le rythme ----------
 
 vec3 mosaic(vec2 px, float W, float H) {
-    float cs = max(H * u_scale / 13.0, 10.0 * u_ppp);
+    float cs = max(H * u_scale / detail(6.0, 13.0, 26.0), 8.0 * u_ppp);
     vec2 id = floor(px / cs);
     vec2 f = px / cs - id - 0.5;
     vec2 center = (id + 0.5) * cs;
@@ -1006,7 +1020,7 @@ vec3 mosaic(vec2 px, float W, float H) {
 // ---------- 40. Vitrail : des éclats de verre colorés que la musique éclaire par derrière ----------
 
 vec3 stained(vec2 px, float W, float H) {
-    vec2 p = px / (H * 0.20 * u_scale);
+    vec2 p = px / (H * detail(0.38, 0.20, 0.10) * u_scale);
     vec2 i = floor(p);
     vec2 f = fract(p);
     float d1 = 8.0;
@@ -1050,12 +1064,14 @@ vec3 radar(vec2 px, float W, float H) {
     }
     acc += u_colors[1] * exp(-pow((r - 1.0) * R / (1.2 * u_ppp), 2.0)) * 0.35;
     // Échos : seize fréquences à des places fixes, ravivées au passage du faisceau.
-    for (int i = 0; i < 16; i++) {
+    int count = int(floor(detail(6.0, 16.0, 32.0)));
+    for (int i = 0; i < 32; i++) {
+        if (i >= count) break;
         float fi = float(i);
-        float ba = fi / 16.0 * 6.28318 + hash(vec2(fi, 4.0)) * 0.8;
+        float ba = fi / float(count) * 6.28318 + hash(vec2(fi, 4.0)) * 0.8;
         float br = 0.28 + 0.62 * hash(vec2(fi, 9.0));
         vec2 bp = u_focus.xy + vec2(cos(ba), sin(ba)) * br * R;
-        float lv = u_levels[i];
+        float lv = u_levels[i - (i / 16) * 16];
         float since = mod(sweep - ba, 6.28318);
         float glow = exp(-since * 0.7) * (0.6 + 1.8 * lv);
         float dist = length(px - bp);
@@ -1086,7 +1102,7 @@ vec3 helix(vec2 px, float W, float H) {
              + col * exp(-pow(dist / (w * 6.0), 2.0)) * 0.15 * bright;
     }
     // Barreaux : un tous les 2,6 % de la largeur ; leur éclat suit le spectre.
-    float sp = W / 38.0;
+    float sp = W / floor(detail(16.0, 38.0, 76.0));
     float xr = (floor(px.x / sp) + 0.5) * sp;
     float phr = xr * k + u_time * 0.9;
     float y1 = cy + A * sin(phr);
@@ -1103,7 +1119,7 @@ vec3 helix(vec2 px, float W, float H) {
 // ---------- 44. Constellation : des étoiles reliées quand elles se rapprochent ----------
 
 vec3 constellation(vec2 px, float W, float H) {
-    float cs = H * 0.17 * u_scale;
+    float cs = H * detail(0.28, 0.17, 0.09) * u_scale;
     vec2 p = px / cs;
     vec2 i = floor(p);
     vec2 pts[9];
@@ -1142,7 +1158,9 @@ vec3 constellation(vec2 px, float W, float H) {
 
 vec3 bubbles(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
-    for (int i = 0; i < 18; i++) {
+    int count = int(floor(detail(6.0, 18.0, 36.0)));
+    for (int i = 0; i < 36; i++) {
+        if (i >= count) break;
         float fi = float(i);
         vec2 h = vec2(hash(vec2(fi, 1.1)), hash(vec2(fi, 8.3)));
         float r = H * (0.03 + 0.07 * hash(vec2(fi, 5.5))) * (1.0 + 0.15 * u_bass);
@@ -1177,7 +1195,7 @@ vec3 eclipse(vec2 px, float W, float H) {
     // Filets de la couronne, qui s'étirent vers l'extérieur.
     float fil = fbm(vec2(a * 5.0, out_r * 6.0 - u_time * 0.25)) ;
     float fil2 = fbm(vec2(a * 11.0 + 3.0, out_r * 10.0 - u_time * 0.4));
-    float reach = 0.10 + 0.20 * lv + 0.10 * u_kick;
+    float reach = (0.10 + 0.20 * lv + 0.10 * u_kick) * detail(0.4, 1.0, 2.0);
     float corona = exp(-out_r / (reach * (0.5 + fil))) * (0.5 + 0.8 * fil2);
     vec3 acc = mix(u_colors[0], vec3(1.0), 0.25) * corona * step(r0, r) * (0.45 + 0.4 * u_energy);
     acc += u_colors[1] * exp(-out_r / 0.35) * 0.12;
@@ -1193,7 +1211,7 @@ vec3 eclipse(vec2 px, float W, float H) {
 // ---------- 48. Moiré : deux trames de cercles qui glissent l'une sur l'autre ----------
 
 vec3 moire(vec2 px, float W, float H) {
-    float sp = (6.0 + 2.0 * u_bass) * u_ppp;
+    float sp = (detail(3.5, 6.0, 11.0) + 2.0 * u_bass) * u_ppp;
     vec2 c1 = vec2(W * (0.5 + 0.18 * sin(u_time * 0.21)), H * (0.5 + 0.15 * cos(u_time * 0.17)));
     vec2 c2 = vec2(W * (0.5 + 0.18 * sin(u_time * 0.19 + 2.0)), H * (0.5 + 0.15 * cos(u_time * 0.23 + 1.0)));
     float l1 = 0.5 + 0.5 * cos(length(px - c1) / sp * 6.28318);
@@ -1235,7 +1253,7 @@ vec3 neon(vec2 px, float W, float H) {
         float flicker = step(0.06, hash(vec2(tick, float(i)))) * (0.75 + 0.25 * hash(vec2(tick, float(i) + 9.0)));
         vec3 col = u_colors[i];
         float core = exp(-pow(d / (1.6 * u_ppp), 2.0));
-        float halo = exp(-d / (H * 0.018));
+        float halo = exp(-d / (H * detail(0.006, 0.018, 0.04)));
         acc += (mix(col, vec3(1.0), 0.55) * core + col * halo * 0.35) * flicker * (0.45 + 1.0 * lv);
     }
     return acc;

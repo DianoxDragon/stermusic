@@ -362,10 +362,17 @@ impl SterMusic {
                     },
                 );
 
-                // Droite : favori, volume, en cours de lecture.
-                let right = Rect::from_min_max(pos2(row.right() - 340.0, row.top()), row.max);
-                // Fenêtre étroite : la barre de volume raccourcit pour ne pas toucher les commandes.
-                let vol_w = if row.width() < 980.0 { 64.0 } else { 110.0 };
+                // Droite : favori, volume, égaliseur, plein écran.
+                let right = Rect::from_min_max(pos2(row.right() - 380.0, row.top()), row.max);
+                // Fenêtre étroite : la barre de volume raccourcit, puis disparaît (l'icône et la
+                // molette restent), et la diffusion se cache tant qu'elle ne sert pas, pour ne
+                // jamais toucher les commandes du centre.
+                let budget = row.right() - controls.right() - 12.0;
+                let compact = budget < 300.0;
+                let fixed = if compact { 214.0 } else { 252.0 };
+                let vol_w = (budget - fixed).clamp(0.0, 110.0);
+                let vol_w = if vol_w < 40.0 { 0.0 } else { vol_w };
+                let casting = self.player.as_ref().is_some_and(|p| p.casting().is_some());
                 ui.scope_builder(
                     UiBuilder::new()
                         .max_rect(right)
@@ -373,6 +380,15 @@ impl SterMusic {
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         ui.add_space(4.0);
+                        // Plein écran, tout à droite (comme dans la plupart des lecteurs).
+                        let (fs_icon, fs_tip) = if self.fullscreen {
+                            (Icon::Minimize, tr("Quitter le plein écran (Échap)"))
+                        } else {
+                            (Icon::Maximize, tr("Plein écran (F11, ou double-clic sur la pochette)"))
+                        };
+                        if widgets::icon_button(ui, fs_icon, fs_tip, 36.0, 16.0).clicked() {
+                            self.actions.push(Action::ToggleFullscreen);
+                        }
                         // Égaliseur, dans une bulle au-dessus du bouton.
                         let eq = widgets::toggle_icon(
                             ui,
@@ -401,7 +417,9 @@ impl SterMusic {
                         );
                         ui.add_space(2.0);
                         self.sleep_button(ui);
-                        self.cast_button(ui);
+                        if !compact || casting {
+                            self.cast_button(ui);
+                        }
                         ui.add_space(6.0);
                         self.volume(ui, vol_w);
                         ui.add_space(6.0);
@@ -437,12 +455,11 @@ impl SterMusic {
             ui,
             self.settings.shuffle,
             Icon::Shuffle,
-            if self.settings.shuffle && self.settings.shuffle_taste {
-                tr("Aléatoire selon mes goûts : mes morceaux préférés ont plus de chances de venir d'abord (clic : désactiver)")
-            } else if self.settings.shuffle {
-                tr("Aléatoire : activé (clic : selon mes goûts)")
-            } else {
-                tr("Aléatoire : désactivé")
+            match (self.settings.shuffle, self.settings.shuffle_taste) {
+                (true, true) => tr("Aléatoire selon mes goûts : tes morceaux préférés ont plus de chances de venir d'abord (clic droit : changer de mode)"),
+                (true, false) => tr("Aléatoire au hasard (clic droit : selon mes goûts)"),
+                (false, true) => tr("Aléatoire : désactivé ; il sera selon mes goûts (clic droit : changer de mode)"),
+                (false, false) => tr("Aléatoire : désactivé (clic droit : au hasard ou selon mes goûts)"),
             },
             size,
             17.0,
@@ -455,6 +472,25 @@ impl SterMusic {
         if shuffle.clicked() {
             self.actions.push(Action::ToggleShuffle);
         }
+        // Clic droit : choisir le mode.
+        shuffle.context_menu(|ui| {
+            ui.set_max_width(230.0);
+            ui.label(egui::RichText::new(tr("Lecture aléatoire")).small().color(theme::TEXT_3));
+            let (on, taste) = (self.settings.shuffle, self.settings.shuffle_taste);
+            let mark = |yes: bool| yes.then_some(Icon::Check);
+            if widgets::menu_item(ui, mark(!on), tr("Désactivée")).clicked() {
+                self.actions.push(Action::SetShuffle { on: false, taste });
+            }
+            if widgets::menu_item(ui, mark(on && !taste), tr("Au hasard")).clicked() {
+                self.actions.push(Action::SetShuffle { on: true, taste: false });
+            }
+            if widgets::menu_item(ui, mark(on && taste), tr("Selon mes goûts"))
+                .on_hover_text(tr("Les morceaux que tu écoutes jusqu'au bout, que tu notes bien ou mets en favori viennent plus souvent ; ceux que tu passes, moins souvent."))
+                .clicked()
+            {
+                self.actions.push(Action::SetShuffle { on: true, taste: true });
+            }
+        });
         if widgets::icon_button(ui, Icon::SkipBack, tr("Précédent (Ctrl+←)"), size, 19.0).clicked() {
             self.actions.push(Action::Previous);
         }
@@ -502,8 +538,10 @@ impl SterMusic {
             self.settings.volume
         };
         // La barre va jusqu'à 150 % ; un repère marque 100 %, au-delà elle passe à l'orange.
-        let seek = widgets::seek_bar_marked(ui, "volume", vol / max, width, !exact, (!exact).then_some(1.0 / max));
-        if let Some(v) = seek.preview.or(seek.commit).filter(|_| !exact) {
+        // Fenêtre très étroite : pas de barre, l'icône seule (molette pour régler).
+        let seek = (width > 0.0)
+            .then(|| widgets::seek_bar_marked(ui, "volume", vol / max, width, !exact, (!exact).then_some(1.0 / max)));
+        if let Some(v) = seek.as_ref().and_then(|s| s.preview.or(s.commit)).filter(|_| !exact) {
             // Cran magnétique autour de 100 %.
             let v = v * max;
             let v = if (v - 1.0).abs() < 0.04 { 1.0 } else { v };
@@ -533,11 +571,12 @@ impl SterMusic {
             )
         };
         let resp = widgets::icon_button(ui, icon, &tip, 34.0, 17.0);
+        let bar = seek.as_ref().map(|s| s.rect).unwrap_or(resp.rect);
         if boosted {
             // Au-dessus de 100 % : l'icône passe à l'orange, avec le pourcentage en petit.
             icons::paint_centered(ui.painter(), icon, resp.rect.center(), 17.0, theme::BOOST);
             ui.painter().text(
-                egui::pos2(seek.rect.center().x, seek.rect.top() - 3.0),
+                egui::pos2(bar.center().x, bar.top() - 3.0),
                 egui::Align2::CENTER_BOTTOM,
                 crate::i18n::percent(vol * 100.0),
                 egui::FontId::proportional(10.5),
@@ -545,7 +584,7 @@ impl SterMusic {
             );
         }
         // Molette sur le volume (barre ou icône) : voir `volume_wheel`.
-        self.volume_zone = Some(seek.rect.union(resp.rect).expand(4.0));
+        self.volume_zone = Some(bar.union(resp.rect).expand(4.0));
         if resp.clicked() {
             self.actions.push(Action::ToggleMute);
         }

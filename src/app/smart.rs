@@ -34,9 +34,15 @@ pub enum Field {
     Favorite,
     /// Note, de 0 (aucune) à 5 étoiles.
     Rating,
+    /// Fois où le morceau a été passé (avant de compter comme une écoute).
+    Skips,
+    /// Part des lancements où il a été passé, en %.
+    SkipRate,
+    /// Engagement (voir `taste::engagement`), en % : la part du morceau vraiment écoutée.
+    Engagement,
 }
 
-pub const FIELDS: [Field; 12] = [
+pub const FIELDS: [Field; 15] = [
     Field::Title,
     Field::Artist,
     Field::Album,
@@ -49,6 +55,9 @@ pub const FIELDS: [Field; 12] = [
     Field::Duration,
     Field::Favorite,
     Field::Rating,
+    Field::Skips,
+    Field::SkipRate,
+    Field::Engagement,
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -73,6 +82,9 @@ impl Field {
             Field::Duration => n_("Durée (minutes)"),
             Field::Favorite => n_("Favori"),
             Field::Rating => n_("Note (étoiles)"),
+            Field::Skips => n_("Fois passé"),
+            Field::SkipRate => n_("Passé (% des lancements)"),
+            Field::Engagement => n_("Part écoutée (%)"),
         })
     }
 
@@ -136,9 +148,15 @@ pub enum Sort {
     OldestPlayed,
     RecentlyAdded,
     Title,
+    /// Les plus souvent passés (en part des lancements, puis en nombre).
+    MostSkipped,
+    /// Les plus écoutés jusqu'au bout (engagement).
+    MostEngaged,
+    /// Selon mes goûts : le poids de l'aléatoire « selon mes goûts », du plus lourd au plus léger.
+    Taste,
 }
 
-pub const SORTS: [Sort; 7] = [
+pub const SORTS: [Sort; 10] = [
     Sort::Library,
     Sort::MostPlayed,
     Sort::LeastPlayed,
@@ -146,6 +164,9 @@ pub const SORTS: [Sort; 7] = [
     Sort::OldestPlayed,
     Sort::RecentlyAdded,
     Sort::Title,
+    Sort::MostSkipped,
+    Sort::MostEngaged,
+    Sort::Taste,
 ];
 
 impl Sort {
@@ -158,6 +179,9 @@ impl Sort {
             Sort::OldestPlayed => n_("Pas écoutés depuis longtemps d'abord"),
             Sort::RecentlyAdded => n_("Ajoutés récemment d'abord"),
             Sort::Title => n_("Titre"),
+            Sort::MostSkipped => n_("Les plus passés d'abord"),
+            Sort::MostEngaged => n_("Les plus écoutés en entier d'abord"),
+            Sort::Taste => n_("Mes préférés d'abord"),
         })
     }
 }
@@ -176,10 +200,12 @@ pub enum SmartIcon {
     Moon,
     Sun,
     Coffee,
+    Skip,
+    Heart,
 }
 
 impl SmartIcon {
-    pub const ALL: [SmartIcon; 10] = [
+    pub const ALL: [SmartIcon; 12] = [
         SmartIcon::Sparkles,
         SmartIcon::Flame,
         SmartIcon::EyeOff,
@@ -190,6 +216,8 @@ impl SmartIcon {
         SmartIcon::Moon,
         SmartIcon::Sun,
         SmartIcon::Coffee,
+        SmartIcon::Skip,
+        SmartIcon::Heart,
     ];
 
     pub fn icon(self) -> Icon {
@@ -204,6 +232,8 @@ impl SmartIcon {
             SmartIcon::Moon => Icon::Moon,
             SmartIcon::Sun => Icon::Sun,
             SmartIcon::Coffee => Icon::Coffee,
+            SmartIcon::Skip => Icon::SkipForward,
+            SmartIcon::Heart => Icon::Heart,
         }
     }
 }
@@ -225,8 +255,9 @@ pub struct SmartPlaylist {
 }
 
 impl SmartPlaylist {
-    /// Les quatre playlists proposées d'office, dans la langue de l'interface au moment de leur
-    /// création.
+    /// Les playlists proposées d'office, dans la langue de l'interface au moment de leur
+    /// création. Les deux dernières (sauts et engagement) sont arrivées après les quatre
+    /// premières : voir [`PRESETS_V2`].
     pub fn presets() -> Vec<SmartPlaylist> {
         let rule = |field, op, value: &str| Rule {
             field,
@@ -273,6 +304,24 @@ impl SmartPlaylist {
                 sort: Sort::RecentlyAdded,
                 limit: 0,
             },
+            SmartPlaylist {
+                pinned: false,
+                name: tr("Souvent passés").to_owned(),
+                icon: SmartIcon::Skip,
+                rules: vec![rule(Field::Skips, Op::More, "1"), rule(Field::SkipRate, Op::More, "50")],
+                match_all: true,
+                sort: Sort::MostSkipped,
+                limit: 0,
+            },
+            SmartPlaylist {
+                pinned: false,
+                name: tr("Écoutés jusqu'au bout").to_owned(),
+                icon: SmartIcon::Heart,
+                rules: vec![rule(Field::Plays, Op::More, "2"), rule(Field::Engagement, Op::More, "85")],
+                match_all: true,
+                sort: Sort::MostEngaged,
+                limit: 50,
+            },
         ]
     }
 
@@ -306,6 +355,12 @@ impl SmartPlaylist {
         }
     }
 }
+
+/// Nombre de playlists d'office avant l'arrivée de celles sur les sauts et l'engagement : celles
+/// d'après sont ajoutées une fois aux réglages existants (`Settings::smart_presets`).
+pub const PRESETS_V1: usize = 4;
+/// Version des playlists d'office (voir `Settings::smart_presets`).
+pub const PRESETS_V2: u32 = 2;
 
 /// Ce dont l'évaluation a besoin, en plus de la bibliothèque.
 pub struct Facts<'a> {
@@ -362,6 +417,16 @@ fn matches(rule: &Rule, lib: &Library, i: usize, f: &Facts) -> bool {
                 Field::LastPlayed => days(stat.last),
                 Field::Added => days(t.mtime),
                 Field::Rating => f.ratings.get(&t.path).copied().unwrap_or(0) as f64,
+                Field::Skips => stat.skips as f64,
+                // Jamais lancé : ni passé ni écouté, aucune comparaison n'est vraie (sauf « n'est pas »).
+                Field::SkipRate => match stat.count + stat.skips {
+                    0 => return rule.op == Op::IsNot,
+                    n => stat.skips as f64 * 100.0 / n as f64,
+                },
+                Field::Engagement => match super::taste::engagement(&stat, t.duration_ms as f64 / 1000.0) {
+                    Some(e) => e as f64 * 100.0,
+                    None => return rule.op == Op::IsNot,
+                },
                 _ => t.duration_ms as f64 / 60_000.0,
             };
             let Some(v) = number(&rule.value) else {
@@ -404,6 +469,26 @@ pub fn evaluate(p: &SmartPlaylist, lib: &Library, f: &Facts) -> Vec<usize> {
         Sort::OldestPlayed => out.sort_by_key(|&i| stat(i).last),
         Sort::RecentlyAdded => out.sort_by_key(|&i| std::cmp::Reverse(lib.tracks[i].mtime)),
         Sort::Title => out.sort_by_cached_key(|&i| fold(&lib.tracks[i].title)),
+        Sort::MostSkipped => out.sort_by_cached_key(|&i| {
+            let s = stat(i);
+            let rate = (s.skips as u64 * 10_000).checked_div((s.count + s.skips) as u64).unwrap_or(0);
+            (std::cmp::Reverse(rate), std::cmp::Reverse(s.skips))
+        }),
+        Sort::MostEngaged => out.sort_by_cached_key(|&i| {
+            let s = stat(i);
+            let e = super::taste::engagement(&s, lib.tracks[i].duration_ms as f64 / 1000.0).unwrap_or(-1.0);
+            (std::cmp::Reverse((e * 10_000.0) as i64), std::cmp::Reverse(s.count))
+        }),
+        Sort::Taste => out.sort_by_cached_key(|&i| {
+            let t = &lib.tracks[i];
+            let w = super::taste::weight(
+                f.plays.get(&t.path),
+                t.duration_ms as f64 / 1000.0,
+                f.ratings.get(&t.path).copied().unwrap_or(0),
+                f.favorites.contains(&t.path),
+            );
+            std::cmp::Reverse((w * 10_000.0) as i64)
+        }),
     }
     if p.limit > 0 {
         out.truncate(p.limit);
@@ -755,5 +840,37 @@ mod tests {
         assert_eq!(rediscover, ["Trois", "Un"]);
         p.limit = 1;
         assert_eq!(titles(&p).len(), 1);
+    }
+
+    #[test]
+    fn skips_and_engagement() {
+        let lib = Library::new(vec![
+            track("/a", "Passé", "", None, 0),
+            track("/b", "Aimé", "", None, 0),
+            track("/c", "Jamais", "", None, 0),
+        ]);
+        let mut plays = HashMap::new();
+        let stat = |count, seconds, skips| PlayStat { count, last: 1, seconds, skips };
+        // Passé 4 fois sur 5 ; l'autre écouté 4 fois en entier (200 s chacune).
+        plays.insert(PathBuf::from("/a"), stat(1, 200.0, 4));
+        plays.insert(PathBuf::from("/b"), stat(4, 800.0, 0));
+        let (favorites, ratings) = (HashSet::new(), HashMap::new());
+        let f = Facts { plays: &plays, favorites: &favorites, ratings: &ratings, now: 86_400 };
+        let titles = |p: &SmartPlaylist| -> Vec<String> {
+            evaluate(p, &lib, &f).iter().map(|&i| lib.tracks[i].title.clone()).collect()
+        };
+        let presets = SmartPlaylist::presets();
+        assert_eq!(presets.len(), PRESETS_V1 + 2);
+        assert_eq!(titles(&presets[PRESETS_V1]), ["Passé"]);
+        assert_eq!(titles(&presets[PRESETS_V1 + 1]), ["Aimé"]);
+        // Un morceau jamais lancé n'a ni part passée ni engagement.
+        let mut p = presets[PRESETS_V1].clone();
+        p.rules = vec![Rule { field: Field::SkipRate, op: Op::Less, value: "10".into() }];
+        assert_eq!(titles(&p), ["Aimé"]);
+        p.rules = vec![];
+        p.sort = Sort::Taste;
+        assert_eq!(titles(&p), ["Aimé", "Jamais", "Passé"]);
+        p.sort = Sort::MostEngaged;
+        assert_eq!(titles(&p), ["Aimé", "Passé", "Jamais"]);
     }
 }

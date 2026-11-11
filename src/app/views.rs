@@ -1917,25 +1917,9 @@ impl SterMusic {
             widgets::cover(&p, r, cover_fade.current(), 14, &t.album);
         }
 
-        // Double-clic sur la pochette : plein écran. Un bouton discret le dit, en haut à gauche.
+        // Double-clic sur la pochette : plein écran (le bouton est dans la barre de lecture).
         let cover_resp = ui.interact(cover, ui.id().with("np_cover_click"), Sense::click());
         if cover_resp.double_clicked() {
-            self.actions.push(Action::ToggleFullscreen);
-        }
-        let fs_tip = if self.fullscreen {
-            tr("Quitter le plein écran (Échap)")
-        } else {
-            tr("Plein écran (F11, ou double-clic sur la pochette)")
-        };
-        let fs_rect = Rect::from_min_size(pos2(rect.left() + 14.0, rect.top() + 10.0), vec2(34.0, 34.0));
-        // En plein écran, il s'efface avec les commandes quand la souris ne bouge plus.
-        if (!immersive || self.fs_controls)
-            && ui
-            .put(fs_rect, |ui: &mut egui::Ui| {
-                widgets::icon_button(ui, if self.fullscreen { Icon::Minimize } else { Icon::Maximize }, fs_tip, 34.0, 16.0)
-            })
-            .clicked()
-        {
             self.actions.push(Action::ToggleFullscreen);
         }
 
@@ -2391,6 +2375,14 @@ impl SterMusic {
                         ui.label(RichText::new(tr("Aussi entre deux morceaux d'un même album")).color(theme::TEXT_2))
                             .on_hover_text(tr("Désactivé, les morceaux d'un album s'enchaînent sans blanc, comme sur le disque (albums live, mixés, concept)."));
                     });
+                }
+                separator(ui);
+                let mut taste = self.settings.shuffle_taste;
+                card_row(ui, Icon::HeartFilled, tr("Aléatoire selon mes goûts"), tr("En lecture aléatoire, les morceaux que tu écoutes jusqu'au bout, que tu notes bien ou mets en favori viennent plus souvent ; ceux que tu passes, moins souvent. Aussi par clic droit sur le bouton aléatoire."), |_, ui| {
+                    widgets::switch(ui, &mut taste);
+                }, self);
+                if taste != self.settings.shuffle_taste {
+                    self.actions.push(Action::SetShuffle { on: self.settings.shuffle, taste });
                 }
                 separator(ui);
                 self.visualizer_settings(ui);
