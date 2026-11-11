@@ -1,0 +1,23 @@
+SterMusic — lecteur de musique pour Linux
+=========================================
+
+Installation (sans sudo, pour toi seul) :
+
+    ./install.sh
+
+SterMusic apparaît ensuite dans le menu des applications.
+Pour le retirer : ./uninstall.sh
+
+Il faut une distribution assez récente : glibc 2.35 ou plus (Ubuntu 22.04, Debian 12,
+Linux Mint 21, Fedora 36 et suivantes), ainsi que la bibliothèque son ALSA (libasound2),
+présente presque partout.
+
+Conseillé : ffmpeg (Opus, WMA, APE, WavPack, DSD, conversion, extraction de CD).
+
+Sous Kubuntu, Ubuntu ou Debian, le paquet .deb s'installe plus simplement :
+double-clic dessus, ou « sudo apt install ./stermusic_…_amd64.deb ».
+
+---
+
+SterMusic — music player for Linux. Install: ./install.sh (no sudo). Remove: ./uninstall.sh.
+Needs glibc 2.35+ and ALSA (libasound2); ffmpeg recommended.

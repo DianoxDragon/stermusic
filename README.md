@@ -69,14 +69,32 @@ vraie intégration au bureau Linux.
 
 ## Installation
 
-### 1. Prérequis (une seule fois)
+### Installateur tout prêt (à partager)
+
+```bash
+./packaging/make-installer.sh
+```
+
+fabrique dans `dist/` :
+
+- `stermusic_<version>_amd64.deb` pour Kubuntu, Ubuntu, Debian, Mint… : double-clic (Discover),
+  ou `sudo apt install ./stermusic_<version>_amd64.deb` ;
+- `stermusic-<version>-x86_64.tar.gz` pour les autres distributions : décompresser, puis
+  `./install.sh` (sans sudo ; `./uninstall.sh` pour retirer).
+
+Il faut glibc 2.35 ou plus (Ubuntu 22.04, Debian 12, Mint 21, Fedora 36 et suivantes) ; ffmpeg
+est conseillé. Le champ « Maintainer » du paquet se règle par `MAINTAINER="Nom <adresse>"`.
+
+### Compiler soi-même
+
+#### 1. Prérequis (une seule fois)
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
 sudo apt install libasound2-dev                                 # en-têtes ALSA
 ```
 
-### 2. Compiler et installer
+#### 2. Compiler et installer
 
 ```bash
 ./install.sh

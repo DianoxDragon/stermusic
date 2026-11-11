@@ -2,6 +2,7 @@ mod anim;
 mod app;
 mod backdrop;
 mod cast;
+mod compat;
 mod convert;
 mod covers;
 mod dnd;
