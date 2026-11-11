@@ -875,12 +875,15 @@ impl SterMusic {
                 let (c1, c2) = theme::seeded_colors(&self.settings.smart_playlists[i].name);
                 ui.painter()
                     .rect_filled(tile, CornerRadius::same(radius), theme::mix(c1, theme::accent(), 0.25));
+                // Lueur vers le haut à droite, gardée à l'intérieur : elle s'éteint avant les
+                // bords (centrée sur le coin, elle en remplissait l'arrondi).
+                let w = tile.width();
                 widgets::soft_glow(
                     ui.painter(),
                     tile,
-                    tile.right_top(),
-                    tile.width(),
-                    theme::alpha(c2, 0x70),
+                    tile.center() + vec2(w * 0.15, -w * 0.15),
+                    w * 0.36,
+                    theme::alpha(c2, 0x80),
                 );
                 icons::paint_centered(ui.painter(), icon, tile.center(), tile.width() * 0.46, Color32::WHITE);
             }
