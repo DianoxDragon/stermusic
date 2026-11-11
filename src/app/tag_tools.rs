@@ -578,13 +578,14 @@ impl SterMusic {
                 player.renamed(&old, &new);
             }
             history_changed |= crate::history::rename(&mut self.listens, &old, &new);
+            history_changed |= crate::history::rename(&mut self.skips, &old, &new);
             renamed.push(old);
         }
         if in_library {
             library::save_cache(&self.lib.tracks);
         }
         if history_changed {
-            crate::history::save(&self.listens);
+            crate::history::save(&self.listens, &self.skips);
         }
         self.covers.forget(&renamed);
         self.tag_editor.resort();

@@ -1,8 +1,10 @@
 //! Historique d'écoute : chaque morceau écouté au moins 30 secondes (ou la moitié s'il est plus
 //! court) est noté avec sa date et le temps vraiment écouté, dans
 //! `~/.local/share/stermusic/history.tsv` (une ligne par écoute : « horodatage<TAB>chemin<TAB>
-//! secondes » ; les premières versions n'avaient pas la dernière colonne). Sert aux statistiques par période et au récap de l'année ;
-//! le compteur d'écoutes de chaque morceau, lui, existe depuis plus longtemps (réglages).
+//! secondes » ; les premières versions n'avaient pas la dernière colonne). Un morceau passé avant
+//! d'avoir compté y est noté aussi, avec une quatrième colonne « s » (sauté). Sert aux
+//! statistiques par période et au récap de l'année ; le compteur d'écoutes de chaque morceau,
+//! lui, existe depuis plus longtemps (réglages).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,33 +17,36 @@ pub struct Listen {
     pub path: PathBuf,
     /// Secondes réellement écoutées (0 : inconnu, ancienne ligne).
     pub seconds: u32,
+    /// Morceau passé avant d'avoir compté comme une écoute.
+    pub skipped: bool,
 }
 
 fn file() -> PathBuf {
     crate::library::data_dir().join("history.tsv")
 }
 
-/// Relit l'historique (les lignes illisibles sont ignorées).
-pub fn load() -> Vec<Listen> {
+/// Relit l'historique (les lignes illisibles sont ignorées) : les écoutes, puis les morceaux sautés.
+pub fn load() -> (Vec<Listen>, Vec<Listen>) {
     let Ok(text) = std::fs::read_to_string(file()) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    parse(&text)
+    parse(&text).into_iter().partition(|l| !l.skipped)
 }
 
 fn parse(text: &str) -> Vec<Listen> {
     text.lines()
         .filter_map(|l| {
-            let (time, rest) = l.split_once('\t')?;
-            // La durée est à la fin ; un chemin ne contient jamais de tabulation (voir `append`).
-            let (path, seconds) = match rest.rsplit_once('\t') {
-                Some((p, s)) => (p, s.trim().parse().unwrap_or(0)),
-                None => (rest, 0),
-            };
+            // Un chemin ne contient jamais de tabulation (voir `append`).
+            let mut parts = l.split('\t');
+            let time = parts.next()?;
+            let path = parts.next()?;
+            let seconds = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+            let skipped = parts.next().is_some_and(|k| k.trim() == "s");
             Some(Listen {
                 time: time.trim().parse().ok()?,
                 path: PathBuf::from(path),
                 seconds,
+                skipped,
             })
         })
         .collect()
@@ -56,20 +61,24 @@ pub fn append(listen: &Listen) {
         return;
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file()) {
-        let _ = writeln!(f, "{}\t{}\t{}", listen.time, path, listen.seconds);
+        let _ = writeln!(f, "{}", line(listen));
     }
 }
 
-/// Réécrit tout l'historique (après le renommage de fichiers).
-pub fn save(all: &[Listen]) {
+fn line(l: &Listen) -> String {
+    let kind = if l.skipped { "\ts" } else { "" };
+    format!("{}\t{}\t{}{kind}", l.time, l.path.to_string_lossy(), l.seconds)
+}
+
+/// Réécrit tout l'historique (après le renommage de fichiers) : écoutes et morceaux sautés, dans
+/// l'ordre du temps.
+pub fn save(listens: &[Listen], skips: &[Listen]) {
+    let mut all: Vec<&Listen> = listens.iter().chain(skips).collect();
+    all.sort_by_key(|l| l.time);
     let mut text = String::new();
     for l in all {
-        text.push_str(&format!(
-            "{}\t{}\t{}\n",
-            l.time,
-            l.path.to_string_lossy(),
-            l.seconds
-        ));
+        text.push_str(&line(l));
+        text.push('\n');
     }
     let _ = std::fs::create_dir_all(crate::library::data_dir());
     let tmp = file().with_extension("tsv.tmp");
@@ -152,9 +161,12 @@ mod tests {
 
     #[test]
     fn lines() {
-        let text = "1762790400\t/m/a.mp3\nabc\t/m/b.mp3\n1762790500\t/m/c d.flac\t187\n\n";
+        let text = "1762790400\t/m/a.mp3\nabc\t/m/b.mp3\n1762790500\t/m/c d.flac\t187\n\n1762790600\t/m/d.mp3\t12\ts\n";
         let all = parse(text);
-        assert_eq!(all.len(), 2);
+        assert_eq!(all.len(), 3);
+        assert!(all[2].skipped && !all[1].skipped && all[2].seconds == 12);
+        assert_eq!(line(&all[2]), "1762790600\t/m/d.mp3\t12\ts");
+        assert_eq!(line(&all[1]), "1762790500\t/m/c d.flac\t187");
         assert_eq!(
             (all[0].path.clone(), all[0].seconds),
             (PathBuf::from("/m/a.mp3"), 0)

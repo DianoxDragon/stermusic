@@ -351,6 +351,9 @@ impl SterMusic {
                     }
                 });
                 ui.add_space(22.0);
+                // La manière d'écouter : complètes, partielles, passés ; activité, heures, jours.
+                self.stats_habits(ui, period, w);
+                ui.add_space(18.0);
                 let col_w = (w - 24.0) / 2.0;
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 24.0;
@@ -379,6 +382,9 @@ impl SterMusic {
                         super::lists::album_card(ui, &mut c, albums[k], w)
                     });
                 }
+                // Les goûts ne se lisent que sur l'ensemble des écoutes.
+                ui.add_space(18.0);
+                self.stats_taste(ui, w);
                 if period != Period::All {
                     if let Some(first) = self.listens.iter().map(|l| history::local_day(l.time)).min() {
                         ui.add_space(12.0);
@@ -912,8 +918,9 @@ impl SterMusic {
     pub(super) fn clear_stats(&mut self) {
         self.settings.plays.clear();
         self.listens.clear();
+        self.skips.clear();
         self.listening = None;
-        crate::history::save(&[]);
+        crate::history::save(&[], &[]);
         self.smart_cache.borrow_mut().clear();
         self.toast(tr("Statistiques effacées"));
     }
@@ -959,6 +966,7 @@ mod tests {
             time: day(d),
             path: PathBuf::from(p),
             seconds: 0,
+            skipped: false,
         };
         let all = vec![
             l(20_300, "/a"),

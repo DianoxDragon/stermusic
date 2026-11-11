@@ -697,6 +697,7 @@ mod tests {
                 count: 5,
                 last: now - 200 * 86_400,
                 seconds: 0.0,
+                skips: 0,
             },
         );
         plays.insert(
@@ -705,6 +706,7 @@ mod tests {
                 count: 2,
                 last: now - 86_400,
                 seconds: 0.0,
+                skips: 0,
             },
         );
         let favorites: HashSet<PathBuf> = [PathBuf::from("/a"), PathBuf::from("/c")].into();

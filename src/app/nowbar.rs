@@ -433,20 +433,26 @@ impl SterMusic {
 
     /// Aléatoire, précédent, lecture, suivant, répétition.
     fn controls(&mut self, ui: &mut egui::Ui, playing: bool, size: f32, play_size: f32) {
-        if widgets::toggle_icon(
+        let shuffle = widgets::toggle_icon(
             ui,
             self.settings.shuffle,
             Icon::Shuffle,
-            if self.settings.shuffle {
-                tr("Aléatoire : activé")
+            if self.settings.shuffle && self.settings.shuffle_taste {
+                tr("Aléatoire selon mes goûts : mes morceaux préférés ont plus de chances de venir d'abord (clic : désactiver)")
+            } else if self.settings.shuffle {
+                tr("Aléatoire : activé (clic : selon mes goûts)")
             } else {
                 tr("Aléatoire : désactivé")
             },
             size,
             17.0,
-        )
-        .clicked()
-        {
+        );
+        // Selon mes goûts : un petit cœur sur l'icône.
+        if self.settings.shuffle && self.settings.shuffle_taste {
+            let c = pos2(shuffle.rect.right() - 9.0, shuffle.rect.top() + 11.0);
+            icons::paint_centered(ui.painter(), Icon::HeartFilled, c, 9.0, theme::accent_light());
+        }
+        if shuffle.clicked() {
             self.actions.push(Action::ToggleShuffle);
         }
         if widgets::icon_button(ui, Icon::SkipBack, tr("Précédent (Ctrl+←)"), size, 19.0).clicked() {

@@ -22,8 +22,10 @@ mod rg_tool;
 mod settings_extra;
 mod smart;
 mod stats;
+mod stats_extra;
 mod tag_editor;
 mod tag_tools;
+mod taste;
 mod tools;
 mod views;
 mod viz_view;
@@ -149,6 +151,9 @@ pub struct PlayStat {
     /// Secondes réellement écoutées (depuis que SterMusic les mesure).
     #[serde(default)]
     pub seconds: f64,
+    /// Fois où le morceau a été passé avant d'avoir compté comme une écoute.
+    #[serde(default)]
+    pub skips: u32,
 }
 
 /// Écoute en cours : le morceau, ce qui en a été entendu, et si elle compte déjà.
@@ -174,6 +179,8 @@ pub struct Settings {
     pub volume: f32,
     pub muted: bool,
     pub shuffle: bool,
+    /// Aléatoire « selon mes goûts » : les morceaux préférés ont plus de chances de venir d'abord.
+    pub shuffle_taste: bool,
     pub repeat: Repeat,
     pub theme: String,
     /// Ancien réglage (avant les fonds au choix) : repris dans `backdrop`.
@@ -292,6 +299,7 @@ impl Default for Settings {
             volume: 0.8,
             muted: false,
             shuffle: false,
+            shuffle_taste: false,
             repeat: Repeat::Off,
             theme: "stercode".into(),
             mica: true,
@@ -623,6 +631,8 @@ pub struct SterMusic {
     lib_tools: lib_tools::LibTools,
     /// Historique d'écoute daté (statistiques, récap).
     listens: Vec<crate::history::Listen>,
+    /// Morceaux sautés (passés avant d'avoir compté), datés comme les écoutes.
+    skips: Vec<crate::history::Listen>,
     /// Morceau en cours d'écoute, et vrai une fois son écoute comptée (30 secondes).
     listening: Option<Listening>,
     smart_edit: Option<smart::Edit>,
@@ -895,6 +905,7 @@ impl SterMusic {
         };
 
         let page = settings.page;
+        let (listens, skips) = crate::history::load();
         let mut app = Self {
             player,
             lib: Library::new(library::load_cache()),
@@ -925,7 +936,8 @@ impl SterMusic {
             dnd: crate::dnd::Dnd::new(cc),
             external: Vec::new(),
             lib_tools: Default::default(),
-            listens: crate::history::load(),
+            listens,
+            skips,
             listening: None,
             smart_edit: None,
             smart_cache: Default::default(),
@@ -1314,7 +1326,7 @@ impl SterMusic {
         let track = &self.lib.tracks[idx];
         let path = track.path.clone();
         let song = scrobble_song(track);
-        self.finish_listen();
+        self.finish_listen_as(true);
         if let Some(song) = song {
             if self.settings.scrobble.any() {
                 self.scrobbler.now_playing(song);
@@ -1550,7 +1562,9 @@ impl SterMusic {
         let Some(pos) = self.queue_pos else { return };
         self.unshuffled = Some(self.queue.clone());
         let cur = self.queue.remove(pos);
-        fastrand::shuffle(&mut self.queue);
+        let mut rest = std::mem::take(&mut self.queue);
+        self.shuffle_tracks(&mut rest);
+        self.queue = rest;
         self.queue.insert(0, cur);
         self.queue_pos = Some(0);
     }
@@ -1641,7 +1655,9 @@ impl SterMusic {
             self.queue_pos = Some(pos + 1);
         } else if !auto || self.settings.repeat == Repeat::All {
             if self.settings.shuffle && self.queue.len() > 1 {
-                fastrand::shuffle(&mut self.queue);
+                let mut all = std::mem::take(&mut self.queue);
+                self.shuffle_tracks(&mut all);
+                self.queue = all;
             }
             self.queue_pos = Some(0);
         } else {
@@ -1843,8 +1859,30 @@ impl SterMusic {
 
     /// Fin de l'écoute en cours (autre morceau, arrêt, fermeture) : notée si elle a compté.
     fn finish_listen(&mut self) {
+        self.finish_listen_as(false);
+    }
+
+    /// Fin de l'écoute en cours. `moved_on` : on est passé à un autre morceau (et non arrêté,
+    /// fermé SterMusic ou parti sur une webradio). L'écoute est alors :
+    /// - **comptée** si elle avait atteint 30 secondes (ou la moitié du morceau) : son temps
+    ///   s'ajoute, et l'historique dira si elle était complète ou partielle ;
+    /// - **sautée** si l'on est passé à autre chose avant, après au moins deux secondes.
+    fn finish_listen_as(&mut self, moved_on: bool) {
         let Some(l) = self.listening.take() else { return };
+        let seconds = l.heard.round() as u32;
         if !l.counted {
+            if moved_on && l.heard >= 2.0 {
+                self.settings.plays.entry(l.path.clone()).or_default().skips += 1;
+                let skip = crate::history::Listen {
+                    time: l.started,
+                    path: l.path,
+                    seconds,
+                    skipped: true,
+                };
+                crate::history::append(&skip);
+                self.skips.push(skip);
+                self.smart_cache.borrow_mut().clear();
+            }
             return;
         }
         if let Some(stat) = self.settings.plays.get_mut(&l.path) {
@@ -1853,7 +1891,8 @@ impl SterMusic {
         let listen = crate::history::Listen {
             time: l.started,
             path: l.path,
-            seconds: l.heard.round() as u32,
+            seconds,
+            skipped: false,
         };
         crate::history::append(&listen);
         self.listens.push(listen);
@@ -2108,8 +2147,14 @@ impl SterMusic {
                     return;
                 }
                 self.settings.shuffle = true;
-                let start = fastrand::usize(..tracks.len());
-                self.play_list(tracks, start);
+                // Le premier morceau est tiré comme les suivants : au hasard, ou selon mes goûts.
+                let mut order: Vec<usize> = (0..tracks.len()).collect();
+                if self.settings.shuffle_taste {
+                    taste::weighted_shuffle(&mut order, |&k| self.taste_weight(tracks[k]));
+                } else {
+                    fastrand::shuffle(&mut order);
+                }
+                self.play_list(tracks, order[0]);
             }
             Action::PlayNext(tracks) => {
                 let n = tracks.len();
@@ -2366,12 +2411,21 @@ impl SterMusic {
                     .unwrap_or(0.0);
                 self.seek_to(pos + d);
             }
+            // Trois états : ordre de la file, aléatoire, aléatoire selon mes goûts.
             Action::ToggleShuffle => {
-                self.settings.shuffle = !self.settings.shuffle;
+                let s = &mut self.settings;
+                (s.shuffle, s.shuffle_taste) = match (s.shuffle, s.shuffle_taste) {
+                    (false, _) => (true, false),
+                    (true, false) => (true, true),
+                    (true, true) => (false, false),
+                };
+                // On repart de l'ordre d'origine, puis on remélange selon le nouveau mode.
+                self.unshuffle_queue();
                 if self.settings.shuffle {
                     self.shuffle_queue();
-                } else {
-                    self.unshuffle_queue();
+                }
+                if self.settings.shuffle_taste {
+                    self.toast(tr("Aléatoire selon mes goûts : tes morceaux préférés viendront plus souvent en premier"));
                 }
             }
             Action::CycleRepeat => {
