@@ -15,6 +15,26 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use eframe::egui::{self, pos2, Rect};
 
+/// Vrai pendant que KDE ferme la session (déconnexion, redémarrage, extinction) : le service
+/// `org.kde.Shutdown` n'existe que le temps de cette fermeture. SterMusic doit alors vraiment se
+/// fermer quand on le lui demande, au lieu de se cacher dans la zone de notification (sinon KDE
+/// attend la fenêtre, et le redémarrage reste bloqué).
+pub fn session_ending() -> bool {
+    let Ok(conn) = zbus::blocking::Connection::session() else {
+        return false;
+    };
+    conn.call_method(
+        Some("org.freedesktop.DBus"),
+        "/org/freedesktop/DBus",
+        Some("org.freedesktop.DBus"),
+        "NameHasOwner",
+        &("org.kde.Shutdown",),
+    )
+    .ok()
+    .and_then(|reply| reply.body().deserialize::<bool>().ok())
+    .unwrap_or(false)
+}
+
 /// Position de la fenêtre et de son écran, en coordonnées du bureau (pixels logiques).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
@@ -232,4 +252,19 @@ fn start(tx: Sender<Msg>, ctx: egui::Context) -> zbus::Result<zbus::blocking::Co
     }
     call(&conn, "start", &())?;
     Ok(conn)
+}
+
+#[cfg(test)]
+mod session_tests {
+    /// Sur un bus privé : `dbus-run-session -- cargo test session_ending -- --ignored`.
+    #[test]
+    #[ignore]
+    fn session_ending() {
+        assert!(!super::session_ending());
+        let _shutdown = zbus::blocking::connection::Builder::session()
+            .and_then(|b| b.name("org.kde.Shutdown"))
+            .and_then(|b| b.build())
+            .expect("nom pris sur le bus");
+        assert!(super::session_ending());
+    }
 }

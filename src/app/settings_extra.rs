@@ -244,8 +244,14 @@ impl SterMusic {
     /// Commandes venues de l'icône, et fermeture de la fenêtre interceptée.
     pub(super) fn poll_tray(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.viewport().close_requested()) && self.closes_to_tray() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.hide_window();
+            if crate::kwin::session_ending() {
+                // Déconnexion ou redémarrage : on se ferme pour de bon, sans retenir KDE.
+                self.quitting = true;
+                self.hidden = false;
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.hide_window();
+            }
         }
         let Some(tray) = &self.tray else { return };
         for c in tray.poll() {
