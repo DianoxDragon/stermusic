@@ -6,6 +6,16 @@ Un lecteur de musique pour Linux, écrit en Rust : l'allure du lecteur multiméd
 (barre latérale, pochettes, grande barre de lecture, Mica), la charte de SterCode, et une
 vraie intégration au bureau Linux.
 
+![Accueil](docs/screenshots/home.jpg)
+
+| En cours de lecture, avec un visualiseur | Globe des webradios |
+|---|---|
+| ![En cours de lecture](docs/screenshots/now-playing.jpg) | ![Globe des webradios](docs/screenshots/radio-globe.jpg) |
+
+![Grille des albums](docs/screenshots/library.jpg)
+
+<sub>Captures réalisées avec une bibliothèque de démonstration : albums fictifs, pochettes générées.</sub>
+
 ## Fonctionnalités
 
 **Bibliothèque**

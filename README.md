@@ -7,6 +7,16 @@ album art, large playback bar, Mica), the SterCode design language, and real Lin
 integration. The interface is available in English and French (it follows your desktop language,
 and can be changed in Settings → Language).
 
+![Home](docs/screenshots/home.jpg)
+
+| Now Playing, with a visualizer | Web radio globe |
+|---|---|
+| ![Now Playing](docs/screenshots/now-playing.jpg) | ![Web radio globe](docs/screenshots/radio-globe.jpg) |
+
+![Album grid](docs/screenshots/library.jpg)
+
+<sub>Screenshots made with a demo library of fictional albums and generated artwork.</sub>
+
 ## Features
 
 **Library**
