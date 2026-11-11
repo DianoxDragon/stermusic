@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
-# Installe SterMusic pour l'utilisateur courant, sans sudo : ~/.local/bin, icône, entrée dans le
-# menu des applications et, sous KDE, « Modifier les tags avec SterMusic » dans Dolphin.
+# Installs SterMusic for the current user, without sudo: ~/.local/bin, icon, application menu
+# entry and, on KDE, "Edit tags with SterMusic" in Dolphin.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# Messages in French on a French desktop, in English otherwise.
+case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+    fr*) fr=1 ;;
+    *) fr=0 ;;
+esac
+say() { if [ "$fr" = 1 ]; then echo "$1"; else echo "$2"; fi; }
 
 BIN="$HOME/.local/bin/stermusic"
 install -Dm755 stermusic "$BIN"
@@ -24,9 +31,11 @@ for tool in kbuildsycoca6 kbuildsycoca5; do
     fi
 done
 
-echo "SterMusic est installé : cherche-le dans le menu des applications, ou lance :"
+say "SterMusic est installé : cherche-le dans le menu des applications, ou lance :" \
+    "SterMusic is installed: find it in the application menu, or run:"
 echo "    $BIN"
 if ! command -v ffmpeg >/dev/null; then
     echo
-    echo "Conseil : installe ffmpeg pour lire l'Opus, le WMA, l'APE, le DSD… et pour convertir."
+    say "Conseil : installe ffmpeg pour lire l'Opus, le WMA, l'APE, le DSD… et pour convertir." \
+        "Tip: install ffmpeg to play Opus, WMA, APE, DSD… and to convert files."
 fi

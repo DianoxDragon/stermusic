@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Lang {
-    #[default]
     Fr,
+    #[default]
     En,
 }
 
@@ -30,14 +30,15 @@ impl Lang {
         }
     }
 
-    /// Langue du bureau (`LC_ALL`, `LC_MESSAGES`, `LANG`) : français si elle l'est, sinon anglais.
+    /// Langue du bureau (`LC_ALL`, `LC_MESSAGES`, `LANG`) : français si elle l'est, sinon
+    /// anglais (y compris sans langue réglée, « C » ou vide).
     pub fn from_env() -> Lang {
         let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
             .iter()
             .filter_map(|v| std::env::var(v).ok())
             .find(|v| !v.is_empty())
             .unwrap_or_default();
-        if locale.is_empty() || locale.starts_with("fr") || locale == "C" || locale.starts_with("C.") {
+        if locale.starts_with("fr") {
             Lang::Fr
         } else {
             Lang::En

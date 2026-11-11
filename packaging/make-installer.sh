@@ -36,7 +36,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE" "$ROOT/dist"
 
 # Licences des bibliothèques compilées dans le programme (à joindre au binaire).
-python3 packaging/third_party.py "$STAGE/LICENCES-TIERS.txt"
+python3 packaging/third_party.py "$STAGE/THIRD-PARTY-LICENSES.txt"
 
 # ---------- Paquet .deb ----------
 DEB="$STAGE/deb"
@@ -73,10 +73,10 @@ Copyright: Cole Bemis (Feather), Lucide Contributors
 License: ISC
 
 Comment: The Rust libraries compiled into the program, with their license texts, are listed in
- /usr/share/doc/stermusic/LICENCES-TIERS.txt.
+ /usr/share/doc/stermusic/THIRD-PARTY-LICENSES.txt.
 COPYRIGHT
 install -Dm644 CREDITS.md "$DEB/usr/share/doc/stermusic/CREDITS.md"
-install -Dm644 "$STAGE/LICENCES-TIERS.txt" "$DEB/usr/share/doc/stermusic/LICENCES-TIERS.txt"
+install -Dm644 "$STAGE/THIRD-PARTY-LICENSES.txt" "$DEB/usr/share/doc/stermusic/THIRD-PARTY-LICENSES.txt"
 SIZE_KB="$(du -sk "$DEB/usr" | cut -f1)"
 mkdir -p "$DEB/DEBIAN"
 cat > "$DEB/DEBIAN/control" <<CONTROL
@@ -112,10 +112,10 @@ install -Dm644 stermusic.desktop "$PORT/stermusic.desktop"
 install -Dm644 stermusic-tags.desktop "$PORT/stermusic-tags.desktop"
 install -Dm755 packaging/portable-install.sh "$PORT/install.sh"
 install -Dm755 packaging/portable-uninstall.sh "$PORT/uninstall.sh"
-install -Dm644 packaging/LISEZ-MOI.txt "$PORT/LISEZ-MOI.txt"
+install -Dm644 packaging/README.txt "$PORT/README.txt"
 install -Dm644 LICENSE "$PORT/LICENSE"
 install -Dm644 CREDITS.md "$PORT/CREDITS.md"
-install -Dm644 "$STAGE/LICENCES-TIERS.txt" "$PORT/LICENCES-TIERS.txt"
+install -Dm644 "$STAGE/THIRD-PARTY-LICENSES.txt" "$PORT/THIRD-PARTY-LICENSES.txt"
 TAR_FILE="$ROOT/dist/$NAME.tar.gz"
 tar -C "$STAGE" --owner=0 --group=0 -czf "$TAR_FILE" "$NAME"
 

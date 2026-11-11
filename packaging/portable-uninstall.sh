@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Retire SterMusic installé par install.sh. Tes réglages, playlists et statistiques restent dans
-# ~/.local/share/stermusic (supprime ce dossier toi-même pour tout effacer).
+# Removes SterMusic installed by install.sh. Settings, playlists and statistics stay in
+# ~/.local/share/stermusic (delete that folder yourself to erase everything).
 set -euo pipefail
+case "${LC_ALL:-${LC_MESSAGES:-${LANG:-}}}" in
+    fr*) fr=1 ;;
+    *) fr=0 ;;
+esac
 rm -f "$HOME/.local/bin/stermusic" \
       "$HOME/.local/share/icons/hicolor/256x256/apps/stermusic.png" \
       "$HOME/.local/share/applications/stermusic.desktop" \
@@ -13,4 +17,8 @@ for tool in kbuildsycoca6 kbuildsycoca5; do
         break
     fi
 done
-echo "SterMusic est désinstallé. Tes réglages sont gardés dans ~/.local/share/stermusic."
+if [ "$fr" = 1 ]; then
+    echo "SterMusic est désinstallé. Tes réglages sont gardés dans ~/.local/share/stermusic."
+else
+    echo "SterMusic is uninstalled. Your settings are kept in ~/.local/share/stermusic."
+fi

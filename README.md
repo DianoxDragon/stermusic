@@ -1,165 +1,187 @@
 # 🎵 SterMusic
 
-Un lecteur de musique pour Linux, écrit en Rust : l'allure du lecteur multimédia de Windows 11
-(barre latérale, pochettes, grande barre de lecture, Mica), la charte de SterCode, et une
-vraie intégration au bureau Linux.
+*English · [Français](README.fr.md)*
 
-## Fonctionnalités
+A music player for Linux, written in Rust: the look of the Windows 11 Media Player (sidebar,
+album art, large playback bar, Mica), the SterCode design language, and real Linux desktop
+integration. The interface is available in English and French (it follows your desktop language,
+and can be changed in Settings → Language).
 
-**Bibliothèque**
-- Plusieurs dossiers de musique, parcourus récursivement ; **cache** : les lancements suivants
-  sont instantanés, et seuls les fichiers modifiés sont relus
-- MP3, FLAC, OGG/Vorbis, WAV, AAC/M4A (Symphonia, en pur Rust)
-- Tags lus : titre, artiste, artiste de l'album, album, année, genre, n° de piste et de disque
-- **Pochettes** intégrées aux fichiers, ou `cover.jpg` / `folder.jpg` / `front.png`… du dossier
-- Vues **Morceaux** (tri par titre, artiste, album ou date d'ajout), **Albums** (grille de
-  pochettes) et **Artistes**, pages d'album et d'artiste
-- Recherche instantanée (artistes, albums, morceaux)
+## Features
 
-**Lecture**
-- File d'attente : « Lire ensuite », « Ajouter à la file », réorganisation par glisser-déposer,
-  « Enregistrer comme playlist »
-- Aléatoire réversible (couper l'aléatoire rend l'ordre d'origine) et répétition (file / morceau)
-- Page **En cours de lecture** : grande pochette sur fond flouté, « À suivre »
-- **50 visualiseurs** dessinés par la carte graphique (Aurore, Vinyle, Hologramme, Rétro,
-  Éclipse, Vitrail, Lissajous…), choisis d'après leurs aperçus animés, ou tirés au hasard en fondu
-  enchaîné (mode automatique)
-- **Mini lecteur** toujours au premier plan (Ctrl+M)
-- Reprise au lancement : file d'attente et position restaurées (en pause)
+**Library**
+- Several music folders, scanned recursively; a **cache** makes later launches instant, and only
+  changed files are read again
+- MP3, FLAC, OGG/Vorbis, WAV, AAC/M4A (Symphonia, pure Rust)
+- Tags read: title, artist, album artist, album, year, genre, track and disc numbers
+- **Album art** embedded in the files, or `cover.jpg` / `folder.jpg` / `front.png`… in the folder
+- **Tracks** (sortable by any column), **Albums** (cover grid), **Artists**, **Folders** and
+  **Browse** (genre, year, composer) views, album and artist pages
+- Instant search (artists, albums, tracks)
+
+**Playback**
+- Queue: "Play next", "Add to queue", drag-and-drop reordering, "Save as playlist"
+- Reversible shuffle (turning it off restores the original order), "by my taste" ordering,
+  repeat (queue / track)
+- Gapless playback, crossfade, ReplayGain, bit-perfect output, volume up to 150 %
+- **Now Playing** page: large album art on a blurred background, synced lyrics, "Up next",
+  true full screen (F11)
+- **50 visualizers** rendered on the GPU (Aurora, Vinyl, Hologram, Retro, Eclipse, Stained
+  glass, Lissajous…), picked from animated previews, or shuffled with crossfades (automatic mode),
+  each with its own settings
+- **Mini player**, always on top (Ctrl+M)
+- Resume on launch: queue and position restored (paused)
+- Sleep timer with fade-out, audio output selection
 
 **Playlists**
-- Favoris (le cœur), playlists personnelles avec mosaïque de pochettes
-- Import / export **M3U**
+- Favorites (the heart), personal playlists with a cover mosaic, smart playlists built from rules,
+  up to six playlists pinned in the sidebar
+- **M3U** import / export
 
-**Webradios**
-- Annuaire [radio-browser.info](https://www.radio-browser.info) : recherche par nom, genre et
-  pays, « Mes stations », ajout d'une station par son adresse (.pls, .m3u)
-- **Globe** : les stations géolocalisées du monde entier sur une Terre en 3D (image satellite
-  de la NASA, domaine public, plus détaillée quand on zoome), rangées par ville ; on la fait
-  tourner et zoomer, un clic sur une ville liste ses stations
-- Titre diffusé en direct (métadonnées ICY), reconnexion automatique
+**Web radio**
+- [radio-browser.info](https://www.radio-browser.info) directory: search by name, genre and
+  country, "My stations", add a station by its address (.pls, .m3u)
+- **Globe**: geolocated stations from all over the world on a 3D Earth (NASA satellite imagery,
+  public domain, more detailed as you zoom in), grouped by city; spin and zoom it, click a city
+  to list its stations
+- Live song title (ICY metadata), automatic reconnection
 
-**Au-delà des fichiers**
-- **Formats** : en plus de Symphonia, ffmpeg lit l'Opus, le WMA, l'APE, le WavPack, le DSD, le
-  Musepack… ; les **feuilles CUE** découpent un album en un seul fichier en vrais morceaux
-- **Serveurs de musique** : Navidrome / Subsonic et Jellyfin, mélangés à la bibliothèque, lus
-  en flux
-- **Podcasts** : recherche (annuaire d'Apple) ou flux RSS, reprise là où on s'était arrêté,
-  téléchargement pour l'écoute hors ligne
-- **Diffusion** vers un Chromecast ou un appareil DLNA / UPnP (TV, enceinte, ampli) ; ce que
-  l'appareil ne lit pas est converti à la volée
-- **Notes** de 1 à 5 étoiles (discrètes : au survol), Ctrl+1 à Ctrl+5 pour le morceau en cours
+**Beyond local files**
+- **Formats**: besides Symphonia, ffmpeg plays Opus, WMA, APE, WavPack, DSD, Musepack…;
+  **CUE sheets** split a single-file album into real tracks
+- **Music servers**: Navidrome / Subsonic and Jellyfin, mixed into the library, streamed
+- **Podcasts**: search (Apple directory) or RSS feeds, resume where you left off, downloads for
+  offline listening
+- **Casting** to a Chromecast or a DLNA / UPnP device (TV, speaker, amplifier); what the device
+  cannot play is converted on the fly
+- **Ratings** from 1 to 5 stars (discreet: shown on hover), stored in the files; Ctrl+1 to
+  Ctrl+5 for the current track
+- **Statistics**: listening history, complete / partial / skipped plays, yearly recap;
+  scrobbling to ListenBrainz and Last.fm
 
-**Outils** (page à part dans la barre latérale)
-- Éditeur de tags, pochettes manquantes, ReplayGain, doublons
-- **Convertir** (MP3, Opus, AAC, Vorbis, FLAC), **extraire un CD** (titres trouvés sur
-  MusicBrainz), **synchroniser** des playlists vers une clé, une carte ou un téléphone (MTP,
-  via KDE)
+**Tools** (their own page in the sidebar)
+- Tag editor (MusicBrainz import, search and replace, rename files from tags), missing album
+  art, ReplayGain analysis, duplicates
+- **Convert** (MP3, Opus, AAC, Vorbis, FLAC), **rip a CD** (titles from MusicBrainz),
+  **sync** playlists to a USB stick, a memory card or a phone (MTP, through KDE)
 
-**Bureau Linux**
-- **MPRIS** : widget lecteur de KDE Plasma / GNOME, touches multimédia, écran de verrouillage
-- **Style Breeze (Kubuntu)**, par défaut sous KDE : couleurs et accent de KDE (`kdeglobals`),
-  icônes Breeze du système, police Noto Sans, boutons de fenêtre ronds et titre centré
-- Fond au choix : **Mica** simulé (fond d'écran de KDE Plasma ou GNOME, flouté, teinté, avec un
-  grain discret ; intensité réglable), **transparent** (flouté par KWin : bouton pour ajouter
-  SterMusic à l'effet Better Blur) ou uni
-- **Coins arrondis** (droits quand la fenêtre est agrandie)
-- Polices de secours pour le japonais, le chinois et le coréen (Noto Sans CJK)
-- Dossiers XDG, lanceur `.desktop`, seize thèmes de SterCode en plus de celui de KDE
+**Linux desktop**
+- **MPRIS**: KDE Plasma / GNOME media widget, media keys, lock screen
+- **Breeze style (Kubuntu)**: KDE colors and accent (`kdeglobals`), system Breeze icons, Noto
+  Sans font, round window buttons and centered title
+- Background of your choice: simulated **Mica** (your KDE Plasma or GNOME wallpaper, blurred,
+  tinted, with subtle grain; adjustable strength), **transparent** (blurred by KWin) or solid;
+  optional theme that adapts to the current album art
+- Tray icon, desktop notifications, drag and drop of files onto the window (Wayland included),
+  "Edit tags with SterMusic" in Dolphin's context menu
+- **Rounded corners** (square when the window is maximized)
+- Fallback fonts for Japanese, Chinese and Korean (Noto Sans CJK)
 
 ## Installation
 
-### Installateur tout prêt (à partager)
+### Ready-made installers
+
+Download them from the [Releases](../../releases) page:
+
+- `stermusic_<version>_amd64.deb` for Kubuntu, Ubuntu, Debian, Linux Mint…: double-click it
+  (Discover / Software), or run `sudo apt install ./stermusic_<version>_amd64.deb`;
+- `stermusic-<version>-x86_64.tar.gz` for other distributions: extract it, then run
+  `./install.sh` (no sudo needed; `./uninstall.sh` removes it).
+
+Requirements: glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Linux Mint 21, Fedora 36 and later)
+and ALSA (`libasound2`). **ffmpeg** is recommended (Opus, WMA, APE, WavPack, DSD, conversion,
+CD ripping).
+
+To build these installers yourself:
 
 ```bash
 ./packaging/make-installer.sh
 ```
 
-fabrique dans `dist/` :
+They are written to `dist/`. Set the package maintainer with `MAINTAINER="Name <address>"` and
+the repository address with `HOMEPAGE="https://…"`.
 
-- `stermusic_<version>_amd64.deb` pour Kubuntu, Ubuntu, Debian, Mint… : double-clic (Discover),
-  ou `sudo apt install ./stermusic_<version>_amd64.deb` ;
-- `stermusic-<version>-x86_64.tar.gz` pour les autres distributions : décompresser, puis
-  `./install.sh` (sans sudo ; `./uninstall.sh` pour retirer).
+### Build from source
 
-Il faut glibc 2.35 ou plus (Ubuntu 22.04, Debian 12, Mint 21, Fedora 36 et suivantes) ; ffmpeg
-est conseillé. Le champ « Maintainer » du paquet se règle par `MAINTAINER="Nom <adresse>"`.
-
-### Compiler soi-même
-
-#### 1. Prérequis (une seule fois)
+#### 1. Requirements (once)
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
-sudo apt install libasound2-dev                                 # en-têtes ALSA
+sudo apt install libasound2-dev                                 # ALSA headers
 ```
 
-#### 2. Compiler et installer
+#### 2. Build and install
 
 ```bash
 ./install.sh
 ```
 
-Le binaire va dans `~/.local/bin/stermusic` ; SterMusic apparaît dans le menu des applications.
+The binary goes to `~/.local/bin/stermusic`; SterMusic shows up in the application menu.
 
-Pour essayer sans installer :
+To try it without installing:
 
 ```bash
-cargo run --release -- ~/Musique
+cargo run --release -- ~/Music
 ```
 
-## Raccourcis clavier
+## Keyboard shortcuts
 
-| Touche            | Action                          |
+| Key               | Action                          |
 |-------------------|---------------------------------|
-| Espace            | Lecture / pause                 |
-| Ctrl + → / ←      | Morceau suivant / précédent     |
-| → / ←             | Avancer / reculer de 5 s        |
+| Space             | Play / pause                    |
+| Ctrl + → / ←      | Next / previous track           |
+| → / ←             | Forward / back 5 s              |
 | Ctrl + ↑ / ↓      | Volume                          |
-| Ctrl + F          | Rechercher                      |
-| Ctrl + M          | Mini lecteur                    |
-| F11               | Plein écran (En cours de lecture) ; Échap pour en sortir |
-| V / Maj + V       | Visualiseur suivant / précédent (En cours de lecture) |
-| Échap             | Retour                          |
-| Double-clic       | Lancer un morceau               |
-| Clic droit        | Menu (lire ensuite, playlists…) |
+| Ctrl + F          | Search                          |
+| Ctrl + M          | Mini player                     |
+| F11               | Full screen (Now Playing); Esc to leave |
+| V / Shift + V     | Next / previous visualizer (Now Playing) |
+| Ctrl + 0 … 5      | Rate the current track          |
+| Esc               | Back                            |
+| Double-click      | Play a track                    |
+| Right-click       | Menu (play next, playlists…)    |
 
-## Structure du code
+## Code layout
 
-- `src/main.rs` : fenêtre
-- `src/app/mod.rs` : état, file d'attente, actions, réglages enregistrés
-- `src/app/chrome.rs` : barre de titre, barre latérale, dialogues, notifications
-- `src/app/nowbar.rs` : barre de lecture et mini lecteur
-- `src/app/views.rs` : pages (accueil, bibliothèque, album, artiste, file, playlists, réglages…)
-- `src/app/lists.rs` : listes de morceaux, grilles, menus contextuels
-- `src/library.rs` : scan, tags, cache, albums et artistes
-- `src/covers.rs` : pochettes (chargées en arrière-plan)
-- `src/player.rs` : moteur audio (rodio 0.21 ; M4A/AAC compris)
-- `src/mpris.rs` : intégration MPRIS (souvlaki, D-Bus en pur Rust)
-- `src/backdrop.rs` : fond Mica
-- `src/radio.rs`, `src/globe.rs`, `src/app/radio_view.rs`, `src/app/radio_globe.rs` :
-  webradios, annuaire et globe (`assets/earth.jpg` : Blue Marble avec relief, NASA GIBS,
-  domaine public ; détails téléchargés au zoom depuis GIBS ; `assets/cities.tsv` : villes de
-  plus de 15 000 habitants, [GeoNames](https://www.geonames.org), CC BY 4.0)
-- `src/theme.rs`, `src/anim.rs`, `src/icons.rs`, `src/widgets.rs` : charte, animations, icônes
-  Lucide et widgets, repris de SterCode
+- `src/main.rs`: window
+- `src/app/mod.rs`: state, queue, actions, saved settings
+- `src/app/chrome.rs`: title bar, sidebar, dialogs, notifications
+- `src/app/nowbar.rs`: playback bar and mini player
+- `src/app/views.rs`: pages (home, library, album, artist, queue, playlists, settings…)
+- `src/app/lists.rs`: track lists, grids, context menus
+- `src/library.rs`: scanning, tags, cache, albums and artists
+- `src/covers.rs`: album art (loaded in the background)
+- `src/player.rs`: audio engine (rodio 0.21)
+- `src/mpris.rs`: MPRIS integration (souvlaki, pure-Rust D-Bus)
+- `src/backdrop.rs`: Mica background
+- `src/shader.rs`, `src/viz.rs`, `src/app/viz_view.rs`: visualizers
+- `src/radio.rs`, `src/globe.rs`, `src/app/radio_view.rs`, `src/app/radio_globe.rs`: web
+  radio, directory and globe
+- `src/theme.rs`, `src/anim.rs`, `src/icons.rs`, `src/widgets.rs`: design, animations, icons and
+  widgets, shared with SterCode
+- `src/i18n.rs`, `src/i18n_en.rs`: English translation (the source strings are in French)
 
-Données : `~/.local/share/stermusic/` (réglages, cache de la bibliothèque) et
-`~/.cache/stermusic/` (pochettes pour MPRIS).
+Data: `~/.local/share/stermusic/` (settings, library cache) and `~/.cache/stermusic/` (album art
+for MPRIS, downloaded files).
 
-## Note sur la compilation
+Code comments are written in French.
 
-Le projet est sur une partition NTFS, où les scripts de compilation de Cargo plantent.
-`.cargo/config.toml` envoie donc le dossier de compilation vers `~/.cache/stermusic-target`.
-Sur une partition Linux (ext4, btrfs…), ce fichier peut être supprimé.
+### Building on NTFS
 
-## Licence
+Cargo build scripts crash on NTFS partitions. If the project lives on one, a local
+`.cargo/config.toml` (not tracked by git) can move the build directory elsewhere:
 
-SterMusic est un logiciel libre : tu peux le redistribuer et le modifier selon les termes de la
-**GNU General Public License version 3**, ou (à ton choix) de toute version ultérieure. Le texte
-complet est dans [LICENSE](LICENSE).
+```toml
+[build]
+target-dir = "/home/me/.cache/stermusic-target"
+```
 
-Les images, icônes et polices intégrées, et les bibliothèques modifiées du dossier `vendor/`,
-gardent leurs propres licences : voir [CREDITS.md](CREDITS.md). Les installateurs joignent en plus
-la liste des bibliothèques Rust compilées dans le programme, avec leurs licences
-(`LICENCES-TIERS.txt`).
+## License
+
+SterMusic is free software: you can redistribute it and/or modify it under the terms of the
+**GNU General Public License version 3**, or (at your option) any later version. The full text is
+in [LICENSE](LICENSE).
+
+The embedded images, icons and fonts, and the modified libraries in `vendor/`, keep their own
+licenses: see [CREDITS.md](CREDITS.md). The installers also include the list of Rust libraries
+compiled into the program, with their licenses (`THIRD-PARTY-LICENSES.txt`).

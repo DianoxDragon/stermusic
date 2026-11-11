@@ -54,7 +54,7 @@ def fallback(pkg):
     for name, file in (("Apache-2.0", "Apache-2.0"), ("MPL-2.0", "MPL-2.0"), ("CC0-1.0", "CC0-1.0"), ("BSD", "BSD")):
         if name in lic and os.path.exists(os.path.join(COMMON, file)):
             return open(os.path.join(COMMON, file), encoding="utf-8").read()
-    return f"Licence : {lic} (texte non fourni par le paquet ; voir {pkg.get('repository') or 'crates.io'})."
+    return f"License: {lic} (text not shipped with the package; see {pkg.get('repository') or 'crates.io'})."
 
 MIT = """Copyright (c) {holders}
 
@@ -100,21 +100,20 @@ for pid in sorted(seen, key=lambda i: (pkgs[i]["name"], pkgs[i]["version"])):
         texts.setdefault(key, [body, []])[1].append(label)
 
 out = [
-    "SterMusic — licences des bibliothèques tierces / third-party licenses",
+    "SterMusic — third-party licenses",
     "=" * 72,
     "",
-    "SterMusic est distribué sous GPL-3.0-or-later (fichier LICENSE). Il est compilé avec les",
-    "bibliothèques Rust ci-dessous, chacune sous sa propre licence. Les bibliothèques sous MPL-2.0",
-    "(Symphonia, resvg…) sont utilisées sans modification ; leur code source est disponible sur",
-    "https://crates.io aux versions indiquées.",
+    "SterMusic is released under the GPL-3.0-or-later (see LICENSE). It is compiled with the Rust",
+    "libraries below, each under its own license. The MPL-2.0 libraries (Symphonia, resvg…) are",
+    "used unmodified; their source code is available on https://crates.io at the listed versions.",
     "",
-    f"{len(rows)} bibliothèques :",
+    f"{len(rows)} libraries:",
     "",
     *rows,
     "",
 ]
 for body, users in sorted(texts.values(), key=lambda t: t[1][0]):
-    out += ["", "-" * 72, "Utilisé par / used by : " + ", ".join(users), "-" * 72, "", body.rstrip(), ""]
+    out += ["", "-" * 72, "Used by: " + ", ".join(users), "-" * 72, "", body.rstrip(), ""]
 with open(sys.argv[1], "w", encoding="utf-8") as f:
     f.write("\n".join(out) + "\n")
-print(f"{len(rows)} bibliothèques, {len(texts)} textes de licence distincts → {sys.argv[1]}")
+print(f"{len(rows)} libraries, {len(texts)} distinct license texts → {sys.argv[1]}")
