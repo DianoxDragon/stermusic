@@ -41,6 +41,9 @@ ksni = { version = "0.3", default-features = false, features = ["blocking", "asy
 # vendor/smithay-clipboard/README.md).
 [patch.crates-io]
 smithay-clipboard = { path = "vendor/smithay-clipboard" }
+# Lecture des tags, corrigée pour les pochettes des tags ID3v2.4 « désynchronisés » (voir
+# vendor/lofty/STERMUSIC.md).
+lofty = { path = "vendor/lofty" }
 
 [profile.release]
 opt-level = 3
