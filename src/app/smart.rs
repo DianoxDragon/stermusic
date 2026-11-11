@@ -219,6 +219,9 @@ pub struct SmartPlaylist {
     pub sort: Sort,
     /// Nombre maximal de morceaux (0 : pas de limite).
     pub limit: usize,
+    /// Épinglée dans la barre latérale.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 impl SmartPlaylist {
@@ -232,6 +235,7 @@ impl SmartPlaylist {
         };
         vec![
             SmartPlaylist {
+                pinned: false,
                 name: tr("Les plus écoutés").to_owned(),
                 icon: SmartIcon::Flame,
                 rules: vec![rule(Field::Plays, Op::More, "0")],
@@ -240,6 +244,7 @@ impl SmartPlaylist {
                 limit: 50,
             },
             SmartPlaylist {
+                pinned: false,
                 name: tr("Jamais écoutés").to_owned(),
                 icon: SmartIcon::EyeOff,
                 rules: vec![rule(Field::Plays, Op::Is, "0")],
@@ -248,6 +253,7 @@ impl SmartPlaylist {
                 limit: 0,
             },
             SmartPlaylist {
+                pinned: false,
                 name: tr("Redécouvertes").to_owned(),
                 icon: SmartIcon::History,
                 rules: vec![
@@ -259,6 +265,7 @@ impl SmartPlaylist {
                 limit: 0,
             },
             SmartPlaylist {
+                pinned: false,
                 name: tr("Ajoutés ce mois-ci").to_owned(),
                 icon: SmartIcon::CalendarPlus,
                 rules: vec![rule(Field::Added, Op::Less, "31")],
@@ -285,6 +292,7 @@ impl SmartPlaylist {
 
     fn new_empty() -> Self {
         SmartPlaylist {
+            pinned: false,
             name: tr("Nouvelle playlist intelligente").to_owned(),
             icon: SmartIcon::Star,
             rules: vec![Rule {
@@ -714,6 +722,7 @@ mod tests {
                 .collect()
         };
         let mut p = SmartPlaylist {
+            pinned: false,
             name: String::new(),
             icon: SmartIcon::default(),
             rules: vec![Rule {

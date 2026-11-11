@@ -134,7 +134,13 @@ pub enum View {
 pub struct Playlist {
     pub name: String,
     pub tracks: Vec<PathBuf>,
+    /// Épinglée dans la barre latérale.
+    #[serde(default)]
+    pub pinned: bool,
 }
+
+/// Nombre maximal de playlists épinglées dans la barre latérale.
+pub const MAX_PINS: usize = 6;
 
 #[derive(Clone, Copy, Serialize, Deserialize, Default)]
 pub struct PlayStat {
@@ -228,6 +234,16 @@ pub struct Settings {
     /// Playlists intelligentes, et vrai une fois les quatre proposées d'office ajoutées.
     pub smart_playlists: Vec<smart::SmartPlaylist>,
     pub smart_seeded: bool,
+    /// Playlists épinglées dans la barre latérale : les favoris (les autres portent leur propre
+    /// marque), et vrai une fois les premières épinglées d'office.
+    pub favorites_pinned: bool,
+    pub pins_seeded: bool,
+    /// Page Playlists : tri, sens du tri, affichage en liste (sinon en grille).
+    pub pl_sort: views::PlSort,
+    pub pl_sort_desc: bool,
+    pub pl_list: bool,
+    /// Bibliothèque, onglet Morceaux : tri par colonnes (clic sur leurs titres).
+    pub song_columns: lists::SortSpec,
     pub stats_period: stats::Period,
     /// Paroles : chercher sur LRCLIB, et les montrer dans « En cours de lecture ».
     pub lyrics_online: bool,
@@ -311,6 +327,12 @@ impl Default for Settings {
             lang: crate::i18n::Lang::from_env(),
             smart_playlists: Vec::new(),
             smart_seeded: false,
+            favorites_pinned: false,
+            pins_seeded: false,
+            pl_sort: Default::default(),
+            pl_sort_desc: false,
+            pl_list: false,
+            song_columns: Default::default(),
             stats_period: stats::Period::default(),
             lyrics_online: true,
             show_lyrics: true,
@@ -382,6 +404,8 @@ pub enum Action {
     SetVolume(f32),
     ToggleMute,
     ToggleMini,
+    /// Épingle une playlist dans la barre latérale, ou l'en retire.
+    TogglePin(PlaylistId),
     /// Vrai plein écran, sur « En cours de lecture ».
     ToggleFullscreen,
     ToggleSidebar,
@@ -656,6 +680,11 @@ pub struct SterMusic {
     pending_note: Option<(PathBuf, f64)>,
     /// Notes inscrites dans les fichiers (thread à part).
     ratings: ratings::RatingWriter,
+    /// Tri par colonnes des listes de morceaux d'un album, d'une playlist, d'un dossier (le
+    /// temps de la session), par vue.
+    list_sorts: HashMap<String, lists::SortSpec>,
+    /// Page Playlists : filtre.
+    pl_filter: String,
     /// Couleurs et pochettes qui changent en douceur d'un morceau à l'autre.
     ambience: ambience::Ambience,
     /// « En cours de lecture » : le morceau affiché (il suit la pochette, qui attend d'être
@@ -933,6 +962,8 @@ impl SterMusic {
             notifier: Default::default(),
             pending_note: None,
             ratings: ratings::RatingWriter::new(&cc.egui_ctx),
+            list_sorts: HashMap::new(),
+            pl_filter: String::new(),
             ambience: Default::default(),
             np_track: None,
             np_prev_text: None,
@@ -972,6 +1003,7 @@ impl SterMusic {
         for p in &mut app.settings.smart_playlists {
             p.guess_icon();
         }
+        app.seed_pins();
         if app.settings.auto_update {
             app.watcher = crate::watch::Watcher::start(&app.settings.music_dirs, &cc.egui_ctx);
         }
@@ -1982,6 +2014,68 @@ impl SterMusic {
         }
     }
 
+    /// Vrai si la playlist est épinglée dans la barre latérale.
+    pub fn is_pinned(&self, id: PlaylistId) -> bool {
+        match id {
+            PlaylistId::Favorites => self.settings.favorites_pinned,
+            PlaylistId::Smart(i) => self.settings.smart_playlists.get(i).is_some_and(|p| p.pinned),
+            PlaylistId::User(i) => self.settings.playlists.get(i).is_some_and(|p| p.pinned),
+        }
+    }
+
+    /// Les playlists épinglées, dans l'ordre de la page Playlists (favoris, intelligentes, les
+    /// miennes).
+    pub fn pinned(&self) -> Vec<PlaylistId> {
+        let s = &self.settings;
+        let mut ids: Vec<PlaylistId> = Vec::new();
+        ids.extend(s.favorites_pinned.then_some(PlaylistId::Favorites));
+        ids.extend(s.smart_playlists.iter().enumerate().filter(|(_, p)| p.pinned).map(|(i, _)| PlaylistId::Smart(i)));
+        ids.extend(s.playlists.iter().enumerate().filter(|(_, p)| p.pinned).map(|(i, _)| PlaylistId::User(i)));
+        ids
+    }
+
+    fn set_pinned(&mut self, id: PlaylistId, on: bool) {
+        match id {
+            PlaylistId::Favorites => self.settings.favorites_pinned = on,
+            PlaylistId::Smart(i) => {
+                if let Some(p) = self.settings.smart_playlists.get_mut(i) {
+                    p.pinned = on;
+                }
+            }
+            PlaylistId::User(i) => {
+                if let Some(p) = self.settings.playlists.get_mut(i) {
+                    p.pinned = on;
+                }
+            }
+        }
+    }
+
+    fn toggle_pin(&mut self, id: PlaylistId) {
+        let on = !self.is_pinned(id);
+        if on && self.pinned().len() >= MAX_PINS {
+            self.toast(trf!(
+                "{0} playlists épinglées au plus : désépingles-en une d'abord.",
+                MAX_PINS
+            ));
+            return;
+        }
+        self.set_pinned(id, on);
+    }
+
+    /// Première fois : épingle les favoris, puis les playlists intelligentes et les miennes,
+    /// jusqu'à la limite (la barre latérale les montrait toutes).
+    fn seed_pins(&mut self) {
+        if std::mem::replace(&mut self.settings.pins_seeded, true) {
+            return;
+        }
+        let mut ids = vec![PlaylistId::Favorites];
+        ids.extend((0..self.settings.smart_playlists.len()).map(PlaylistId::Smart));
+        ids.extend((0..self.settings.playlists.len()).map(PlaylistId::User));
+        for id in ids.into_iter().take(MAX_PINS) {
+            self.set_pinned(id, true);
+        }
+    }
+
     pub fn playlist_name(&self, id: PlaylistId) -> String {
         match id {
             PlaylistId::Smart(i) => self
@@ -2077,33 +2171,27 @@ impl SterMusic {
                 let name = trf!("Playlist {0}", self.settings.playlists.len() + 1);
                 self.dialog = Some(Dialog::NewPlaylist { name, tracks });
             }
-            Action::RemoveFromPlaylist(id, pos) => match id {
-                // Une playlist intelligente se remplit d'après ses règles : rien à retirer à la main.
-                PlaylistId::Smart(_) => {}
-                PlaylistId::Favorites => {
-                    let tracks = self.playlist_tracks(id);
-                    if let Some(&t) = tracks.get(pos) {
-                        let p = self.lib.tracks[t].path.clone();
-                        self.settings.favorites.remove(&p);
+            // Le morceau est désigné lui-même (la liste affichée peut être triée ou filtrée) : sa
+            // première occurrence quitte la playlist.
+            Action::RemoveFromPlaylist(id, track) => {
+                let Some(path) = self.lib.tracks.get(track).map(|t| t.path.clone()) else {
+                    return;
+                };
+                match id {
+                    // Une playlist intelligente se remplit d'après ses règles : rien à retirer.
+                    PlaylistId::Smart(_) => {}
+                    PlaylistId::Favorites => {
+                        self.settings.favorites.remove(&path);
                     }
-                }
-                PlaylistId::User(i) => {
-                    // `pos` compte les morceaux présents ; on retrouve l'entrée correspondante.
-                    let lib = &self.lib;
-                    if let Some(pl) = self.settings.playlists.get_mut(i) {
-                        let real = pl
-                            .tracks
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, p)| lib.find(p).is_some())
-                            .nth(pos)
-                            .map(|(k, _)| k);
-                        if let Some(k) = real {
-                            pl.tracks.remove(k);
+                    PlaylistId::User(i) => {
+                        if let Some(pl) = self.settings.playlists.get_mut(i) {
+                            if let Some(k) = pl.tracks.iter().position(|p| *p == path) {
+                                pl.tracks.remove(k);
+                            }
                         }
                     }
                 }
-            },
+            }
             Action::RenamePlaylist(i) => {
                 if let Some(p) = self.settings.playlists.get(i) {
                     self.dialog = Some(Dialog::Rename {
@@ -2306,6 +2394,7 @@ impl SterMusic {
                 self.apply_volume();
             }
             Action::ToggleMini => self.toggle_mini(ctx),
+            Action::TogglePin(id) => self.toggle_pin(id),
             Action::ToggleFullscreen => self.toggle_fullscreen(ctx),
             Action::ToggleSidebar => self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed,
             Action::SetBreeze(on) => {
@@ -2521,6 +2610,7 @@ impl SterMusic {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| tr("Playlist").into());
         self.settings.playlists.push(Playlist {
+            pinned: false,
             name: name.clone(),
             tracks,
         });

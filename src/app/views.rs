@@ -24,6 +24,17 @@ pub(super) struct Header<'a> {
     pub info: &'a str,
 }
 
+/// Tri de la page Playlists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum PlSort {
+    /// Favoris, intelligentes, puis les miennes dans l'ordre de leur création.
+    #[default]
+    Default,
+    Name,
+    Count,
+    Duration,
+}
+
 pub(super) fn heading(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).font(theme::semibold(28.0)).color(theme::TEXT));
 }
@@ -235,6 +246,14 @@ impl SterMusic {
         });
     }
 
+    /// En-tête d'une liste dont les colonnes trient (tri gardé par vue, le temps de la session),
+    /// et la liste triée en conséquence.
+    pub(super) fn sortable_header(&mut self, ui: &mut egui::Ui, opts: &ListOpts, view: &str, list: &mut [usize]) {
+        let spec = self.list_sorts.entry(view.to_owned()).or_default();
+        lists::header_sortable(ui, opts, Some(spec));
+        spec.sort(&self.lib, list);
+    }
+
     /// Les morceaux de `tracks` qui correspondent à la recherche de la page.
     pub(super) fn filtered(&self, tracks: &[usize]) -> Vec<usize> {
         tracks
@@ -251,11 +270,7 @@ impl SterMusic {
 
     fn matches_filter(&self, t: usize) -> bool {
         let q = crate::library::fold(self.detail_filter.trim());
-        q.is_empty() || {
-            let track = &self.lib.tracks[t];
-            let text = crate::library::fold(&format!("{} {}", track.title, track.artist));
-            q.split_whitespace().all(|w| text.contains(w))
-        }
+        q.is_empty() || self.lib.track_matches(t, &q)
     }
 
     /// Zone de contenu : un calque légèrement plus clair, arrondi en haut à gauche (Fluent).
@@ -676,14 +691,17 @@ impl SterMusic {
                             .width(130.0)
                             .show_ui(ui, |ui| {
                                 for (s, l) in sorts {
-                                    ui.selectable_value(&mut self.settings.song_sort, s, l);
+                                    // Choisir un ordre ici efface le tri par colonnes.
+                                    if ui.selectable_value(&mut self.settings.song_sort, s, l).clicked() {
+                                        self.settings.song_columns.0.clear();
+                                    }
                                 }
                             });
                         ui.label(RichText::new(tr("Trier par")).color(theme::TEXT_3));
                         ui.add_space(12.0);
                     }
                     let hint = match self.settings.lib_tab {
-                        LibTab::Songs => tr("Filtrer les morceaux"),
+                        LibTab::Songs => tr("Filtrer : titre, artiste, album, genre, année…"),
                         LibTab::Albums => tr("Filtrer les albums"),
                         LibTab::Artists => tr("Filtrer les artistes"),
                         LibTab::Folders => tr("Filtrer ce dossier"),
@@ -723,7 +741,7 @@ impl SterMusic {
         match self.settings.lib_tab {
             LibTab::Songs => {
                 let songs = self.sorted_songs().to_vec();
-                let songs = if query.is_empty() {
+                let mut songs = if query.is_empty() {
                     songs
                 } else {
                     self.lib.filter_tracks(&songs, &query)
@@ -733,7 +751,9 @@ impl SterMusic {
                     album: true,
                     ..Default::default()
                 };
-                lists::header(ui, &opts);
+                // Les titres des colonnes trient la liste, par-dessus l'ordre choisi dans « Trier par ».
+                lists::header_sortable(ui, &opts, Some(&mut self.settings.song_columns));
+                self.settings.song_columns.sort(&self.lib, &mut songs);
                 if songs.is_empty() {
                     Self::no_match(ui);
                 }
@@ -922,16 +942,16 @@ impl SterMusic {
                         }
                     },
                 );
-                let shown = self.filtered(&album.tracks);
+                let mut shown = self.filtered(&album.tracks);
                 if shown.is_empty() {
                     Self::no_match(ui);
                 }
-                let mut c = self.view_ctx();
                 let opts = ListOpts {
                     track_no: true,
                     ..Default::default()
                 };
-                lists::header(ui, &opts);
+                self.sortable_header(ui, &opts, "album", &mut shown);
+                let mut c = self.view_ctx();
                 lists::track_list_inline(ui, &mut c, &shown, &opts);
                 ui.add_space(24.0);
             });
@@ -1332,22 +1352,117 @@ impl SterMusic {
                 }
             });
         });
-        ui.add_space(18.0);
+        ui.add_space(12.0);
+        // Barre d'outils, comme dans la bibliothèque : affichage, tri, filtre.
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            if segment(ui, tr("Grille"), !self.settings.pl_list).clicked() {
+                self.settings.pl_list = false;
+            }
+            if segment(ui, tr("Liste"), self.settings.pl_list).clicked() {
+                self.settings.pl_list = true;
+            }
+            let pins = self.pinned().len();
+            ui.add_space(10.0);
+            ui.label(
+                RichText::new(trf!("{0} épinglées sur {1}", pins, super::MAX_PINS))
+                    .small()
+                    .color(theme::TEXT_3),
+            )
+            .on_hover_text(tr("Les playlists épinglées (clic droit → Épingler) s'affichent dans la barre latérale."));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.add_space(12.0);
+                let desc = self.settings.pl_sort_desc;
+                let tip = if desc { tr("Ordre décroissant") } else { tr("Ordre croissant") };
+                if self.settings.pl_sort != PlSort::Default
+                    && widgets::icon_button(ui, if desc { Icon::Download } else { Icon::Upload }, tip, 30.0, 14.0).clicked()
+                {
+                    self.settings.pl_sort_desc = !desc;
+                }
+                let sorts = [
+                    (PlSort::Default, tr("Ordre de création")),
+                    (PlSort::Name, tr("Nom")),
+                    (PlSort::Count, tr("Nombre de morceaux")),
+                    (PlSort::Duration, tr("Durée")),
+                ];
+                let current = sorts.iter().find(|s| s.0 == self.settings.pl_sort).map(|s| s.1).unwrap_or("");
+                egui::ComboBox::from_id_salt("pl_sort")
+                    .selected_text(current)
+                    .width(170.0)
+                    .show_ui(ui, |ui| {
+                        for (s, l) in sorts {
+                            ui.selectable_value(&mut self.settings.pl_sort, s, l);
+                        }
+                    });
+                ui.label(RichText::new(tr("Trier par")).color(theme::TEXT_3));
+                ui.add_space(12.0);
+                let w = (ui.available_width() - 8.0).clamp(140.0, 260.0);
+                widgets::search_field(ui, egui::Id::new("pl_filter"), &mut self.pl_filter, tr("Filtrer les playlists"), w);
+            });
+        });
+        ui.add_space(14.0);
+
+        // Toutes les playlists, avec ce qu'il faut pour les trier et les filtrer.
         let mut ids = vec![PlaylistId::Favorites];
         ids.extend((0..self.settings.smart_playlists.len()).map(PlaylistId::Smart));
         ids.extend((0..self.settings.playlists.len()).map(PlaylistId::User));
+        struct Row {
+            id: PlaylistId,
+            name: String,
+            tracks: Vec<usize>,
+            duration: std::time::Duration,
+        }
+        let query = crate::library::fold(self.pl_filter.trim());
+        let mut rows: Vec<Row> = ids
+            .into_iter()
+            .map(|id| {
+                let tracks = self.playlist_tracks(id);
+                Row {
+                    id,
+                    name: self.playlist_name(id),
+                    duration: tracks.iter().map(|&t| self.lib.tracks[t].duration()).sum(),
+                    tracks,
+                }
+            })
+            .filter(|r| {
+                let name = crate::library::fold(&r.name);
+                query.split_whitespace().all(|w| name.contains(w))
+            })
+            .collect();
+        match self.settings.pl_sort {
+            PlSort::Default => {}
+            PlSort::Name => rows.sort_by_cached_key(|r| crate::library::fold(&r.name)),
+            PlSort::Count => rows.sort_by_key(|r| r.tracks.len()),
+            PlSort::Duration => rows.sort_by_key(|r| r.duration),
+        }
+        if self.settings.pl_sort != PlSort::Default && self.settings.pl_sort_desc {
+            rows.reverse();
+        }
+        if rows.is_empty() {
+            Self::no_match(ui);
+            return;
+        }
+        let list = self.settings.pl_list;
         egui::ScrollArea::vertical()
             .id_salt("playlists")
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 16.0);
-                let n = ids.len();
+                if list {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    for r in &rows {
+                        self.playlist_row(ui, r.id, &r.name, &r.tracks, r.duration);
+                    }
+                    ui.add_space(16.0);
+                    return;
+                }
+                let n = rows.len();
                 let (cols, w) = lists::grid_layout(ui.available_width());
-                for r in 0..n.div_ceil(cols) {
+                for line in 0..n.div_ceil(cols) {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = lists::GAP;
-                        for &id in &ids[r * cols..((r + 1) * cols).min(n)] {
-                            self.playlist_card(ui, id, w);
+                        for r in &rows[line * cols..((line + 1) * cols).min(n)] {
+                            self.playlist_card(ui, r.id, &r.name, &r.tracks, w);
                         }
                     });
                     ui.add_space(lists::GAP * 0.6);
@@ -1355,11 +1470,109 @@ impl SterMusic {
             });
     }
 
-    fn playlist_card(&mut self, ui: &mut egui::Ui, id: PlaylistId, w: f32) {
+    /// Nature d'une playlist, en clair.
+    fn playlist_kind(id: PlaylistId) -> &'static str {
+        match id {
+            PlaylistId::Favorites => tr("Favoris"),
+            PlaylistId::Smart(_) => tr("Intelligente"),
+            PlaylistId::User(_) => tr("Playlist"),
+        }
+    }
+
+    /// Menu d'une playlist (clic droit sur sa carte, sa ligne ou son entrée de la barre latérale).
+    pub(super) fn playlist_menu(&mut self, ui: &mut egui::Ui, id: PlaylistId, tracks: &[usize]) {
+        if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
+            self.actions.push(Action::Play {
+                tracks: tracks.to_vec(),
+                start: 0,
+            });
+        }
+        if widgets::menu_item(ui, Some(Icon::Shuffle), tr("Lecture aléatoire")).clicked() {
+            self.actions.push(Action::PlayShuffled(tracks.to_vec()));
+        }
+        ui.separator();
+        let (icon, label) = if self.is_pinned(id) {
+            (Icon::PinOff, tr("Désépingler de la barre latérale"))
+        } else {
+            (Icon::Pin, tr("Épingler dans la barre latérale"))
+        };
+        if widgets::menu_item(ui, Some(icon), label).clicked() {
+            self.actions.push(Action::TogglePin(id));
+        }
+        if widgets::menu_item(ui, Some(Icon::Upload), tr("Exporter (M3U)")).clicked() {
+            self.actions.push(Action::ExportPlaylist(id));
+        }
+        if let PlaylistId::Smart(i) = id {
+            ui.separator();
+            if widgets::menu_item(ui, Some(Icon::Sparkles), tr("Modifier les règles…")).clicked() {
+                self.actions.push(Action::EditSmartPlaylist(i));
+            }
+        }
+        if let PlaylistId::User(i) = id {
+            ui.separator();
+            if widgets::menu_item(ui, Some(Icon::Pencil), tr("Renommer")).clicked() {
+                self.actions.push(Action::RenamePlaylist(i));
+            }
+            if widgets::menu_item(ui, Some(Icon::Trash), tr("Supprimer")).clicked() {
+                self.actions.push(Action::DeletePlaylist(i));
+            }
+        }
+    }
+
+    /// Une playlist en ligne (affichage « Liste ») : mosaïque, nom, nature, morceaux, durée, épingle.
+    fn playlist_row(&mut self, ui: &mut egui::Ui, id: PlaylistId, name: &str, tracks: &[usize], duration: std::time::Duration) {
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::hover());
+        if !ui.is_rect_visible(rect) {
+            return;
+        }
+        let resp = ui.interact(rect, ui.id().with(("pl_row", format!("{id:?}"))), Sense::click());
+        widgets::paint_interaction(ui, rect, 8, &resp);
+        let cover = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 6.0), vec2(48.0, 48.0));
+        self.mosaic(ui, cover, tracks, id == PlaylistId::Favorites, 6);
+        let x = cover.right() + 14.0;
+        let right = rect.right() - 8.0;
+        // Colonnes de droite : épingle, durée, nombre de morceaux, nature.
+        let pin_r = Rect::from_center_size(pos2(right - 18.0, rect.center().y), vec2(32.0, 32.0));
+        let pinned = self.is_pinned(id);
+        let (icon, tip) = if pinned {
+            (Icon::PinOff, tr("Désépingler de la barre latérale"))
+        } else {
+            (Icon::Pin, tr("Épingler dans la barre latérale"))
+        };
+        if (pinned || resp.hovered() || ui.rect_contains_pointer(pin_r))
+            && ui
+                .put(pin_r, |ui: &mut egui::Ui| widgets::toggle_icon(ui, pinned, icon, tip, 32.0, 15.0))
+                .clicked()
+        {
+            self.actions.push(Action::TogglePin(id));
+        }
+        let p = ui.painter();
+        let cy = rect.center().y;
+        p.text(pos2(right - 60.0, cy), Align2::RIGHT_CENTER, fmt_long(duration), FontId::proportional(13.0), theme::TEXT_2);
+        p.text(
+            pos2(right - 190.0, cy),
+            Align2::RIGHT_CENTER,
+            plural(tracks.len(), "morceau", "morceaux"),
+            FontId::proportional(13.0),
+            theme::TEXT_2,
+        );
+        let wide = rect.width() > 760.0;
+        if wide {
+            p.text(pos2(right - 330.0, cy), Align2::RIGHT_CENTER, Self::playlist_kind(id), FontId::proportional(13.0), theme::TEXT_3);
+        }
+        let name_w = (right - if wide { 440.0 } else { 310.0 } - x).max(80.0);
+        let g = widgets::galley(ui, name, theme::semibold(14.5), theme::TEXT, name_w);
+        ui.painter().galley(pos2(x, cy - g.size().y / 2.0), g, theme::TEXT);
+        if resp.clicked() {
+            self.actions.push(Action::Go(View::Playlist(id)));
+        }
+        resp.context_menu(|ui| self.playlist_menu(ui, id, tracks));
+    }
+
+    fn playlist_card(&mut self, ui: &mut egui::Ui, id: PlaylistId, name: &str, tracks: &[usize], w: f32) {
         let (rect, _) = ui.allocate_exact_size(vec2(w, lists::card_height(w)), Sense::hover());
         let resp = ui.interact(rect, ui.id().with(("pl_card", format!("{id:?}"))), Sense::click());
         let h = widgets::hover_t(ui, resp.id, resp.hovered());
-        let tracks = self.playlist_tracks(id);
         let cover = Rect::from_min_size(rect.min, vec2(w, w)).translate(vec2(0.0, -3.0 * h));
         ui.painter().add(
             egui::Shadow {
@@ -1370,18 +1583,22 @@ impl SterMusic {
             }
             .as_shape(cover, CornerRadius::same(8)),
         );
-        self.mosaic(ui, cover, &tracks, id == PlaylistId::Favorites, 8);
-        let name = self.playlist_name(id);
-        let g = widgets::galley(ui, &name, theme::semibold(14.0), theme::TEXT, w);
+        self.mosaic(ui, cover, tracks, id == PlaylistId::Favorites, 8);
+        // Épinglée : une petite épingle dans le coin de la carte.
+        if self.is_pinned(id) {
+            let c = pos2(cover.right() - 18.0, cover.top() + 18.0);
+            ui.painter().circle_filled(c, 13.0, Color32::from_black_alpha(150));
+            icons::paint_centered(ui.painter(), Icon::Pin, c, 13.0, theme::accent_light());
+        }
+        let g = widgets::galley(ui, name, theme::semibold(14.0), theme::TEXT, w);
         ui.painter()
             .galley(pos2(rect.left(), cover.bottom() + 10.0 + 3.0 * h), g, theme::TEXT);
-        let g = widgets::galley(
-            ui,
-            &plural(tracks.len(), "morceau", "morceaux"),
-            FontId::proportional(13.0),
-            theme::TEXT_2,
-            w,
-        );
+        let sub = if matches!(id, PlaylistId::Smart(_)) {
+            format!("{} · {}", plural(tracks.len(), "morceau", "morceaux"), tr("intelligente"))
+        } else {
+            plural(tracks.len(), "morceau", "morceaux")
+        };
+        let g = widgets::galley(ui, &sub, FontId::proportional(13.0), theme::TEXT_2, w);
         ui.painter().galley(
             pos2(rect.left(), cover.bottom() + 31.0 + 3.0 * h),
             g,
@@ -1390,35 +1607,7 @@ impl SterMusic {
         if resp.clicked() {
             self.actions.push(Action::Go(View::Playlist(id)));
         }
-        resp.context_menu(|ui| {
-            if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
-                self.actions.push(Action::Play {
-                    tracks: tracks.clone(),
-                    start: 0,
-                });
-            }
-            if widgets::menu_item(ui, Some(Icon::Shuffle), tr("Lecture aléatoire")).clicked() {
-                self.actions.push(Action::PlayShuffled(tracks.clone()));
-            }
-            if widgets::menu_item(ui, Some(Icon::Upload), tr("Exporter (M3U)")).clicked() {
-                self.actions.push(Action::ExportPlaylist(id));
-            }
-            if let PlaylistId::Smart(i) = id {
-                ui.separator();
-                if widgets::menu_item(ui, Some(Icon::Sparkles), tr("Modifier les règles…")).clicked() {
-                    self.actions.push(Action::EditSmartPlaylist(i));
-                }
-            }
-            if let PlaylistId::User(i) = id {
-                ui.separator();
-                if widgets::menu_item(ui, Some(Icon::Pencil), tr("Renommer")).clicked() {
-                    self.actions.push(Action::RenamePlaylist(i));
-                }
-                if widgets::menu_item(ui, Some(Icon::Trash), tr("Supprimer")).clicked() {
-                    self.actions.push(Action::DeletePlaylist(i));
-                }
-            }
-        });
+        resp.context_menu(|ui| self.playlist_menu(ui, id, tracks));
     }
 
     fn playlist_page(&mut self, ui: &mut egui::Ui, id: PlaylistId) {
@@ -1478,6 +1667,18 @@ impl SterMusic {
                         s.actions.push(Action::DeletePlaylist(i));
                     }
                 }
+                let pinned = s.is_pinned(id);
+                let (icon, tip) = if pinned {
+                    (Icon::PinOff, tr("Désépingler de la barre latérale"))
+                } else {
+                    (Icon::Pin, tr("Épingler dans la barre latérale"))
+                };
+                if widgets::toggle_icon(ui, pinned, icon, tip, 34.0, 16.0).clicked() {
+                    s.actions.push(Action::TogglePin(id));
+                }
+                if tracks.len() >= 8 {
+                    s.detail_search_field(ui, tr("Filtrer cette playlist"));
+                }
             },
         );
         if tracks.is_empty() {
@@ -1515,9 +1716,13 @@ impl SterMusic {
             playlist: Some(id).filter(|id| !matches!(id, PlaylistId::Smart(_))),
             ..Default::default()
         };
-        lists::header(ui, &opts);
+        let mut shown = self.filtered(&tracks);
+        self.sortable_header(ui, &opts, &format!("pl{id:?}"), &mut shown);
+        if shown.is_empty() {
+            Self::no_match(ui);
+        }
         let mut c = self.view_ctx();
-        lists::track_list(ui, &mut c, &format!("pl{id:?}"), &tracks, &opts);
+        lists::track_list(ui, &mut c, &format!("pl{id:?}"), &shown, &opts);
     }
 
     // ---------- Recherche ----------

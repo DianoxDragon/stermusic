@@ -245,8 +245,9 @@ impl SterMusic {
             album: true,
             ..Default::default()
         };
+        let mut tracks = tracks;
         if !tracks.is_empty() {
-            lists::header(ui, &opts);
+            self.sortable_header(ui, &opts, "folder", &mut tracks);
         }
         let n_folders = folders.len();
         let mut open = None;

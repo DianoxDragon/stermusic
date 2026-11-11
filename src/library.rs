@@ -244,6 +244,9 @@ pub struct Library {
     /// Artiste de chaque album.
     pub album_artist: Vec<usize>,
     search_text: Vec<String>,
+    /// Tout ce qu'on peut vouloir filtrer dans une liste : comme `search_text`, plus le genre,
+    /// l'année, le compositeur et le nom du fichier.
+    filter_text: Vec<String>,
     by_path: HashMap<PathBuf, usize>,
 }
 
@@ -411,6 +414,17 @@ impl Library {
                 ))
             })
             .collect();
+        let filter_text = tracks
+            .iter()
+            .map(|t| {
+                let year = t.year.map(|y| y.to_string()).unwrap_or_default();
+                let file = t.path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+                fold(&format!(
+                    "{} {} {} {} {} {year} {} {file}",
+                    t.title, t.artist, t.album, t.album_artist, t.genre, t.composer
+                ))
+            })
+            .collect();
         let by_path = tracks
             .iter()
             .enumerate()
@@ -424,6 +438,7 @@ impl Library {
             track_album,
             album_artist,
             search_text,
+            filter_text,
             by_path,
         }
     }
@@ -444,12 +459,19 @@ impl Library {
     }
 
     /// Filtre de la bibliothèque : les éléments de `list` dont le texte contient tous les mots.
+    /// Les morceaux de `list` qui contiennent tous les mots de `query`, où que ce soit : titre,
+    /// artiste, album, genre, année, compositeur, nom du fichier.
     pub fn filter_tracks(&self, list: &[usize], query: &str) -> Vec<usize> {
         let words = words(query);
         list.iter()
             .copied()
-            .filter(|&i| words.iter().all(|w| self.search_text[i].contains(w.as_str())))
+            .filter(|&i| words.iter().all(|w| self.filter_text[i].contains(w.as_str())))
             .collect()
+    }
+
+    /// Vrai si le morceau `i` contient tous les mots (déjà repliés par [`fold`]) de `query`.
+    pub fn track_matches(&self, i: usize, folded_query: &str) -> bool {
+        folded_query.split_whitespace().all(|w| self.filter_text[i].contains(w))
     }
 
     pub fn filter_albums(&self, query: &str) -> Vec<usize> {

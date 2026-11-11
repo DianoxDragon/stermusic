@@ -73,58 +73,190 @@ fn columns(rect: Rect, opts: &ListOpts) -> Cols {
     }
 }
 
+/// Colonne par laquelle on peut trier une liste de morceaux.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
+pub enum SortKey {
+    Title,
+    Artist,
+    Album,
+    Year,
+    Duration,
+}
+
+/// Tri d'une liste par ses colonnes : jusqu'à trois critères, du plus fort au plus faible, chacun
+/// croissant ou décroissant (`true`). Vide : l'ordre d'origine de la liste.
+#[derive(Clone, Default, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SortSpec(pub Vec<(SortKey, bool)>);
+
+impl SortSpec {
+    /// Clic sur le titre d'une colonne. Seul : elle devient le critère (croissant, puis
+    /// décroissant, puis retour à l'ordre d'origine). Avec Maj : elle s'ajoute aux critères déjà
+    /// là, ou change de sens.
+    pub fn click(&mut self, key: SortKey, add: bool) {
+        let pos = self.0.iter().position(|(k, _)| *k == key);
+        if add {
+            match pos {
+                Some(i) => self.0[i].1 = !self.0[i].1,
+                None if self.0.len() < 3 => self.0.push((key, false)),
+                None => {}
+            }
+            return;
+        }
+        match (pos, self.0.len()) {
+            (Some(0), 1) if !self.0[0].1 => self.0[0].1 = true,
+            (Some(0), 1) => self.0.clear(),
+            _ => self.0 = vec![(key, false)],
+        }
+    }
+
+    /// Trie `list` (tri stable : à critères égaux, l'ordre d'origine est gardé).
+    pub fn sort(&self, lib: &crate::library::Library, list: &mut [usize]) {
+        if self.0.is_empty() {
+            return;
+        }
+        // Clés calculées une fois par morceau.
+        let text = |s: &str| crate::library::fold(s);
+        let mut keyed: Vec<(usize, Vec<(String, u64)>)> = list
+            .iter()
+            .map(|&i| {
+                let t = &lib.tracks[i];
+                let keys = self
+                    .0
+                    .iter()
+                    .map(|(k, _)| match k {
+                        SortKey::Title => (text(&t.title), 0),
+                        SortKey::Artist => (text(t.artist_or_unknown()), 0),
+                        SortKey::Album => (text(t.album_or_unknown()), t.track_no.unwrap_or(0) as u64),
+                        SortKey::Year => (String::new(), t.year.unwrap_or(0) as u64),
+                        SortKey::Duration => (String::new(), t.duration_ms),
+                    })
+                    .collect();
+                (i, keys)
+            })
+            .collect();
+        keyed.sort_by(|a, b| {
+            for (n, (_, desc)) in self.0.iter().enumerate() {
+                let o = a.1[n].cmp(&b.1[n]);
+                if o != std::cmp::Ordering::Equal {
+                    return if *desc { o.reverse() } else { o };
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+        for (slot, (i, _)) in list.iter_mut().zip(keyed) {
+            *slot = i;
+        }
+    }
+}
+
 /// En-tête des colonnes.
 pub fn header(ui: &mut Ui, opts: &ListOpts) {
+    header_sortable(ui, opts, None);
+}
+
+/// En-tête des colonnes ; avec `sort`, leurs titres se cliquent pour trier (voir
+/// [`SortSpec::click`]) et « # » rend l'ordre d'origine. Renvoie vrai si le tri a changé.
+pub fn header_sortable(ui: &mut Ui, opts: &ListOpts, mut sort: Option<&mut SortSpec>) -> bool {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
     let c = columns(rect, opts);
     let font = FontId::proportional(12.5);
     let y = rect.center().y;
-    let p = ui.painter();
-    p.text(
-        pos2(rect.left() + c.gutter / 2.0, y),
-        Align2::CENTER_CENTER,
-        "#",
-        font.clone(),
-        theme::TEXT_3,
-    );
-    p.text(
-        pos2(c.title.0, y),
-        Align2::LEFT_CENTER,
-        tr("Titre"),
-        font.clone(),
-        theme::TEXT_3,
-    );
-    p.text(
-        pos2(c.artist.0, y),
-        Align2::LEFT_CENTER,
-        tr("Artiste"),
-        font.clone(),
-        theme::TEXT_3,
-    );
+    let mut changed = false;
+    // « # » : l'ordre d'origine.
+    let sorted = sort.as_ref().is_some_and(|s| !s.0.is_empty());
+    let num = Rect::from_center_size(pos2(rect.left() + c.gutter / 2.0, y), vec2(28.0, 24.0));
+    let mut num_color = theme::TEXT_3;
+    if sorted {
+        let resp = ui
+            .interact(num, ui.id().with("col_reset"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tr("Revenir à l'ordre d'origine"));
+        if resp.hovered() {
+            num_color = theme::TEXT;
+        }
+        if resp.clicked() {
+            if let Some(s) = sort.as_deref_mut() {
+                s.0.clear();
+                changed = true;
+            }
+        }
+    }
+    ui.painter().text(num.center(), Align2::CENTER_CENTER, "#", font.clone(), num_color);
+
+    let mut cols: Vec<(SortKey, f32, f32, Option<&str>)> = vec![
+        (SortKey::Title, c.title.0, c.title.1, Some(tr("Titre"))),
+        (SortKey::Artist, c.artist.0, c.artist.1, Some(tr("Artiste"))),
+    ];
     if let Some(a) = c.album {
-        p.text(
-            pos2(a.0, y),
-            Align2::LEFT_CENTER,
-            tr("Album"),
-            font.clone(),
-            theme::TEXT_3,
-        );
+        cols.push((SortKey::Album, a.0, a.1, Some(tr("Album"))));
     }
     if let Some(a) = c.year {
-        p.text(
-            pos2(a.0, y),
-            Align2::LEFT_CENTER,
-            tr("Année"),
-            font.clone(),
-            theme::TEXT_3,
-        );
+        cols.push((SortKey::Year, a.0, a.1, Some(tr("Année"))));
     }
-    icons::paint_centered(p, Icon::Clock, pos2(c.duration.0 + 12.0, y), 14.0, theme::TEXT_3);
-    p.hline(
+    cols.push((SortKey::Duration, c.duration.0, c.duration.1, None));
+    for (key, x, w, label) in cols {
+        // Largeur du titre (ou de l'horloge), plus la place de la flèche.
+        let text_w = match label {
+            Some(l) => ui.fonts(|f| f.layout_no_wrap(l.to_owned(), font.clone(), theme::TEXT_3).size().x),
+            None => 24.0,
+        };
+        let state = sort.as_ref().and_then(|s| {
+            s.0.iter().position(|(k, _)| *k == key).map(|i| (i, s.0[i].1, s.0.len()))
+        });
+        let mut color = if state.is_some() { theme::accent_light() } else { theme::TEXT_3 };
+        if sort.is_some() {
+            let zone = Rect::from_min_size(pos2(x - 6.0, rect.top() + 3.0), vec2((text_w + 34.0).min(w + 12.0), 24.0));
+            let resp = ui
+                .interact(zone, ui.id().with(("col_sort", key)), Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(tr("Clic : trier par cette colonne (encore : sens inverse, puis ordre d'origine). Maj+clic : ajouter un second critère."));
+            if resp.hovered() {
+                ui.painter().rect_filled(zone, 5, theme::white(0x0C));
+                if state.is_none() {
+                    color = theme::TEXT;
+                }
+            }
+            if resp.clicked() {
+                let add = ui.input(|i| i.modifiers.shift);
+                if let Some(s) = sort.as_deref_mut() {
+                    s.click(key, add);
+                    changed = true;
+                }
+            }
+        }
+        let p = ui.painter();
+        match label {
+            Some(l) => {
+                p.text(pos2(x, y), Align2::LEFT_CENTER, l, font.clone(), color);
+            }
+            None => icons::paint_centered(p, Icon::Clock, pos2(x + 12.0, y), 14.0, color),
+        }
+        if let Some((rank, desc, total)) = state {
+            // Flèche : pointe en haut pour croissant, en bas pour décroissant.
+            let ax = x + text_w + 9.0;
+            let (top, bottom) = if desc { (y + 3.5, y - 2.5) } else { (y - 3.5, y + 2.5) };
+            p.add(egui::Shape::convex_polygon(
+                vec![pos2(ax, top), pos2(ax - 4.0, bottom), pos2(ax + 4.0, bottom)],
+                color,
+                egui::Stroke::NONE,
+            ));
+            if total > 1 {
+                p.text(
+                    pos2(ax + 7.0, y),
+                    Align2::LEFT_CENTER,
+                    (rank + 1).to_string(),
+                    FontId::proportional(10.0),
+                    color,
+                );
+            }
+        }
+    }
+    ui.painter().hline(
         rect.x_range(),
         rect.bottom(),
         egui::Stroke::new(1.0_f32, theme::stroke()),
     );
+    changed
 }
 
 pub struct RowOut {
@@ -511,7 +643,7 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
     if let Some(pl) = opts.playlist {
         ui.separator();
         if widgets::menu_item(ui, Some(Icon::Trash), tr("Retirer de la playlist")).clicked() {
-            c.actions.push(Action::RemoveFromPlaylist(pl, i));
+            c.actions.push(Action::RemoveFromPlaylist(pl, idx));
         }
     }
     if opts.queue_pos.is_some() {
@@ -912,4 +1044,27 @@ pub fn stagger(ctx: &egui::Context, i: usize) -> f32 {
         .data(|d| d.get_temp::<f32>(egui::Id::new("page_stagger")))
         .unwrap_or(1.0);
     ((s - (i.min(15) as f32) * 0.04) / 0.4).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+
+    #[test]
+    fn column_clicks() {
+        let mut s = SortSpec::default();
+        s.click(SortKey::Title, false);
+        assert_eq!(s.0, vec![(SortKey::Title, false)]);
+        s.click(SortKey::Title, false);
+        assert_eq!(s.0, vec![(SortKey::Title, true)]);
+        s.click(SortKey::Title, false);
+        assert!(s.0.is_empty()); // troisième clic : ordre d'origine
+        s.click(SortKey::Artist, false);
+        s.click(SortKey::Year, true);
+        s.click(SortKey::Year, true);
+        assert_eq!(s.0, vec![(SortKey::Artist, false), (SortKey::Year, true)]);
+        // Un clic simple sur une autre colonne repart d'un seul critère.
+        s.click(SortKey::Album, false);
+        assert_eq!(s.0, vec![(SortKey::Album, false)]);
+    }
 }

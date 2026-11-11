@@ -388,57 +388,54 @@ impl SterMusic {
                     } else {
                         None
                     };
-                    // Favoris et playlists intelligentes : une rangée d'icônes, discrète (le nom
-                    // s'affiche au survol).
-                    let mut quick: Vec<(PlaylistId, Icon, String)> =
-                        vec![(PlaylistId::Favorites, Icon::Heart, tr("Favoris").to_owned())];
-                    quick.extend(
-                        self.settings
-                            .smart_playlists
-                            .iter()
-                            .enumerate()
-                            .map(|(i, p)| (PlaylistId::Smart(i), p.icon.icon(), p.name.clone())),
-                    );
-                    const PILL: f32 = 36.0;
-                    let per_row = (((inner_w - 12.0) / (PILL + 4.0)).floor() as usize).max(1);
-                    for (k, (id, icon, name)) in quick.into_iter().enumerate() {
-                        let (row, col) = (k / per_row, k % per_row);
-                        let r = Rect::from_min_size(
-                            pos2(
-                                left + 6.0 + col as f32 * (PILL + 4.0),
-                                y + row as f32 * (PILL + 4.0),
-                            ),
-                            vec2(PILL, PILL),
-                        );
-                        if quick_item(ui, r, icon, &name, current_pl == Some(id)).clicked() {
-                            self.actions.push(Action::Go(View::Playlist(id)));
-                        }
-                    }
-                    let rows = (self.settings.smart_playlists.len() + 1).div_ceil(per_row);
-                    y += rows as f32 * (PILL + 4.0) + 6.0;
+                    // Les playlists épinglées (six au plus), chacune avec son icône et son nom.
+                    let pinned: Vec<(PlaylistId, Icon, String)> = self
+                        .pinned()
+                        .into_iter()
+                        .map(|id| {
+                            let icon = match id {
+                                PlaylistId::Favorites => Icon::Heart,
+                                PlaylistId::Smart(i) => self.settings.smart_playlists[i].icon.icon(),
+                                PlaylistId::User(_) => Icon::ListMusic,
+                            };
+                            (id, icon, self.playlist_name(id))
+                        })
+                        .collect();
                     let list_rect = Rect::from_min_max(
                         pos2(left, y),
                         pos2(left + inner_w, rect.bottom() - bottom_reserved),
                     );
-                    let entries: Vec<(PlaylistId, String)> = self
-                        .settings
-                        .playlists
-                        .iter()
-                        .enumerate()
-                        .map(|(i, p)| (PlaylistId::User(i), p.name.clone()))
-                        .collect();
                     ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
                         egui::ScrollArea::vertical()
                             .id_salt("side_playlists")
                             .auto_shrink(false)
                             .show(ui, |ui| {
-                                for (id, name) in entries {
-                                    let (r, _) = ui.allocate_exact_size(vec2(inner_w, 34.0), Sense::hover());
-                                    if sub_item(ui, r, Icon::ListMusic, &name, current_pl == Some(id))
-                                        .clicked()
-                                    {
+                                if pinned.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        ui.add_space(14.0);
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(tr(
+                                                    "Épingle ici jusqu'à six playlists : clic droit sur une playlist → Épingler.",
+                                                ))
+                                                .small()
+                                                .color(theme::TEXT_3),
+                                            )
+                                            .wrap(),
+                                        );
+                                    });
+                                }
+                                for (id, icon, name) in pinned {
+                                    let (r, _) = ui.allocate_exact_size(vec2(inner_w, 31.0), Sense::hover());
+                                    let resp = sub_item(ui, r, icon, &name, current_pl == Some(id));
+                                    if resp.clicked() {
                                         self.actions.push(Action::Go(View::Playlist(id)));
                                     }
+                                    resp.context_menu(|ui| {
+                                        let tracks = self.playlist_tracks(id);
+                                        self.playlist_menu(ui, id, &tracks);
+                                    });
                                 }
                             });
                     });
@@ -741,6 +738,7 @@ impl SterMusic {
                     };
                     let paths = self.paths(&tracks);
                     self.settings.playlists.push(Playlist {
+                        pinned: false,
                         name: name.clone(),
                         tracks: paths,
                     });
@@ -886,33 +884,6 @@ fn nav_item(
     } else {
         response.on_hover_text(label)
     }
-}
-
-/// Raccourci rond vers une playlist (favoris, playlists intelligentes) : l'icône seule.
-fn quick_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bool) -> egui::Response {
-    let response = ui.interact(
-        rect,
-        ui.id()
-            .with(("quick", label, rect.left() as i32, rect.top() as i32)),
-        Sense::click(),
-    );
-    let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::FAST);
-    if s > 0.0 {
-        ui.painter().rect_filled(
-            rect,
-            CornerRadius::same(8),
-            theme::alpha(theme::accent(), (0x55 as f32 * s) as u8),
-        );
-    }
-    widgets::paint_interaction(ui, rect, 8, &response);
-    let h = widgets::hover_t(ui, response.id, response.hovered());
-    let color = theme::mix(
-        theme::mix(theme::TEXT_3, theme::TEXT, h),
-        theme::accent_light(),
-        s,
-    );
-    icons::paint_centered(ui.painter(), icon, rect.center(), 17.0, color);
-    response.on_hover_text(label)
 }
 
 fn sub_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bool) -> egui::Response {
