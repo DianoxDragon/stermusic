@@ -263,7 +263,7 @@ impl SterMusic {
         let mut pick: Option<usize> = None;
         let width = (ctx.screen_rect().width() - 100.0).clamp(600.0, 760.0);
         let list_h = (ctx.screen_rect().height() - 260.0).clamp(160.0, 460.0);
-        let modal = egui::Modal::new(egui::Id::new("missing_covers"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("missing_covers"))
             .frame(lib_tools::modal_frame(ctx))
             .show(ctx, |ui| {
                 ui.set_width(width);

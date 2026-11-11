@@ -503,7 +503,7 @@ impl SterMusic {
         let height = (screen.height() - 140.0).clamp(320.0, 720.0);
         let mut close = false;
         let pv = self.previews(now);
-        let modal = egui::Modal::new(egui::Id::new("viz_gallery"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("viz_gallery"))
             .frame(egui::Frame::popup(&ctx.style()).inner_margin(20.0).corner_radius(14))
             .show(ctx, |ui| {
                 ui.set_width(width);

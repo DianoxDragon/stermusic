@@ -382,7 +382,7 @@ impl SterMusic {
             Tool::Sync => tr("Synchroniser"),
         };
         let mut close = false;
-        let modal = egui::Modal::new(egui::Id::new(("tool", tool as u8)))
+        let modal = crate::widgets::modal(ctx, egui::Id::new(("tool", tool as u8)))
             .frame(
                 egui::Frame::popup(&ctx.style())
                     .inner_margin(24.0)

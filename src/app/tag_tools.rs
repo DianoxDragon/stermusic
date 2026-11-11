@@ -426,7 +426,7 @@ impl SterMusic {
         };
         let (mut close, mut apply) = (false, false);
         let width = (ctx.screen_rect().width() - 100.0).clamp(620.0, 780.0);
-        let modal = egui::Modal::new(egui::Id::new("tag_tool"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("tag_tool"))
             .frame(
                 egui::Frame::popup(&ctx.style())
                     .inner_margin(24.0)

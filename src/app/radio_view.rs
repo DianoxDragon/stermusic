@@ -770,7 +770,7 @@ impl SterMusic {
         };
         let mut close = false;
         let mut add = None;
-        let modal = egui::Modal::new(egui::Id::new("radio_add"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("radio_add"))
             .frame(
                 egui::Frame::popup(&ctx.style())
                     .inner_margin(24.0)

@@ -428,7 +428,13 @@ impl SterMusic {
                                 }
                                 for (id, icon, name) in pinned {
                                     let (r, _) = ui.allocate_exact_size(vec2(inner_w, 31.0), Sense::hover());
-                                    let resp = sub_item(ui, r, icon, &name, current_pl == Some(id));
+                                    let t = anim::appear(ui.ctx(), egui::Id::new(("pin_in", format!("{id:?}"))), anim::SLOW);
+                                    let resp = ui
+                                        .scope(|ui| {
+                                            ui.set_opacity(t);
+                                            sub_item(ui, r.translate(vec2(-10.0 * (1.0 - t), 0.0)), icon, &name, current_pl == Some(id))
+                                        })
+                                        .inner;
                                     if resp.clicked() {
                                         self.actions.push(Action::Go(View::Playlist(id)));
                                     }
@@ -586,7 +592,7 @@ impl SterMusic {
             Dialog::Rename { .. } => tr("Renommer la playlist"),
             Dialog::ConfirmDelete(_) => tr("Supprimer la playlist ?"),
         };
-        let modal = egui::Modal::new(egui::Id::new("dialog"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("dialog"))
             .frame(
                 egui::Frame::popup(&ctx.style())
                     .inner_margin(24.0)
@@ -779,16 +785,22 @@ impl SterMusic {
             self.toast = None;
             return;
         }
-        let fade = (age / 0.2).min(1.0).min((LIFE - age) / 0.4).clamp(0.0, 1.0);
+        // Arrivée : glisse depuis la droite avec un léger rebond ; départ : fondu en descendant.
+        let enter = anim::Easing::OutBack.apply((age / 0.35).min(1.0));
+        let leave = ((LIFE - age) / 0.4).clamp(0.0, 1.0);
+        let fade = (age / 0.2).min(1.0).min(leave).clamp(0.0, 1.0);
+        let offset = vec2(28.0 * (1.0 - enter), 8.0 * (1.0 - leave));
+        let pop = anim::Easing::OutBack.apply(((age - 0.08) / 0.3).clamp(0.0, 1.0));
+        let left = 1.0 - age / LIFE;
         let screen = ctx.screen_rect();
         let text = text.clone();
         egui::Area::new(egui::Id::new("toast"))
             .order(egui::Order::Foreground)
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -120.0 + 8.0 * (1.0 - fade)))
+            .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -120.0) + offset)
             .interactable(false)
             .show(ctx, |ui| {
                 ui.set_opacity(fade);
-                egui::Frame::popup(ui.style())
+                let frame = egui::Frame::popup(ui.style())
                     .corner_radius(10)
                     .inner_margin(egui::Margin::symmetric(16, 12))
                     .show(ui, |ui| {
@@ -799,12 +811,16 @@ impl SterMusic {
                                 ui.painter(),
                                 Icon::Info,
                                 r.center(),
-                                16.0,
+                                16.0 * pop,
                                 theme::accent_light(),
                             );
                             ui.label(egui::RichText::new(text).color(theme::TEXT));
                         });
                     });
+                // Fin filet en bas : le temps qu'il reste avant que la notification s'en aille.
+                let r = frame.response.rect.shrink2(vec2(10.0, 0.0));
+                let line = Rect::from_min_size(pos2(r.left(), r.bottom() - 3.0), vec2(r.width() * left, 2.0));
+                theme::brand_fill(ui.painter(), line, 1, 0.7);
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
@@ -869,12 +885,18 @@ fn nav_item(
             let galley =
                 ui.fonts(|f| f.layout_no_wrap(b.to_owned(), FontId::proportional(11.0), theme::TEXT));
             let w = (galley.size().x + 12.0).max(22.0);
+            let appear = anim::appear_each(ui.ctx(), response.id.with("badge_in"), anim::SLOW, Easing::OutBack);
+            let bump = anim::pulse(ui.ctx(), response.id.with("badge_bump"), egui::Id::new(b).value(), anim::SLOW * 1.5);
+            let scale = appear.max(0.0) * (1.0 + 0.22 * bump);
             let r = Rect::from_center_size(
                 pos2(rect.right() - 12.0 - w / 2.0, rect.center().y),
-                vec2(w, 18.0),
+                vec2(w, 18.0) * scale,
             );
-            ui.painter()
-                .rect_filled(r, CornerRadius::same(9), theme::accent_soft());
+            ui.painter().rect_filled(
+                r,
+                CornerRadius::same((9.0 * scale) as u8),
+                theme::mix(theme::accent_soft(), theme::accent(), bump),
+            );
             ui.painter()
                 .galley(r.center() - galley.size() / 2.0, galley, theme::TEXT);
         }
@@ -892,22 +914,24 @@ fn sub_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bo
         ui.id().with(("sub", label, rect.top() as i32)),
         Sense::click(),
     );
-    if selected {
+    // Identifiant stable (la position change quand la liste défile) pour les animations.
+    let key = egui::Id::new(("sub_item", label));
+    let s = anim::toggle(ui.ctx(), key.with("sel"), selected, anim::FAST);
+    if s > 0.0 {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), theme::white(0x10));
+            .rect_filled(rect, CornerRadius::same(6), theme::white(0x10).gamma_multiply(s));
     }
     widgets::paint_interaction(ui, rect, 6, &response);
-    let color = if selected { theme::TEXT } else { theme::TEXT_2 };
+    let h = widgets::hover_t(ui, response.id, response.hovered());
+    let color = theme::mix(theme::TEXT_2, theme::TEXT, s.max(h));
+    // L'icône, à l'accent quand la playlist est ouverte, rebondit à la sélection.
+    let pop = widgets::pop(ui.ctx(), key, selected);
     icons::paint_centered(
         ui.painter(),
         icon,
         pos2(rect.left() + 24.0, rect.center().y),
-        15.0,
-        if selected {
-            theme::accent_light()
-        } else {
-            theme::TEXT_3
-        },
+        15.0 * pop,
+        theme::mix(theme::mix(theme::TEXT_3, theme::TEXT_2, h), theme::accent_light(), s),
     );
     let g = widgets::galley(ui, label, FontId::proportional(13.5), color, rect.width() - 64.0);
     ui.painter().galley(

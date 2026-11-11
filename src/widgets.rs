@@ -343,10 +343,23 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, wi
     response
 }
 
+/// Enfoncement d'un bouton : il se tasse un peu à l'appui et rebondit au relâchement.
+fn pressed_rect(ui: &Ui, rect: Rect, response: &Response, depth: f32) -> Rect {
+    let press = anim::value(
+        ui.ctx(),
+        response.id.with("press"),
+        if response.is_pointer_button_down_on() { 1.0 } else { 0.0 },
+        anim::NORMAL,
+        anim::Easing::OutBack,
+    );
+    Rect::from_center_size(rect.center(), rect.size() * (1.0 - depth * press))
+}
+
 /// Bouton secondaire « verre ».
 pub fn secondary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     let (galley, w) = button_content(ui, icon, text, theme::TEXT);
     let (rect, response) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
+    let rect = pressed_rect(ui, rect, &response, 0.04);
     let t = hover_t(ui, response.id, response.hovered());
     let painter = ui.painter();
     painter.rect_filled(
@@ -378,6 +391,26 @@ pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, R
     let arrow_rect = Rect::from_min_max(pos2(split, rect.top()), rect.max);
     let main = ui.interact(main_rect, whole.id.with("main"), Sense::click());
     let arrow = ui.interact(arrow_rect, whole.id.with("arrow"), Sense::click());
+    // Tout le bouton se tasse, quelle que soit la partie appuyée.
+    let down = main.is_pointer_button_down_on() || arrow.is_pointer_button_down_on();
+    let press = anim::value(
+        ui.ctx(),
+        whole.id.with("press"),
+        if down { 1.0 } else { 0.0 },
+        anim::NORMAL,
+        anim::Easing::OutBack,
+    );
+    let k = 1.0 - 0.04 * press;
+    let squeeze = |r: Rect| {
+        Rect::from_min_max(
+            rect.center() + (r.min - rect.center()) * k,
+            rect.center() + (r.max - rect.center()) * k,
+        )
+    };
+    let (rect, main_rect, arrow_rect) = (squeeze(rect), squeeze(main_rect), squeeze(arrow_rect));
+    let split = arrow_rect.left();
+    // La flèche descend d'un cran pendant que son menu est ouvert ou survolé.
+    let drop = hover_t(ui, arrow.id.with("chevron"), arrow.hovered());
     let painter = ui.painter();
     let left = CornerRadius { nw: 6, sw: 6, ..Default::default() };
     let right = CornerRadius { ne: 6, se: 6, ..Default::default() };
@@ -393,7 +426,13 @@ pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, R
     painter.rect_stroke(rect, CornerRadius::same(6), stroke, StrokeKind::Inside);
     painter.vline(split, rect.y_range().shrink(7.0), stroke);
     paint_button_content(ui, main_rect, icon, galley, theme::TEXT);
-    icons::paint_centered(painter, Icon::ChevronDown, arrow_rect.center(), 14.0, theme::TEXT_2);
+    icons::paint_centered(
+        painter,
+        Icon::ChevronDown,
+        arrow_rect.center() + vec2(0.0, 1.5 * drop),
+        14.0,
+        theme::mix(theme::TEXT_2, theme::TEXT, drop),
+    );
     (main, arrow)
 }
 
@@ -408,26 +447,33 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
         ui.ctx(),
         response.id.with("knob"),
         if *on { 1.0 } else { 0.0 },
-        0.18,
-        anim::Easing::Out,
+        anim::NORMAL,
+        anim::Easing::OutBack,
     );
+    let fill = a.clamp(0.0, 1.0);
+    let h = hover_t(ui, response.id, response.hovered());
+    let press = anim::toggle(ui.ctx(), response.id.with("press"), response.is_pointer_button_down_on(), anim::FAST);
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(10), theme::white(0x14));
     painter.rect_stroke(
         rect,
         CornerRadius::same(10),
-        Stroke::new(1.0_f32, theme::white(0x40).gamma_multiply(1.0 - a)),
+        Stroke::new(1.0_f32, theme::white(0x40).gamma_multiply(1.0 - fill)),
         StrokeKind::Inside,
     );
-    if a > 0.0 {
-        theme::brand_fill(painter, rect, 10, a);
+    if fill > 0.0 {
+        theme::brand_fill(painter, rect, 10, fill);
     }
     let x = egui::lerp(rect.left() + 10.0..=rect.right() - 10.0, a);
-    let r = if response.hovered() { 7.0 } else { 6.0 };
-    painter.circle_filled(
-        pos2(x, rect.center().y),
-        r,
-        theme::mix(theme::TEXT_2, Color32::WHITE, a),
+    let r = 6.0 + 1.0 * h;
+    // À l'appui, le curseur s'allonge vers le côté où il va partir.
+    let stretch = 4.0 * press;
+    let dir = if *on { -1.0 } else { 1.0 };
+    let knob = Rect::from_center_size(pos2(x + dir * stretch / 2.0, rect.center().y), vec2(2.0 * r + stretch, 2.0 * r));
+    painter.rect_filled(
+        knob,
+        CornerRadius::same(r as u8),
+        theme::mix(theme::TEXT_2, Color32::WHITE, fill),
     );
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -527,8 +573,27 @@ pub fn seek_bar_marked(
     Seek { preview, commit, rect }
 }
 
+/// Progression (0 → 1) de l'arrivée d'une image tout juste chargée : elle se pose en fondu
+/// sur son dégradé d'attente au lieu d'apparaître d'un coup.
+fn texture_in(ctx: &egui::Context, tex: &TextureHandle) -> f32 {
+    anim::value_from(ctx, egui::Id::new(("tex_in", tex.id())), 0.0, 1.0, anim::NORMAL, anim::Easing::Out)
+}
+
 /// Pochette dans un rectangle arrondi ; sans image, un dégradé avec une note de musique.
+/// Une image qui vient d'arriver se pose en fondu sur le dégradé.
 pub fn cover(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHandle>, radius: u8, seed: &str) {
+    let t = texture.map_or(1.0, |tex| texture_in(painter.ctx(), tex));
+    if t < 1.0 {
+        cover_now(painter, rect, None, radius, seed);
+    }
+    let mut p = painter.clone();
+    p.multiply_opacity(t);
+    cover_now(&p, rect, texture, radius, seed);
+}
+
+/// Comme [`cover`], sans fondu d'arrivée : pour les pochettes qui ont déjà leur propre fondu
+/// (changement de morceau).
+pub fn cover_now(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHandle>, radius: u8, seed: &str) {
     match texture {
         Some(tex) => {
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
@@ -581,7 +646,16 @@ pub fn soft_glow(painter: &egui::Painter, bounds: Rect, center: Pos2, radius: f3
 
 /// Image ronde (artistes) ; sans image, l'initiale sur un dégradé.
 pub fn circle_cover(ui: &Ui, center: Pos2, radius: f32, texture: Option<&TextureHandle>, name: &str) {
-    let painter = ui.painter();
+    let t = texture.map_or(1.0, |tex| texture_in(ui.ctx(), tex));
+    if t < 1.0 {
+        circle_cover_paint(ui.painter(), center, radius, None, name);
+    }
+    let mut p = ui.painter().clone();
+    p.multiply_opacity(t);
+    circle_cover_paint(&p, center, radius, texture, name);
+}
+
+fn circle_cover_paint(painter: &egui::Painter, center: Pos2, radius: f32, texture: Option<&TextureHandle>, name: &str) {
     match texture {
         Some(tex) => {
             // Rectangle aux coins entièrement arrondis : egui en lisse le bord (anti-crénelage),
@@ -619,13 +693,14 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     let width = ui.available_width().max(200.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
     paint_interaction(ui, rect, 5, &response);
+    let t = hover_t(ui, response.id, response.hovered());
     if let Some(icon) = icon {
         icons::paint_centered(
             ui.painter(),
             icon,
-            pos2(rect.left() + 16.0, rect.center().y),
+            pos2(rect.left() + 16.0 + 1.5 * t, rect.center().y),
             16.0,
-            theme::TEXT_2,
+            theme::mix(theme::TEXT_2, theme::accent_light(), t),
         );
     }
     ui.painter().text(
@@ -652,7 +727,7 @@ pub fn link(ui: &mut Ui, text: &str) -> Response {
     icons::paint_centered(
         ui.painter(),
         Icon::ChevronRight,
-        pos2(rect.right() - 7.0, rect.center().y),
+        pos2(rect.right() - 7.0 + 3.0 * t, rect.center().y),
         14.0,
         color,
     );
@@ -661,13 +736,32 @@ pub fn link(ui: &mut Ui, text: &str) -> Response {
 
 /// Grand état vide (bibliothèque vide, file d'attente vide…).
 pub fn empty_state(ui: &mut Ui, icon: Icon, title: &str, subtitle: &str) {
+    let id = egui::Id::new(("empty_state", title));
+    let pop = anim::appear_each(ui.ctx(), id, anim::SLOW * 1.6, anim::Easing::OutBack);
+    let wave = anim::appear_each(ui.ctx(), id.with("wave"), 1.1, anim::Easing::Out);
+    let text_in = anim::appear_each(ui.ctx(), id.with("text"), anim::SLOW * 1.5, anim::Easing::OutExpo);
     ui.vertical_centered(|ui| {
         ui.add_space(48.0);
         let (rect, _) = ui.allocate_exact_size(vec2(88.0, 88.0), Sense::hover());
+        if wave < 1.0 {
+            ui.painter().circle_stroke(
+                rect.center(),
+                44.0 + 26.0 * wave,
+                Stroke::new(2.0_f32, theme::accent_light().gamma_multiply(0.5 * (1.0 - wave))),
+            );
+        }
+        let scale = pop.max(0.0);
         ui.painter()
-            .circle_filled(rect.center(), 44.0, theme::accent_soft());
-        icons::paint_centered(ui.painter(), icon, rect.center(), 40.0, theme::accent_light());
-        ui.add_space(14.0);
+            .circle_filled(rect.center(), 44.0 * scale, theme::accent_soft());
+        icons::paint_centered(
+            ui.painter(),
+            icon,
+            rect.center(),
+            40.0 * scale,
+            theme::accent_light().gamma_multiply(pop.clamp(0.0, 1.0)),
+        );
+        ui.set_opacity(text_in);
+        ui.add_space(14.0 + 8.0 * (1.0 - text_in));
         ui.label(
             egui::RichText::new(title)
                 .font(theme::semibold(20.0))
@@ -823,4 +917,13 @@ pub fn place<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
             .layout(egui::Layout::centered_and_justified(egui::Direction::TopDown)),
     );
     add(&mut child)
+}
+
+/// Fenêtre modale de SterMusic : à chaque ouverture, elle monte de quelques pixels en se posant,
+/// pendant le fondu d'egui.
+pub fn modal(ctx: &egui::Context, id: egui::Id) -> egui::Modal {
+    let t = anim::appear_each(ctx, id.with("modal_in"), anim::SLOW, anim::Easing::OutExpo);
+    egui::Modal::new(id).area(
+        egui::Modal::default_area(id).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 16.0 * (1.0 - t))),
+    )
 }

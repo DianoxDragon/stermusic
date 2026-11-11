@@ -1137,7 +1137,7 @@ impl SterMusic {
         }
         let n = self.tag_editor.dirty_count();
         let (mut close, mut confirm) = (false, false);
-        let modal = egui::Modal::new(egui::Id::new("tag_clear"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("tag_clear"))
             .frame(
                 egui::Frame::popup(&ctx.style())
                     .inner_margin(24.0)

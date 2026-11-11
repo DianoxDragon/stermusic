@@ -302,20 +302,31 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
     let t = &c.lib.tracks[idx];
     let fav = c.settings.favorites.contains(&t.path);
 
+    // Le surlignage du morceau en cours et de la sélection arrive et s'en va en fondu : au
+    // changement de morceau, il glisse d'une ligne à l'autre.
+    let cur_t = anim::toggle(ui.ctx(), resp.id.with("cur"), is_current, anim::NORMAL);
+    let sel_t = anim::toggle(ui.ctx(), resp.id.with("sel"), selected, anim::FAST);
     let painter = ui.painter();
     if i % 2 == 1 {
         painter.rect_filled(row, CornerRadius::same(6), theme::white(0x04));
     }
-    if selected || is_current {
+    if sel_t > 0.0 && !is_current {
+        painter.rect_filled(row, CornerRadius::same(6), theme::white(0x0E).gamma_multiply(sel_t));
+    }
+    if cur_t > 0.0 {
         painter.rect_filled(
             row,
             CornerRadius::same(6),
-            if is_current {
-                theme::alpha(theme::accent(), 0x1E)
-            } else {
-                theme::white(0x0E)
-            },
+            theme::alpha(theme::accent(), 0x1E).gamma_multiply(cur_t),
         );
+        // Liseré à gauche, qui grandit depuis le centre.
+        let bar = Rect::from_center_size(
+            pos2(row.left() + 1.5, row.center().y),
+            vec2(3.0, (row.height() - 16.0) * cur_t),
+        );
+        if bar.height() > 1.0 {
+            painter.rect_filled(bar, CornerRadius::same(2), theme::accent_light().gamma_multiply(cur_t));
+        }
     }
     widgets::paint_interaction(ui, row, 6, &resp);
     let hovered = resp.hovered();
@@ -347,13 +358,18 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
     };
     let gutter_resp = ui.interact(gutter, ui.id().with(("gutter", i, idx)), Sense::click());
     let show_play = hovered || gutter_resp.hovered();
+    let play_t = anim::toggle(ui.ctx(), resp.id.with("play"), show_play, anim::FAST);
     if opts.cover {
         let cover = Rect::from_center_size(gutter.center(), vec2(38.0, 38.0));
         let tex = c.covers.thumb(&t.path).cloned();
         widgets::cover(ui.painter(), cover, tex.as_ref(), 4, &t.album);
-        if show_play || (is_current && !opts.numbered) {
-            ui.painter()
-                .rect_filled(cover, CornerRadius::same(4), Color32::from_black_alpha(130));
+        let shade = if is_current && !opts.numbered { 1.0 } else { play_t };
+        if shade > 0.0 {
+            ui.painter().rect_filled(
+                cover,
+                CornerRadius::same(4),
+                Color32::from_black_alpha((130.0 * shade) as u8),
+            );
         }
     }
     let center = gutter.center();
@@ -371,7 +387,14 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         } else {
             Icon::Play
         };
-        icons::paint_centered(ui.painter(), icon, center, 15.0, color);
+        // Le bouton lecture grossit un peu en arrivant au survol.
+        icons::paint_centered(
+            ui.painter(),
+            icon,
+            center,
+            15.0 * (0.7 + 0.3 * play_t),
+            color.gamma_multiply(play_t.max(0.3)),
+        );
     } else if !opts.cover {
         let n = if opts.track_no {
             t.track_no.map(|n| n.to_string()).unwrap_or_default()
@@ -389,16 +412,12 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
 
     // Colonnes de texte.
     let y = row.center().y;
-    let title_color = if is_current {
-        theme::accent_light()
-    } else {
-        theme::TEXT
-    };
-    let other = if is_current {
-        theme::mix(theme::accent_light(), theme::TEXT_2, 0.5)
-    } else {
-        theme::TEXT_2
-    };
+    let title_color = theme::mix(theme::TEXT, theme::accent_light(), cur_t);
+    let other = theme::mix(
+        theme::TEXT_2,
+        theme::mix(theme::accent_light(), theme::TEXT_2, 0.5),
+        cur_t,
+    );
     let text = |ui: &Ui, s: &str, col: (f32, f32), font: FontId, color: Color32| {
         let g = widgets::galley(ui, s, font, color, col.1);
         ui.painter().galley(pos2(col.0, y - g.size().y / 2.0), g, color);
@@ -1025,6 +1044,7 @@ fn page_ids(key: &str) -> (egui::Id, egui::Id) {
 /// Apparition d'une page : renvoie sa progression (0 → 1) et prépare la cascade des éléments.
 pub fn page_progress(ctx: &egui::Context, key: &str) -> f32 {
     let (fade, cascade) = page_ids(key);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("page_cascade_id"), cascade));
     let t = anim::value_from(ctx, fade, 0.0, 1.0, anim::SLOW, anim::Easing::OutExpo);
     let s = anim::value_from(ctx, cascade, 0.0, 1.0, 0.75, anim::Easing::Out);
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("page_stagger"), s));
@@ -1036,6 +1056,14 @@ pub fn reset_page(ctx: &egui::Context, key: &str) {
     let (fade, cascade) = page_ids(key);
     anim::reset(ctx, fade);
     anim::reset(ctx, cascade);
+}
+
+/// Rejoue la cascade des éléments de la page affichée (changement d'onglet), sans refaire
+/// apparaître toute la page.
+pub fn restart_cascade(ctx: &egui::Context) {
+    if let Some(id) = ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::new("page_cascade_id"))) {
+        anim::reset(ctx, id);
+    }
 }
 
 /// Opacité du `i`-ème élément d'une page qui apparaît (les premiers d'abord).

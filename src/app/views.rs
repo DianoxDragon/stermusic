@@ -659,7 +659,9 @@ impl SterMusic {
                     let (r, resp) =
                         ui.allocate_exact_size(vec2(galley.size().x + 24.0, 34.0), Sense::click());
                     widgets::paint_interaction(ui, r, 6, &resp);
-                    let color = if selected { theme::TEXT } else { theme::TEXT_2 };
+                    let s = anim::toggle(ui.ctx(), resp.id.with("sel"), selected, anim::NORMAL);
+                    let h = widgets::hover_t(ui, resp.id, resp.hovered());
+                    let color = theme::mix(theme::TEXT_2, theme::TEXT, s.max(h * 0.6));
                     ui.painter()
                         .galley(r.center() - galley.size() / 2.0, galley, color);
                     if resp.clicked() {
@@ -733,6 +735,14 @@ impl SterMusic {
             theme::brand_fill(ui.painter(), line, 2, 1.0);
         }
         ui.add_space(14.0);
+
+        let tab_in = egui::Id::new("lib_tab_in");
+        if anim::key_changed(ui.ctx(), tab_in, self.settings.lib_tab as u64) {
+            anim::reset(ui.ctx(), tab_in);
+            lists::restart_cascade(ui.ctx());
+        }
+        let t = anim::value_from(ui.ctx(), tab_in, 0.0, 1.0, anim::SLOW, anim::Easing::OutExpo);
+        ui.set_opacity(t);
 
         let query = self.lib_filter.trim().to_owned();
         match self.settings.lib_tab {
@@ -1899,13 +1909,13 @@ impl SterMusic {
             p.set_opacity(1.0 - fade);
             let old_seed = self.np_prev_text.as_ref().map(|s| s[2].as_str()).unwrap_or("");
             let r = cover.translate(vec2(-dir * slide * fade, 0.0));
-            widgets::cover(&p, r.shrink(cover.width() * 0.02 * fade), prev, 14, old_seed);
+            widgets::cover_now(&p, r.shrink(cover.width() * 0.02 * fade), prev, 14, old_seed);
         }
         {
             let mut p = ui.painter().clone();
             p.set_opacity(fade);
             let r = cover.translate(vec2(dir * slide * (1.0 - fade), 0.0));
-            widgets::cover(&p, r, cover_fade.current(), 14, &t.album);
+            widgets::cover_now(&p, r, cover_fade.current(), 14, &t.album);
         }
 
         // Double-clic sur la pochette : plein écran (le bouton est dans la barre de lecture).
@@ -2667,29 +2677,33 @@ impl SterMusic {
 pub(super) fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_owned(), FontId::proportional(13.5), theme::TEXT));
     let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 26.0, 30.0), Sense::click());
+    // La sélection passe d'un segment à l'autre en fondu, avec un petit rebond à l'appui.
+    let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::NORMAL);
+    let press = anim::value(
+        ui.ctx(),
+        response.id.with("press"),
+        if response.is_pointer_button_down_on() { 1.0 } else { 0.0 },
+        anim::NORMAL,
+        anim::Easing::OutBack,
+    );
+    let rect = Rect::from_center_size(rect.center(), rect.size() * (1.0 - 0.04 * press));
     let painter = ui.painter();
-    if selected {
-        painter.rect_filled(rect, CornerRadius::same(6), theme::alpha(theme::accent(), 0x55));
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(6),
-            Stroke::new(1.0_f32, theme::accent_light()),
-            StrokeKind::Inside,
-        );
-    } else {
-        painter.rect_filled(rect, CornerRadius::same(6), theme::white(0x0C));
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(6),
-            Stroke::new(1.0_f32, theme::stroke()),
-            StrokeKind::Inside,
-        );
-    }
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(6),
+        theme::mix(theme::white(0x0C), theme::alpha(theme::accent(), 0x55), s),
+    );
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(6),
+        Stroke::new(1.0_f32, theme::mix(theme::stroke(), theme::accent_light(), s)),
+        StrokeKind::Inside,
+    );
     widgets::paint_interaction(ui, rect, 6, &response);
     ui.painter().galley(
         rect.center() - galley.size() / 2.0,
         galley,
-        if selected { theme::TEXT } else { theme::TEXT_2 },
+        theme::mix(theme::TEXT_2, theme::TEXT, s),
     );
     response
 }

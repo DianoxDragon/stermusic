@@ -262,7 +262,7 @@ impl SterMusic {
         let (mut close, mut send) = (false, false);
         let width = (ctx.screen_rect().width() - 100.0).clamp(640.0, 860.0);
         let list_h = (ctx.screen_rect().height() - 270.0).clamp(160.0, 480.0);
-        let modal = egui::Modal::new(egui::Id::new("duplicates"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("duplicates"))
             .frame(lib_tools::modal_frame(ctx))
             .show(ctx, |ui| {
                 ui.set_width(width);

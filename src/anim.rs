@@ -87,6 +87,56 @@ pub fn appear(ctx: &Context, id: Id, duration: f32) -> f32 {
     value_from(ctx, id, 0.0, 1.0, duration, Easing::Out)
 }
 
+/// Vrai si l'élément `id` n'était pas affiché à l'image précédente (fenêtre qui s'ouvre, état vide
+/// qui revient…). À appeler une seule fois par image et par élément.
+pub fn fresh(ctx: &Context, id: Id) -> bool {
+    let slot = id.with("seen");
+    let pass = ctx.cumulative_pass_nr();
+    let prev = ctx.data_mut(|d| {
+        let prev = d.get_temp::<u64>(slot);
+        d.insert_temp(slot, pass);
+        prev
+    });
+    !prev.is_some_and(|p| p + 1 >= pass)
+}
+
+/// Comme [`appear`], mais rejouée chaque fois que l'élément réapparaît après avoir disparu.
+pub fn appear_each(ctx: &Context, id: Id, duration: f32, easing: Easing) -> f32 {
+    if fresh(ctx, id) {
+        reset(ctx, id);
+    }
+    value_from(ctx, id, 0.0, 1.0, duration, easing)
+}
+
+/// Vrai quand `key` diffère de la valeur vue à l'appel précédent (jamais au premier appel).
+pub fn key_changed(ctx: &Context, id: Id, key: u64) -> bool {
+    let slot = id.with("key");
+    let before = ctx.data_mut(|d| {
+        let before = d.get_temp::<u64>(slot);
+        d.insert_temp(slot, key);
+        before
+    });
+    before.is_some_and(|b| b != key)
+}
+
+/// Impulsion : 1 au moment où `key` change, qui retombe à 0 en `duration` secondes (pastille qui
+/// rebondit quand son nombre change…).
+pub fn pulse(ctx: &Context, id: Id, key: u64, duration: f32) -> f32 {
+    if key_changed(ctx, id, key) {
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                id,
+                Tween {
+                    from: 1.0,
+                    to: 0.0,
+                    start: ctx.input(|i| i.time),
+                },
+            )
+        });
+    }
+    value(ctx, id, 0.0, duration, Easing::Out)
+}
+
 /// Oublie une animation (ex. pour rejouer une apparition).
 pub fn reset(ctx: &Context, id: Id) {
     ctx.data_mut(|d| d.remove::<Tween>(id));

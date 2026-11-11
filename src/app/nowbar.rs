@@ -291,7 +291,7 @@ impl SterMusic {
                             let mut p = ui.painter().clone();
                             p.set_opacity(1.0 - appear);
                             let old_tex = self.covers.thumb(std::path::Path::new(&old[0])).cloned();
-                            widgets::cover(&p, r, old_tex.as_ref(), 6, &old[3]);
+                            widgets::cover_now(&p, r, old_tex.as_ref(), 6, &old[3]);
                             let out = vec2(-dir * 12.0 * appear, 0.0);
                             let g = widgets::galley(ui, &old[1], theme::semibold(14.0), theme::TEXT, max_w);
                             p.galley(pos2(tx, cy - 19.0) + out, g, theme::TEXT);

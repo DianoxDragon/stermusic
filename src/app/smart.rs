@@ -537,7 +537,7 @@ impl SterMusic {
         };
         let count = evaluate(&edit.draft, &self.lib, &self.smart_facts()).len();
         let (mut close, mut save, mut delete) = (false, false, false);
-        let modal = egui::Modal::new(egui::Id::new("smart_playlist"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("smart_playlist"))
             .frame(
                 egui::Frame::popup(&ctx.style())
                     .inner_margin(24.0)

@@ -367,7 +367,7 @@ impl SterMusic {
             rg.scope = Scope::Library;
         }
         let (mut close, mut start, mut stop, mut enable_leveling) = (false, false, false, false);
-        let modal = egui::Modal::new(egui::Id::new("replaygain"))
+        let modal = crate::widgets::modal(ctx, egui::Id::new("replaygain"))
             .frame(lib_tools::modal_frame(ctx))
             .show(ctx, |ui| {
                 ui.set_width(560.0);
