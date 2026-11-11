@@ -1184,6 +1184,15 @@ vec3 bubbles(vec2 px, float W, float H) {
 
 // ---------- 47. Éclipse : la pochette en lune noire, la couronne du soleil autour ----------
 
+// Bruit fonction de l'angle, sans couture : `atan` saute de +π à −π à gauche du centre, ce qui
+// traçait une ligne horizontale dans la couronne. Près du saut, on mêle le bruit pris de l'autre
+// côté du tour : les deux bords donnent alors la même valeur.
+float angular_fbm(float a, float k, float off, float y) {
+    float other = a - sign(a) * 6.28318;
+    float w = 0.5 * smoothstep(3.14159 - 0.7, 3.14159, abs(a));
+    return mix(fbm(vec2(a * k + off, y)), fbm(vec2(other * k + off, y)), w);
+}
+
 vec3 eclipse(vec2 px, float W, float H) {
     vec2 d = px - u_focus.xy;
     float r = length(d);
@@ -1193,8 +1202,8 @@ vec3 eclipse(vec2 px, float W, float H) {
     float u = fract(a / 6.28318 + 0.25);
     float lv = level(u);
     // Filets de la couronne, qui s'étirent vers l'extérieur.
-    float fil = fbm(vec2(a * 5.0, out_r * 6.0 - u_time * 0.25)) ;
-    float fil2 = fbm(vec2(a * 11.0 + 3.0, out_r * 10.0 - u_time * 0.4));
+    float fil = angular_fbm(a, 5.0, 0.0, out_r * 6.0 - u_time * 0.25);
+    float fil2 = angular_fbm(a, 11.0, 3.0, out_r * 10.0 - u_time * 0.4);
     float reach = (0.10 + 0.20 * lv + 0.10 * u_kick) * detail(0.4, 1.0, 2.0);
     float corona = exp(-out_r / (reach * (0.5 + fil))) * (0.5 + 0.8 * fil2);
     vec3 acc = mix(u_colors[0], vec3(1.0), 0.25) * corona * step(r0, r) * (0.45 + 0.4 * u_energy);
