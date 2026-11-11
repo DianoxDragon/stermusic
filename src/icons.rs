@@ -249,14 +249,12 @@ fn embolden(svg: &str) -> String {
 }
 
 fn image(icon: Icon, px: u32) -> egui::Image<'static> {
-    if crate::theme::breeze() {
-        if let Some(name) = breeze_name(icon) {
-            if let Some(bytes) = system_svg(name, px) {
-                return egui::Image::new(ImageSource::Bytes {
-                    uri: format!("bytes://breeze/{px}/{name}.svg").into(),
-                    bytes: egui::load::Bytes::Shared(bytes),
-                });
-            }
+    if let Some(name) = breeze_name(icon) {
+        if let Some(bytes) = system_svg(name, px) {
+            return egui::Image::new(ImageSource::Bytes {
+                uri: format!("bytes://breeze/{px}/{name}.svg").into(),
+                bytes: egui::load::Bytes::Shared(bytes),
+            });
         }
     }
     lucide(icon, px)
@@ -270,22 +268,9 @@ fn lucide(icon: Icon, px: u32) -> egui::Image<'static> {
     })
 }
 
-/// Comme [`paint_centered`], mais toujours avec l'icône Lucide (même en style Breeze).
-pub fn paint_lucide(painter: &egui::Painter, icon: Icon, center: egui::Pos2, size: f32, color: Color32) {
-    let (rect, px) = snap(
-        painter.ctx(),
-        Rect::from_center_size(center, egui::Vec2::splat(size)),
-    );
-    let image = lucide(icon, px).fit_to_exact_size(rect.size());
-    if let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(painter.ctx(), rect.size()) {
-        let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-        painter.image(texture.id, rect, uv, color);
-    }
-}
-
 /// Vrai si l'icône sera dessinée depuis le thème Breeze du système.
 fn uses_breeze(icon: Icon) -> bool {
-    crate::theme::breeze() && breeze_name(icon).is_some_and(|n| system_svg(n, 22).is_some())
+    breeze_name(icon).is_some_and(|n| system_svg(n, 22).is_some())
 }
 
 /// Dessine l'icône dans `rect`, teintée de `color`.

@@ -181,7 +181,6 @@ pub const THEMES: [Theme; 16] = [
 /// Thème en cours. Tous les thèmes vivent jusqu'à la fin du programme (constantes, thème du
 /// système, favoris), d'où un simple pointeur : `current()` est appelé des centaines de fois par image.
 static CURRENT: AtomicPtr<Theme> = AtomicPtr::new(std::ptr::null_mut());
-static BREEZE: AtomicBool = AtomicBool::new(false);
 /// Thème adaptatif : couleurs qui remplacent celles du thème choisi (fond, accent, second
 /// accent, accent clair), tirées de la pochette du morceau en cours.
 static ADAPTIVE_ON: AtomicBool = AtomicBool::new(false);
@@ -441,18 +440,6 @@ fn load_kde() -> Option<Theme> {
     })
 }
 
-/// Style Breeze (Kubuntu) activé ?
-pub fn breeze() -> bool {
-    BREEZE.load(Ordering::Relaxed)
-}
-
-/// Active ou non le style Breeze (police, icônes, boutons de fenêtre).
-pub fn set_breeze(ctx: &egui::Context, on: bool) {
-    if BREEZE.swap(on, Ordering::Relaxed) != on {
-        install_fonts(ctx);
-    }
-}
-
 /// Rayon des coins de la fenêtre (0 quand elle est agrandie).
 pub fn window_radius() -> u8 {
     RADIUS.load(Ordering::Relaxed)
@@ -670,8 +657,7 @@ pub fn seeded_colors(seed: &str) -> (Color32, Color32) {
     (dark, other)
 }
 
-pub fn install(ctx: &egui::Context, theme_id: &str, breeze: bool) {
-    BREEZE.store(breeze, Ordering::Relaxed);
+pub fn install(ctx: &egui::Context, theme_id: &str) {
     install_fonts(ctx);
     ctx.set_theme(egui::Theme::Dark);
     set(ctx, theme_id);
@@ -769,7 +755,7 @@ fn style(style: &mut egui::Style) {
 
 /// Polices habituelles des distributions (Ubuntu, Noto, DejaVu, Liberation), dans les dossiers
 /// du système puis de l'utilisateur : interface, semi-gras, code.
-fn system_fonts(breeze: bool) -> [Vec<PathBuf>; 4] {
+fn system_fonts() -> [Vec<PathBuf>; 4] {
     let mut dirs: Vec<PathBuf> = ["/usr/share/fonts", "/usr/local/share/fonts"]
         .iter()
         .map(PathBuf::from)
@@ -784,51 +770,33 @@ fn system_fonts(breeze: bool) -> [Vec<PathBuf>; 4] {
             .flat_map(|name| dirs.iter().map(move |d| d.join(name)))
             .collect()
     };
-    if breeze {
-        // Kubuntu : Noto Sans partout ; les grands titres en graisse normale, comme Kirigami.
-        let regular = files(&[
-            "truetype/noto/NotoSans-Regular.ttf",
-            "noto/NotoSans-Regular.ttf",
-            "truetype/dejavu/DejaVuSans.ttf",
-        ]);
-        return [
-            regular.clone(),
-            files(&[
-                "truetype/noto/NotoSans-SemiBold.ttf",
-                "noto/NotoSans-SemiBold.ttf",
-                "truetype/noto/NotoSans-Medium.ttf",
-                "truetype/noto/NotoSans-Bold.ttf",
-                "noto/NotoSans-Bold.ttf",
-            ]),
-            regular,
-            files(&[
-                "truetype/noto/NotoSansMono-Regular.ttf",
-                "truetype/hack/Hack-Regular.ttf",
-                "truetype/dejavu/DejaVuSansMono.ttf",
-            ]),
-        ];
-    }
-    let semibold = files(&[
-        "truetype/ubuntu/Ubuntu-M.ttf",
-        "truetype/noto/NotoSans-SemiBold.ttf",
-        "truetype/noto/NotoSans-Bold.ttf",
-        "truetype/dejavu/DejaVuSans-Bold.ttf",
-        "TTF/DejaVuSans-Bold.ttf",
+    // Style Breeze (Kubuntu) : Noto Sans partout ; les grands titres en graisse normale, comme
+    // Kirigami. Ailleurs, les polices habituelles des autres distributions prennent le relais.
+    let regular = files(&[
+        "truetype/noto/NotoSans-Regular.ttf",
+        "noto/NotoSans-Regular.ttf",
+        "truetype/ubuntu/Ubuntu-R.ttf",
+        "truetype/dejavu/DejaVuSans.ttf",
+        "TTF/DejaVuSans.ttf",
+        "truetype/liberation/LiberationSans-Regular.ttf",
     ]);
     [
+        regular.clone(),
         files(&[
-            "truetype/ubuntu/Ubuntu-R.ttf",
-            "truetype/noto/NotoSans-Regular.ttf",
-            "noto/NotoSans-Regular.ttf",
-            "truetype/dejavu/DejaVuSans.ttf",
-            "TTF/DejaVuSans.ttf",
-            "truetype/liberation/LiberationSans-Regular.ttf",
+            "truetype/noto/NotoSans-SemiBold.ttf",
+            "noto/NotoSans-SemiBold.ttf",
+            "truetype/noto/NotoSans-Medium.ttf",
+            "truetype/noto/NotoSans-Bold.ttf",
+            "noto/NotoSans-Bold.ttf",
+            "truetype/ubuntu/Ubuntu-M.ttf",
+            "truetype/dejavu/DejaVuSans-Bold.ttf",
+            "TTF/DejaVuSans-Bold.ttf",
         ]),
-        semibold.clone(),
-        semibold,
+        regular,
         files(&[
-            "truetype/ubuntu/UbuntuMono-R.ttf",
             "truetype/noto/NotoSansMono-Regular.ttf",
+            "truetype/hack/Hack-Regular.ttf",
+            "truetype/ubuntu/UbuntuMono-R.ttf",
             "truetype/dejavu/DejaVuSansMono.ttf",
             "TTF/DejaVuSansMono.ttf",
         ]),
@@ -850,7 +818,7 @@ fn install_fonts(ctx: &egui::Context) {
         }
         false
     };
-    let [ui, semibold, heading, mono] = system_fonts(breeze());
+    let [ui, semibold, heading, mono] = system_fonts();
     let has_ui = load("ui", &ui);
     let has_semibold = load("ui-semibold", &semibold);
     let has_heading = load("ui-heading", &heading);

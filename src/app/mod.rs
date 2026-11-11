@@ -186,8 +186,6 @@ pub struct Settings {
     pub backdrop: BackdropKind,
     /// Intensité du Mica, ou opacité en mode transparent (0 → 1).
     pub mica_strength: f32,
-    /// Style Breeze (Kubuntu) : police, icônes et boutons de fenêtre de KDE.
-    pub breeze: bool,
     /// Coins arrondis de la fenêtre.
     pub rounded: bool,
     /// Version des réglages d'apparence (migrations).
@@ -305,7 +303,6 @@ impl Default for Settings {
             mica: true,
             backdrop: BackdropKind::Mica,
             mica_strength: 0.6,
-            breeze: true,
             rounded: true,
             style_version: 0,
             eq_on: false,
@@ -426,7 +423,6 @@ pub enum Action {
     SaveTheme,
     RenameTheme(String),
     DeleteTheme(String),
-    SetBreeze(bool),
     /// Ajoute SterMusic aux fenêtres floutées par l'effet Better Blur de KWin.
     EnableKwinBlur,
     FocusSearch,
@@ -845,8 +841,7 @@ impl SterMusic {
             } else {
                 BackdropKind::Solid
             };
-            settings.breeze = theme::is_kde_desktop() || theme::kde_theme().is_some();
-            if settings.breeze && theme::kde_theme().is_some() {
+            if theme::kde_theme().is_some() {
                 settings.theme = theme::KDE_ID.into();
             }
         }
@@ -879,7 +874,7 @@ impl SterMusic {
                 }
             }
         }
-        theme::install(&cc.egui_ctx, &settings.theme, settings.breeze);
+        theme::install(&cc.egui_ctx, &settings.theme);
 
         let volume = if settings.muted {
             0.0
@@ -2455,10 +2450,6 @@ impl SterMusic {
             Action::TogglePin(id) => self.toggle_pin(id),
             Action::ToggleFullscreen => self.toggle_fullscreen(ctx),
             Action::ToggleSidebar => self.settings.sidebar_collapsed = !self.settings.sidebar_collapsed,
-            Action::SetBreeze(on) => {
-                self.settings.breeze = on;
-                theme::set_breeze(ctx, on);
-            }
             Action::EnableKwinBlur => self.enable_kwin_blur(),
             Action::SetTheme(id) => {
                 self.settings.theme = id.to_owned();

@@ -73,15 +73,14 @@ pub fn drag_area(ui: &mut egui::Ui, rect: Rect, id: &str) {
 
 #[derive(Clone, Copy, PartialEq)]
 enum WinBtn {
-    Mini,
     Minimize,
     Maximize,
     Restore,
     Close,
 }
 
-/// Bouton de fenêtre. Style Breeze (KDE) : glyphes fins dans un rond qui se remplit au survol,
-/// rouge Breeze pour fermer. Style Fluent : rectangles pleine hauteur, fermer rougit.
+/// Bouton de fenêtre, style Breeze (KDE) : glyphes fins dans un rond qui se remplit au survol,
+/// rouge Breeze pour fermer.
 fn window_button(ui: &mut egui::Ui, rect: Rect, kind: WinBtn, tooltip: &str) -> egui::Response {
     let response = ui.interact(rect, ui.id().with(("winbtn", kind as u8)), Sense::click());
     // Survol calculé depuis la position du pointeur : il réagit même quand la fenêtre n'a pas
@@ -96,7 +95,7 @@ fn window_button(ui: &mut egui::Ui, rect: Rect, kind: WinBtn, tooltip: &str) -> 
     let idle = if focused { theme::TEXT_2 } else { theme::TEXT_3 };
     let close = kind == WinBtn::Close;
     let painter = ui.painter();
-    if theme::breeze() && kind != WinBtn::Mini {
+    {
         const BREEZE_RED: Color32 = Color32::from_rgb(0xDA, 0x44, 0x53);
         let c = rect.center();
         let r = 9.0;
@@ -146,35 +145,7 @@ fn window_button(ui: &mut egui::Ui, rect: Rect, kind: WinBtn, tooltip: &str) -> 
                 painter.line_segment([c + vec2(k, -k), c + vec2(-k, k)], stroke)
             }
         };
-        return response.on_hover_text(tooltip);
     }
-    if t > 0.0 {
-        let fill = if close { theme::DANGER } else { theme::white(0x14) };
-        // Le bouton fermer touche le coin arrondi de la fenêtre.
-        let radius = if close {
-            CornerRadius {
-                ne: theme::window_radius(),
-                ..Default::default()
-            }
-        } else {
-            CornerRadius::ZERO
-        };
-        painter.rect_filled(rect, radius, fill.gamma_multiply(t));
-    }
-    let color = if close {
-        theme::mix(idle, Color32::WHITE, t)
-    } else {
-        theme::mix(idle, theme::TEXT, t)
-    };
-    let (icon, size) = match kind {
-        WinBtn::Mini => (Icon::MiniPlayer, 15.0),
-        WinBtn::Minimize => (Icon::WinMinimize, 15.0),
-        WinBtn::Maximize => (Icon::WinMaximize, 12.0),
-        WinBtn::Restore => (Icon::WinRestore, 12.0),
-        WinBtn::Close => (Icon::Close, 15.0),
-    };
-    // Glyphes Lucide (pas Breeze) pour les boutons Fluent.
-    icons::paint_lucide(painter, icon, rect.center(), size, color);
     response.on_hover_text(tooltip)
 }
 
@@ -215,9 +186,9 @@ impl SterMusic {
                     theme::TEXT_2,
                 );
 
-                // Boutons de fenêtre : ronds et resserrés avec Breeze, pleine hauteur avec Fluent.
-                let bw = if theme::breeze() { 30.0 } else { 46.0 };
-                let right = rect.right() - if theme::breeze() { 8.0 } else { 0.0 };
+                // Boutons de fenêtre ronds et resserrés, comme ceux de Breeze.
+                let bw = 30.0;
+                let right = rect.right() - 8.0;
                 let close = Rect::from_min_size(pos2(right - bw, rect.top()), vec2(bw, TITLE_HEIGHT));
                 let max = close.translate(vec2(-bw, 0.0));
                 let min = max.translate(vec2(-bw, 0.0));
@@ -236,11 +207,8 @@ impl SterMusic {
                 if window_button(ui, min, WinBtn::Minimize, tr("Réduire")).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
                 }
-                let mini = Rect::from_min_size(
-                    min.min - vec2(if theme::breeze() { 40.0 } else { bw }, 0.0),
-                    vec2(if theme::breeze() { 36.0 } else { bw }, TITLE_HEIGHT),
-                );
-                if theme::breeze() {
+                let mini = Rect::from_min_size(min.min - vec2(40.0, 0.0), vec2(36.0, TITLE_HEIGHT));
+                {
                     let r = Rect::from_center_size(mini.center(), vec2(32.0, 32.0));
                     if ui
                         .put(r, |ui: &mut egui::Ui| {
@@ -256,12 +224,10 @@ impl SterMusic {
                     {
                         self.actions.push(Action::ToggleMini);
                     }
-                } else if window_button(ui, mini, WinBtn::Mini, tr("Mini lecteur (Ctrl+M)")).clicked() {
-                    self.actions.push(Action::ToggleMini);
                 }
 
-                // Breeze : titre de la fenêtre centré, comme les fenêtres décorées par KWin.
-                if theme::breeze() {
+                // Titre de la fenêtre centré, comme les fenêtres décorées par KWin.
+                {
                     let caption = self.window_title.trim_end_matches(" · SterMusic").to_owned();
                     let caption = if caption == "SterMusic" {
                         String::new()
@@ -359,16 +325,12 @@ impl SterMusic {
                     View::Podcast(_) => Some(Page::Podcasts),
                     _ => None,
                 };
-                let mut pill_target = None;
                 for (page, icon, label) in items {
                     let r = Rect::from_min_size(pos2(left, y), vec2(inner_w, 40.0));
                     let badge = (page == Page::Queue && queue_badge > 0).then(|| queue_badge.to_string());
                     let selected = active_page == Some(page);
                     if nav_item(ui, r, icon, label, selected, expanded, badge.as_deref()).clicked() {
                         self.actions.push(Action::Go(View::Page(page)));
-                    }
-                    if selected {
-                        pill_target = Some(r.center().y);
                     }
                     y += 42.0;
                 }
@@ -388,63 +350,52 @@ impl SterMusic {
                     } else {
                         None
                     };
-                    // Les playlists épinglées (six au plus), chacune avec son icône et son nom.
-                    let pinned: Vec<(PlaylistId, Icon, String)> = self
-                        .pinned()
-                        .into_iter()
-                        .map(|id| {
-                            let icon = match id {
-                                PlaylistId::Favorites => Icon::Heart,
-                                PlaylistId::Smart(i) => self.settings.smart_playlists[i].icon.icon(),
-                                PlaylistId::User(_) => Icon::ListMusic,
-                            };
-                            (id, icon, self.playlist_name(id))
-                        })
-                        .collect();
-                    let list_rect = Rect::from_min_max(
-                        pos2(left, y),
-                        pos2(left + inner_w, rect.bottom() - bottom_reserved),
+                    let pinned = self.pinned();
+                    ui.painter().text(
+                        pos2(left + 12.0, y + 6.0),
+                        Align2::LEFT_CENTER,
+                        tr("Playlists épinglées"),
+                        FontId::proportional(11.5),
+                        theme::TEXT_3,
                     );
-                    ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
-                        egui::ScrollArea::vertical()
-                            .id_salt("side_playlists")
-                            .auto_shrink(false)
-                            .show(ui, |ui| {
-                                if pinned.is_empty() {
-                                    ui.add_space(4.0);
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(14.0);
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(tr(
-                                                    "Épingle ici jusqu'à six playlists : clic droit sur une playlist → Épingler.",
-                                                ))
-                                                .small()
-                                                .color(theme::TEXT_3),
-                                            )
-                                            .wrap(),
-                                        );
-                                    });
-                                }
-                                for (id, icon, name) in pinned {
-                                    let (r, _) = ui.allocate_exact_size(vec2(inner_w, 31.0), Sense::hover());
-                                    let t = anim::appear(ui.ctx(), egui::Id::new(("pin_in", format!("{id:?}"))), anim::SLOW);
-                                    let resp = ui
-                                        .scope(|ui| {
-                                            ui.multiply_opacity(t);
-                                            sub_item(ui, r.translate(vec2(-10.0 * (1.0 - t), 0.0)), icon, &name, current_pl == Some(id))
-                                        })
-                                        .inner;
-                                    if resp.clicked() {
-                                        self.actions.push(Action::Go(View::Playlist(id)));
-                                    }
-                                    resp.context_menu(|ui| {
-                                        let tracks = self.playlist_tracks(id);
-                                        self.playlist_menu(ui, id, &tracks);
-                                    });
-                                }
-                            });
-                    });
+                    y += 18.0;
+                    if pinned.is_empty() {
+                        let hint = Rect::from_min_max(
+                            pos2(left + 12.0, y),
+                            pos2(left + inner_w - 12.0, rect.bottom() - bottom_reserved),
+                        );
+                        ui.scope_builder(egui::UiBuilder::new().max_rect(hint), |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(tr(
+                                        "Épingle ici jusqu'à six playlists : clic droit sur une playlist → Épingler.",
+                                    ))
+                                    .small()
+                                    .color(theme::TEXT_3),
+                                )
+                                .wrap(),
+                            );
+                        });
+                    }
+                    // Les playlists épinglées (six au plus), en une rangée de tuiles : leur nom
+                    // apparaît au survol.
+                    let row_w = inner_w - 24.0;
+                    let gap = 6.0;
+                    let side = ((row_w - gap * 5.0) / 6.0).min(40.0);
+                    for (k, id) in pinned.into_iter().take(super::MAX_PINS).enumerate() {
+                        let cell = Rect::from_min_size(
+                            pos2(left + 12.0 + k as f32 * (side + gap), y + 2.0),
+                            vec2(side, side),
+                        );
+                        let resp = self.pin_tile(ui, cell, id, current_pl == Some(id));
+                        if resp.clicked() {
+                            self.actions.push(Action::Go(View::Playlist(id)));
+                        }
+                        resp.context_menu(|ui| {
+                            let tracks = self.playlist_tracks(id);
+                            self.playlist_menu(ui, id, &tracks);
+                        });
+                    }
                 }
 
                 // Outils (éditeur de tags compris), juste au-dessus des paramètres, avec le nombre
@@ -486,9 +437,6 @@ impl SterMusic {
                 if nav.clicked() {
                     self.actions.push(Action::Go(View::Page(Page::Tools)));
                 }
-                if selected {
-                    pill_target = Some(r.center().y);
-                }
 
                 // Paramètres, en bas.
                 let r = Rect::from_min_size(pos2(left, rect.bottom() - 48.0), vec2(inner_w, 40.0));
@@ -496,22 +444,7 @@ impl SterMusic {
                 if nav_item(ui, r, Icon::Settings, tr("Paramètres"), selected, expanded, None).clicked() {
                     self.actions.push(Action::Go(View::Page(Page::Settings)));
                 }
-                if selected {
-                    pill_target = Some(r.center().y);
-                }
 
-                // Indicateur de sélection : une pilule qui glisse d'un élément à l'autre (Fluent).
-                if let (Some(target), false) = (pill_target, theme::breeze()) {
-                    let cy = anim::value(
-                        ui.ctx(),
-                        egui::Id::new("nav_pill"),
-                        target,
-                        anim::NORMAL,
-                        Easing::OutBack,
-                    );
-                    let pill = Rect::from_center_size(pos2(left + 3.0, cy), vec2(3.0, 18.0));
-                    theme::brand_fill(ui.painter(), pill, 2, 1.0);
-                }
             });
     }
 
@@ -817,10 +750,13 @@ impl SterMusic {
                             ui.label(egui::RichText::new(text).color(theme::TEXT));
                         });
                     });
-                // Fin filet en bas : le temps qu'il reste avant que la notification s'en aille.
-                let r = frame.response.rect.shrink2(vec2(10.0, 0.0));
-                let line = Rect::from_min_size(pos2(r.left(), r.bottom() - 3.0), vec2(r.width() * left, 2.0));
-                theme::brand_fill(ui.painter(), line, 1, 0.7);
+                // Filet en bas, sur toute la largeur : le temps qu'il reste avant que la
+                // notification s'en aille. On peint la forme arrondie de la notification,
+                // découpée à une bande en bas : le filet épouse ainsi ses coins.
+                let r = frame.response.rect;
+                let strip = Rect::from_min_max(pos2(r.left(), r.bottom() - 3.0), pos2(r.left() + r.width() * left, r.bottom()));
+                let painter = ui.painter().with_clip_rect(strip);
+                theme::brand_fill(&painter, r, 10, 0.85);
             });
         ctx.request_repaint_after(std::time::Duration::from_millis(30));
     }
@@ -840,7 +776,7 @@ fn nav_item(
     let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::FAST);
     let painter = ui.painter();
     if s > 0.0 {
-        if theme::breeze() {
+        {
             // Sélection Breeze : fond teinté de l'accent et liseré de l'accent.
             painter.rect_filled(
                 rect,
@@ -856,8 +792,6 @@ fn nav_item(
                 ),
                 StrokeKind::Inside,
             );
-        } else {
-            painter.rect_filled(rect, CornerRadius::same(6), theme::white(0x10).gamma_multiply(s));
         }
     }
     widgets::paint_interaction(ui, rect, 6, &response);
@@ -908,36 +842,75 @@ fn nav_item(
     }
 }
 
-fn sub_item(ui: &mut egui::Ui, rect: Rect, icon: Icon, label: &str, selected: bool) -> egui::Response {
-    let response = ui.interact(
-        rect,
-        ui.id().with(("sub", label, rect.top() as i32)),
-        Sense::click(),
-    );
-    // Identifiant stable (la position change quand la liste défile) pour les animations.
-    let key = egui::Id::new(("sub_item", label));
-    let s = anim::toggle(ui.ctx(), key.with("sel"), selected, anim::FAST);
-    if s > 0.0 {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(6), theme::white(0x10).gamma_multiply(s));
+impl SterMusic {
+    /// Tuile d'une playlist épinglée : mosaïque de ses pochettes (cœur pour les favoris, icône
+    /// pour une playlist intelligente). Elle arrive en grandissant, se soulève au survol et
+    /// s'entoure de l'accent quand la playlist est ouverte.
+    fn pin_tile(&mut self, ui: &mut egui::Ui, cell: Rect, id: PlaylistId, selected: bool) -> egui::Response {
+        let key = egui::Id::new(("pin_tile", format!("{id:?}")));
+        let resp = ui.interact(cell, key, Sense::click());
+        let appear = anim::value_from(ui.ctx(), key.with("in"), 0.0, 1.0, anim::SLOW * 1.4, Easing::OutBack);
+        let h = widgets::hover_t(ui, resp.id, resp.hovered());
+        let s = anim::toggle(ui.ctx(), key.with("sel"), selected, anim::NORMAL);
+        let pop = widgets::pop(ui.ctx(), key, selected);
+        let press = anim::toggle(ui.ctx(), key.with("press"), resp.is_pointer_button_down_on(), anim::FAST);
+        let scale = appear.max(0.0) * pop * (1.0 + 0.06 * h - 0.06 * press);
+        let tile = Rect::from_center_size(cell.center() - vec2(0.0, 2.0 * h), cell.size() * scale);
+        let mut scoped = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
+        scoped.multiply_opacity(appear.clamp(0.0, 1.0));
+        let ui = &mut scoped;
+        let radius = 8;
+        ui.painter().add(
+            egui::Shadow {
+                offset: [0, (2.0 + 3.0 * h) as i8],
+                blur: (6.0 + 8.0 * h) as u8,
+                spread: 0,
+                color: Color32::from_black_alpha((60.0 + 50.0 * h) as u8),
+            }
+            .as_shape(tile, CornerRadius::same(radius)),
+        );
+        match id {
+            PlaylistId::Smart(i) => {
+                let icon = self.settings.smart_playlists[i].icon.icon();
+                let (c1, c2) = theme::seeded_colors(&self.settings.smart_playlists[i].name);
+                ui.painter()
+                    .rect_filled(tile, CornerRadius::same(radius), theme::mix(c1, theme::accent(), 0.25));
+                widgets::soft_glow(
+                    ui.painter(),
+                    tile,
+                    tile.right_top(),
+                    tile.width(),
+                    theme::alpha(c2, 0x70),
+                );
+                icons::paint_centered(ui.painter(), icon, tile.center(), tile.width() * 0.46, Color32::WHITE);
+            }
+            PlaylistId::Favorites => self.mosaic(ui, tile, &[], true, radius),
+            PlaylistId::User(i) => {
+                // Les premiers morceaux suffisent pour la mosaïque (quatre albums au plus).
+                let tracks: Vec<usize> = self
+                    .settings
+                    .playlists
+                    .get(i)
+                    .map(|pl| pl.tracks.iter().take(80).filter_map(|p| self.lib.find(p)).collect())
+                    .unwrap_or_default();
+                self.mosaic(ui, tile, &tracks, false, radius);
+            }
+        }
+        ui.painter().rect_stroke(
+            tile,
+            CornerRadius::same(radius),
+            Stroke::new(1.0_f32, theme::white(0x18)),
+            StrokeKind::Inside,
+        );
+        if s > 0.0 {
+            ui.painter().rect_stroke(
+                tile.expand(3.0),
+                CornerRadius::same(radius + 3),
+                Stroke::new(2.0_f32, theme::accent_light().gamma_multiply(s)),
+                StrokeKind::Inside,
+            );
+        }
+        resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(self.playlist_name(id))
     }
-    widgets::paint_interaction(ui, rect, 6, &response);
-    let h = widgets::hover_t(ui, response.id, response.hovered());
-    let color = theme::mix(theme::TEXT_2, theme::TEXT, s.max(h));
-    // L'icône, à l'accent quand la playlist est ouverte, rebondit à la sélection.
-    let pop = widgets::pop(ui.ctx(), key, selected);
-    icons::paint_centered(
-        ui.painter(),
-        icon,
-        pos2(rect.left() + 24.0, rect.center().y),
-        15.0 * pop,
-        theme::mix(theme::mix(theme::TEXT_3, theme::TEXT_2, h), theme::accent_light(), s),
-    );
-    let g = widgets::galley(ui, label, FontId::proportional(13.5), color, rect.width() - 64.0);
-    ui.painter().galley(
-        pos2(rect.left() + 52.0, rect.center().y - g.size().y / 2.0),
-        g,
-        color,
-    );
-    response
 }

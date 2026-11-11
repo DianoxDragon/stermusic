@@ -2221,14 +2221,6 @@ impl SterMusic {
 
             subtitle(ui, tr("Apparence"));
             card(ui, |ui| {
-                let mut breeze = self.settings.breeze;
-                card_row(ui, Icon::Sparkles, tr("Style Breeze (Kubuntu)"), tr("Police Noto Sans, icônes Breeze du système, boutons de fenêtre et sélection de KDE."), |_, ui| {
-                    widgets::switch(ui, &mut breeze);
-                }, self);
-                if breeze != self.settings.breeze {
-                    self.actions.push(Action::SetBreeze(breeze));
-                }
-                separator(ui);
                 let mut rounded = self.settings.rounded;
                 card_row(ui, Icon::WinMaximize, tr("Coins arrondis"), tr("Arrondit les coins de la fenêtre (sauf quand elle est agrandie)."), |_, ui| {
                     widgets::switch(ui, &mut rounded);
