@@ -402,21 +402,27 @@ fn load_kde() -> Option<Theme> {
     let config = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| home.join(".config"));
-    let text = std::fs::read_to_string(config.join("kdeglobals")).ok()?;
-    let mut group = String::new();
-    let mut values = std::collections::HashMap::new();
-    for line in text.lines().map(str::trim) {
-        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            group = g.to_owned();
-        } else if let Some((k, v)) = line.split_once('=') {
-            values.insert(format!("{group}/{}", k.trim()), v.trim().to_owned());
+    let globals = std::fs::read_to_string(config.join("kdeglobals")).ok()?;
+    let mut values = parse_kde_config(&globals);
+    // Plasma 6 may only write the name of the color scheme into kdeglobals: its colors are then
+    // read from the scheme file (user's, then system's), kdeglobals keeping the last word.
+    if let Some(scheme) = values.get("General/ColorScheme").cloned() {
+        let file = format!("color-schemes/{scheme}.colors");
+        let data_home = std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".local/share"));
+        let data_dirs = std::env::var("XDG_DATA_DIRS")
+            .unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+        let found = std::iter::once(data_home)
+            .chain(data_dirs.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
+            .find_map(|d| std::fs::read_to_string(d.join(&file)).ok());
+        if let Some(text) = found {
+            let mut merged = parse_kde_config(&text);
+            merged.extend(values);
+            values = merged;
         }
     }
-    let color = |key: &str| -> Option<Color32> {
-        let v = values.get(key)?;
-        let c: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-        (c.len() >= 3).then(|| Color32::from_rgb(c[0], c[1], c[2]))
-    };
+    let color = |key: &str| kde_color(values.get(key)?);
     // Breeze Dark by default, if the color scheme doesn't say anything.
     let bg = color("Colors:Window/BackgroundNormal").unwrap_or(Color32::from_rgb(0x20, 0x23, 0x26));
     let accent = color("General/AccentColor")
@@ -438,6 +444,30 @@ fn load_kde() -> Option<Theme> {
         accent_2: mix(accent, Color32::WHITE, 0.16),
         accent_light: mix(accent, Color32::WHITE, 0.45),
     })
+}
+
+/// Keys of a KDE configuration file, as "Group/Key" → value.
+fn parse_kde_config(text: &str) -> std::collections::HashMap<String, String> {
+    let mut group = String::new();
+    let mut values = std::collections::HashMap::new();
+    for line in text.lines().map(str::trim) {
+        if let Some(g) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            group = g.to_owned();
+        } else if let Some((k, v)) = line.split_once('=') {
+            values.insert(format!("{group}/{}", k.trim()), v.trim().to_owned());
+        }
+    }
+    values
+}
+
+/// A KDE color ("r,g,b" or "r,g,b,a"). A fully transparent one means "not set": Plasma writes
+/// `AccentColor=0,0,0,0` when the accent comes from the color scheme.
+fn kde_color(value: &str) -> Option<Color32> {
+    let c: Vec<u8> = value.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    if c.len() < 3 || c.get(3) == Some(&0) {
+        return None;
+    }
+    Some(Color32::from_rgb(c[0], c[1], c[2]))
 }
 
 /// Radius of the window corners (0 when it is maximized).
@@ -873,4 +903,20 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     ctx.set_fonts(fonts);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kde_colors() {
+        assert_eq!(kde_color("181,102,255"), Some(Color32::from_rgb(181, 102, 255)));
+        assert_eq!(kde_color("61, 174, 233, 255"), Some(Color32::from_rgb(61, 174, 233)));
+        // "No custom accent": the color scheme's accent must be used instead.
+        assert_eq!(kde_color("0,0,0,0"), None);
+        assert_eq!(kde_color("12,34"), None);
+        let cfg = parse_kde_config("[General]\nAccentColor=0,0,0,0\n[Colors:Window]\nDecorationFocus=181,102,255\n");
+        assert_eq!(cfg.get("Colors:Window/DecorationFocus").map(String::as_str), Some("181,102,255"));
+    }
 }

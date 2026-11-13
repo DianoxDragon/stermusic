@@ -318,6 +318,12 @@ float band(float f) {
     int i = int(floor(d));
     return mix(u_levels[i], u_levels[min(i + 1, 15)], fract(d));
 }
+// `atan` jumps from +π to −π on the horizontal line left of the center: anything computed from
+// the angle that is not 2π-periodic (noise, random values per sector) shows a seam there. Near
+// the jump, the value at `a` is blended with the one at the same angle one turn away
+// (`a_other`): both sides of the line then give the same result.
+float a_other(float a) { return a - sign(a) * 6.28318; }
+float seam_w(float a) { return 0.5 * smoothstep(3.14159 - 0.7, 3.14159, abs(a)); }
 mat2 rot(float a) {
     float c = cos(a);
     float s = sin(a);
@@ -688,7 +694,8 @@ vec3 vinyl(vec2 px, float W, float H) {
     float track = smoothstep(0.0, 0.015, abs(fract(r * floor(detail(3.0, 7.0, 14.0)) + 0.3) - 0.5) - 0.025);
     // The lamp is fixed, the record spins under it: the reflections stay, the dust scrolls by.
     float hl = pow(abs(cos(a - 0.7)), 22.0) + 0.55 * pow(abs(cos(a + 0.9)), 40.0);
-    float dust = smoothstep(0.82, 1.0, noise(vec2((a - spin) * 40.0, r * 90.0)));
+    float dust = smoothstep(0.82, 1.0, mix(noise(vec2((a - spin) * 40.0, r * 90.0)),
+                                           noise(vec2((a_other(a) - spin) * 40.0, r * 90.0)), seam_w(a)));
     vec3 sheen = mix(u_colors[0], u_colors[1], f);
     vec3 disc = sheen * hl * (0.55 + 1.6 * lv + 0.6 * u_kick) * (0.45 + 0.55 * groove) * track
               + vec3(1.0) * hl * 0.12 * groove
@@ -719,8 +726,11 @@ vec3 ferrofluid(vec2 px, float W, float H) {
     float s = a / 6.28318 * N;
     float idx = floor(s);
     float local = fract(s) - 0.5;
-    float fi = abs(mod(idx, N) / N * 2.0 - 1.0);
-    float h = (0.05 + 0.60 * band(fi) + 0.25 * u_kick) * u_focus.z * (0.6 + 0.7 * hash(vec2(idx, 3.0)));
+    // Sector number taken modulo N: the angle jumps by one turn on the line left of the center,
+    // and the spike there must keep the same random height on both sides.
+    float k = mod(idx, N);
+    float fi = abs(k / N * 2.0 - 1.0);
+    float h = (0.05 + 0.60 * band(fi) + 0.25 * u_kick) * u_focus.z * (0.6 + 0.7 * hash(vec2(k, 3.0)));
     float tri = max(1.0 - abs(local) * 2.0, 0.0);
     float profile = pow(tri, 2.4);
     float edge = base + h * profile + u_focus.z * 0.025 * sin(a * 3.0 + u_time * 0.7);
@@ -1619,17 +1629,21 @@ vec3 galaxy(vec2 px, float W, float H) {
     float wind = detail(2.2, 4.0, 7.5);
     // Two logarithmic spiral arms, thickened and crumpled by noise.
     float spiral = 2.0 * (a + t * 3.0) - log(r + 0.015) * wind;
-    float wobble = fbm(vec2(a * 3.0 + t, r * 9.0)) - 0.5;
+    // The same spiral one turn away, for a seamless noise across the angle jump (see `seam_w`).
+    float spiral_o = spiral - sign(a) * 12.56637;
+    float sw = seam_w(a);
+    float wobble = mix(fbm(vec2(a * 3.0 + t, r * 9.0)), fbm(vec2(a_other(a) * 3.0 + t, r * 9.0)), sw) - 0.5;
     float arm = 0.5 + 0.5 * cos(spiral + wobble * 2.2);
     float falloff = exp(-r * 3.2);
     float disc = falloff * (0.18 + 0.82 * pow(arm, 2.5));
     // Dust lanes: dark, on the inner edge of the arms.
-    float dust = fbm(vec2(spiral * 0.8, r * 14.0 - t * 2.0));
+    float dust = mix(fbm(vec2(spiral * 0.8, r * 14.0 - t * 2.0)), fbm(vec2(spiral_o * 0.8, r * 14.0 - t * 2.0)), sw);
     float lane = smoothstep(0.35, 0.75, dust) * pow(0.5 + 0.5 * cos(spiral + 1.1), 3.0);
     vec3 col = mix(mix(u_colors[1], vec3(1.0, 0.94, 0.86), 0.5), u_colors[0], clamp(r * 2.4, 0.0, 1.0));
     vec3 acc = col * disc * (1.0 - 0.75 * lane) * (0.75 + 0.5 * u_bass + 0.4 * u_kick);
     // Nebulae: colored knots along the arms, pulsing with their frequencies.
-    float knots = smoothstep(0.62, 0.9, fbm(vec2(spiral * 1.3 + 4.0, r * 22.0))) * pow(arm, 4.0);
+    float knots = smoothstep(0.62, 0.9, mix(fbm(vec2(spiral * 1.3 + 4.0, r * 22.0)),
+                                            fbm(vec2(spiral_o * 1.3 + 4.0, r * 22.0)), sw)) * pow(arm, 4.0);
     acc += mix(u_colors[2], u_colors[1], 0.5) * knots * falloff * 2.2 * (0.4 + 1.4 * band(clamp(r * 2.0, 0.0, 1.0)));
     // Stars: three grid sizes; more numerous and brighter in the arms.
     vec2 sp = rot(t * 3.0) * p;

@@ -108,6 +108,8 @@ pub const EN: &[(&str, &str)] = &[
     ("Bibliothèque : pochettes manquantes, ReplayGain, doublons", "Library: missing covers, ReplayGain, duplicates"),
     ("Bibliothèque musicale", "Music library"),
     ("Bibliothèque à jour : {0}", "Library up to date: {0}"),
+    ("Dossier inaccessible : {0} (ses morceaux sont gardés)", "Folder unavailable: {0} (its tracks are kept)"),
+    ("Dossier de nouveau accessible : {0}", "Folder available again: {0}"),
     ("Bibliothèque", "Library"),
     ("Bienvenue dans SterMusic", "Welcome to SterMusic"),
     ("Bokeh", "Bokeh"),

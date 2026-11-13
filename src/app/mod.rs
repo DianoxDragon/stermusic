@@ -644,6 +644,11 @@ pub struct SterMusic {
     /// Watching the music folders, and update in progress.
     watcher: crate::watch::Watcher,
     watch_rx: Option<Receiver<WatchDone>>,
+    /// Music folders that can't be reached right now (their tracks are kept), the check of the
+    /// folders running in the background, and the time of the last one.
+    offline_dirs: Vec<PathBuf>,
+    dir_check: Option<Receiver<Vec<(PathBuf, library::DirState)>>>,
+    dir_check_at: f64,
     /// File the player has opened, known to the threads writing tags: that one is written through
     /// a copy (writing in place would shift the audio under the decoder).
     now_loaded: std::sync::Arc<std::sync::Mutex<Option<PathBuf>>>,
@@ -941,6 +946,9 @@ impl SterMusic {
             lyrics: Default::default(),
             watcher: Default::default(),
             watch_rx: None,
+            offline_dirs: Vec::new(),
+            dir_check: None,
+            dir_check_at: 0.0,
             now_loaded: Default::default(),
             toast,
             queue_drag: None,
@@ -1066,11 +1074,16 @@ impl SterMusic {
     fn poll_scan(&mut self) {
         let Some(rx) = &self.scan_rx else { return };
         let mut finished = None;
+        let mut offline = None;
         while let Ok(msg) = rx.try_recv() {
             match msg {
                 ScanMsg::Progress(n) => self.scan_count = n,
+                ScanMsg::Offline(dirs) => offline = Some(dirs),
                 ScanMsg::Done(tracks) => finished = Some(tracks),
             }
+        }
+        if let Some(dirs) = offline {
+            self.set_offline_dirs(dirs);
         }
         let Some(tracks) = finished else { return };
         self.scan_rx = None;
@@ -1908,6 +1921,82 @@ impl SterMusic {
         };
     }
 
+    /// Seconds between two checks of the music folders.
+    const DIR_CHECK_SECS: f64 = 5.0;
+
+    /// Records the music folders found unreachable (by a scan or a check), with a message for
+    /// those that just went away.
+    fn set_offline_dirs(&mut self, dirs: Vec<PathBuf>) {
+        let gone: Vec<PathBuf> = dirs.iter().filter(|d| !self.offline_dirs.contains(d)).cloned().collect();
+        for dir in gone {
+            self.toast(trf!(
+                "Dossier inaccessible : {0} (ses morceaux sont gardés)",
+                dir.display().to_string()
+            ));
+        }
+        self.offline_dirs = dirs;
+    }
+
+    /// Checks the music folders in the background every few seconds: a folder that goes away
+    /// (partition unmounted, disk unplugged) keeps its tracks; when it comes back, the library is
+    /// scanned again and watched, without anything to do.
+    fn poll_music_dirs(&mut self, ctx: &egui::Context) {
+        if self.settings.music_dirs.is_empty() {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        ctx.request_repaint_after(Duration::from_secs_f64(Self::DIR_CHECK_SECS));
+        if let Some(rx) = &self.dir_check {
+            let Ok(states) = rx.try_recv() else { return };
+            self.dir_check = None;
+            // A scan is running: it gives its own verdict, the next check will catch up.
+            if self.scan_rx.is_some() {
+                return;
+            }
+            let offline: Vec<PathBuf> = states
+                .iter()
+                .filter(|(dir, state)| {
+                    let had_tracks = self
+                        .lib
+                        .tracks
+                        .iter()
+                        .any(|t| t.remote.is_none() && t.path.starts_with(dir));
+                    library::dir_offline(*state, had_tracks)
+                })
+                .map(|(dir, _)| dir.clone())
+                .collect();
+            let back: Vec<PathBuf> = self
+                .offline_dirs
+                .iter()
+                .filter(|d| !offline.contains(d) && self.settings.music_dirs.contains(d))
+                .cloned()
+                .collect();
+            self.set_offline_dirs(offline);
+            if !back.is_empty() {
+                for dir in &back {
+                    self.toast(trf!("Dossier de nouveau accessible : {0}", dir.display().to_string()));
+                }
+                self.start_scan();
+                self.restart_watch(ctx);
+            }
+            return;
+        }
+        if now - self.dir_check_at < Self::DIR_CHECK_SECS {
+            return;
+        }
+        self.dir_check_at = now;
+        let dirs = self.settings.music_dirs.clone();
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let states = dirs.into_iter().map(|d| {
+                let state = library::dir_state(&d);
+                (d, state)
+            });
+            let _ = tx.send(states.collect());
+        });
+        self.dir_check = Some(rx);
+    }
+
     /// Changes on disk: reads the touched files again in the background, then updates the library.
     fn poll_watch(&mut self, ctx: &egui::Context) {
         if let Some(rx) = &self.watch_rx {
@@ -1952,6 +2041,18 @@ impl SterMusic {
             }
             WatchDone::Update { tracks, gone } => (tracks, gone),
         };
+        // A music folder that vanished as a whole (partition unmounted…) keeps its tracks: the
+        // periodic check of the folders brings them back with it.
+        let gone: Vec<PathBuf> = gone
+            .into_iter()
+            .filter(|g| {
+                self.settings
+                    .music_dirs
+                    .iter()
+                    .find(|d| g.starts_with(d))
+                    .is_none_or(|d| library::dir_state(d) == library::DirState::Present)
+            })
+            .collect();
         let before = self.lib.tracks.len();
         let updated: HashSet<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
         let mut all: Vec<library::Track> = self
@@ -2905,6 +3006,7 @@ impl eframe::App for SterMusic {
         self.sync_now_loaded();
         self.track_listen();
         self.poll_watch(ctx);
+        self.poll_music_dirs(ctx);
         self.poll_lyrics(ctx);
         self.poll_radio(ctx);
         self.poll_online(ctx);

@@ -525,7 +525,44 @@ impl Library {
 
 pub enum ScanMsg {
     Progress(usize),
+    /// Music folders that could not be reached: their tracks were kept from the cache.
+    Offline(Vec<PathBuf>),
     Done(Vec<Track>),
+}
+
+/// What a music folder looks like right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DirState {
+    /// Missing or unreadable (disconnected disk, network share down…).
+    Missing,
+    /// Exists but is empty: often the bare mount point of a partition that isn't mounted.
+    Empty,
+    Present,
+}
+
+/// State of a music folder (to be called outside the interface thread: a network share that is
+/// down can block).
+pub fn dir_state(dir: &Path) -> DirState {
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => {
+            if entries.next().is_some() {
+                DirState::Present
+            } else {
+                DirState::Empty
+            }
+        }
+        Err(_) => DirState::Missing,
+    }
+}
+
+/// True if a music folder counts as unreachable: missing, or empty while the library knew
+/// tracks in it. Its tracks are then kept as they were, until it comes back.
+pub fn dir_offline(state: DirState, had_tracks: bool) -> bool {
+    match state {
+        DirState::Missing => true,
+        DirState::Empty => had_tracks,
+        DirState::Present => false,
+    }
 }
 
 pub fn is_audio_file(path: &Path) -> bool {
@@ -788,7 +825,23 @@ pub fn scan(dirs: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<ScanM
     let mut tracks = Vec::new();
     let mut seen = std::collections::HashSet::new();
     let mut audio = Vec::new();
+    let mut offline = Vec::new();
     for dir in &dirs {
+        // Unreachable folder (partition not mounted, disk unplugged…): what the previous scans
+        // found there stays in the library, and comes back to life with the folder.
+        let cached: Vec<&Track> = cache
+            .values()
+            .filter(|t| t.remote.is_none() && t.path.starts_with(dir))
+            .collect();
+        if dir_offline(dir_state(dir), !cached.is_empty()) {
+            offline.push(dir.clone());
+            for t in cached {
+                if seen.insert(t.path.clone()) {
+                    tracks.push(t.clone());
+                }
+            }
+            continue;
+        }
         for entry in WalkDir::new(dir)
             .follow_links(true)
             .into_iter()
@@ -827,6 +880,7 @@ pub fn scan(dirs: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<ScanM
         }
     }
     save_cache(&tracks);
+    let _ = tx.send(ScanMsg::Offline(offline));
     let _ = tx.send(ScanMsg::Done(tracks));
 }
 
@@ -992,5 +1046,33 @@ mod folder_art_tests {
         assert!(!no("/m/Album/01.mp3") && !no("/m/Album/02.mp3"));
         assert!(no("/m/Vrac/a.mp3") && no("/m/Vrac/b.mp3") && no("/m/Vrac/c.mp3"));
         assert!(!no("/m/Live/1.mp3") && no("/m/Live/bonus.mp3"));
+    }
+}
+
+#[cfg(test)]
+mod offline_tests {
+    use super::*;
+
+    /// An unmounted partition (missing folder, or bare empty mount point) keeps its tracks; an
+    /// empty folder that never had any is simply empty.
+    #[test]
+    fn unreachable_folders() {
+        let root = std::env::temp_dir().join(format!("stermusic-offline-{}", std::process::id()));
+        let empty = root.join("empty");
+        let full = root.join("full");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&full).unwrap();
+        std::fs::write(full.join("a.mp3"), b"").unwrap();
+
+        assert_eq!(dir_state(&root.join("missing")), DirState::Missing);
+        assert_eq!(dir_state(&empty), DirState::Empty);
+        assert_eq!(dir_state(&full), DirState::Present);
+
+        assert!(dir_offline(DirState::Missing, false));
+        assert!(dir_offline(DirState::Missing, true));
+        assert!(dir_offline(DirState::Empty, true));
+        assert!(!dir_offline(DirState::Empty, false));
+        assert!(!dir_offline(DirState::Present, true));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
