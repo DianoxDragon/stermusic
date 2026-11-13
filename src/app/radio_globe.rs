@@ -1,6 +1,6 @@
-//! Globe des webradios : les stations du monde entier, à leur place sur la Terre. On fait
-//! tourner le globe à la souris, on zoome à la molette, et un clic sur un point ouvre la liste
-//! des stations de ce lieu.
+//! Web radio globe: stations from all over the world, in their place on Earth. The globe is
+//! spun with the mouse and zoomed with the wheel, and clicking a point opens the list of the
+//! stations of that place.
 
 use std::sync::mpsc::{channel, Receiver};
 
@@ -14,9 +14,9 @@ use crate::radio::{self, Place, Station};
 use crate::trf;
 use crate::{theme, widgets};
 
-/// Largeur du panneau des stations d'un lieu.
+/// Width of the panel listing a place's stations.
 const PANEL_W: f32 = 330.0;
-/// Zoom minimal et maximal (1 : le globe tient dans la zone).
+/// Minimum and maximum zoom (1: the globe fits in the area).
 const ZOOM: (f32, f32) = (0.8, 60.0);
 
 pub struct GlobeState {
@@ -26,29 +26,29 @@ pub struct GlobeState {
     error: Option<String>,
     earth: Option<egui::TextureHandle>,
     earth_rx: Option<Receiver<Option<egui::ColorImage>>>,
-    /// Orientation (radians) et zoom.
+    /// Orientation (radians) and zoom.
     lon: f32,
     lat: f32,
     zoom: f32,
-    /// Élan après un glissé (points par seconde).
+    /// Momentum after a drag (points per second).
     velocity: egui::Vec2,
-    /// Vrai dès que l'utilisateur a touché au globe (il cesse alors de tourner tout seul).
+    /// True as soon as the user has touched the globe (it then stops spinning by itself).
     touched: bool,
-    /// Vol vers un point (latitude, longitude en radians, zoom visé).
+    /// Flight to a point (latitude, longitude in radians, target zoom).
     fly_to: Option<(f32, f32, f32)>,
     selected: Option<usize>,
-    /// Dernier lieu ouvert : le panneau le garde affiché le temps de glisser hors de la carte.
+    /// Last place opened: the panel keeps it shown while sliding off the map.
     shown: Option<usize>,
-    /// Pays vers lequel le globe s'est tourné (il suit le choix de pays de l'annuaire).
+    /// Country the globe turned to (it follows the directory's country choice).
     centered_on: Option<String>,
-    /// Images détaillées de la région affichée : la nouvelle, et l'ancienne qui reste dessous
-    /// le temps du fondu ; le bloc de tuiles en cours d'assemblage ; le moment du dernier
-    /// mouvement (on attend que la carte s'arrête pour demander les tuiles).
+    /// Detailed images of the displayed region: the new one, and the old one staying below during
+    /// the cross-fade; the block of tiles being assembled; the time of the last movement (we wait
+    /// for the map to stop before requesting tiles).
     detail: Option<DetailTex>,
     detail_prev: Option<DetailTex>,
     detail_rx: Option<Receiver<Option<(globe::TileRange, egui::ColorImage)>>>,
     last_motion: f64,
-    /// Échec du téléchargement : on réessaie un peu plus tard.
+    /// Download failed: try again a little later.
     detail_retry_at: f64,
 }
 
@@ -96,7 +96,7 @@ impl Default for GlobeState {
 }
 
 impl GlobeState {
-    /// Lance le chargement des stations (cache, sinon annuaire) et de l'image de la Terre.
+    /// Starts loading the stations (cache, otherwise directory) and the Earth image.
     fn ensure_loaded(&mut self, ctx: &egui::Context, force_refresh: bool) {
         if self.earth.is_none() && self.earth_rx.is_none() {
             let (tx, rx) = channel();
@@ -116,7 +116,7 @@ impl GlobeState {
                     Some((list, true)) if !force_refresh => Ok(list),
                     stale => match radio::fetch_world() {
                         Ok(list) => Ok(list),
-                        // Pas de réseau : l'ancien cache vaut mieux que rien.
+                        // No network: the old cache is better than nothing.
                         Err(e) => stale.map(|(list, _)| list).ok_or(e),
                     },
                 };
@@ -168,7 +168,7 @@ impl SterMusic {
                             wrap_mode: egui::TextureWrapMode::ClampToEdge,
                             mipmap_mode: Some(egui::TextureFilter::Linear),
                         };
-                        // L'image d'avant reste dessous pendant que la nouvelle apparaît.
+                        // The previous image stays below while the new one appears.
                         g.detail_prev = g.detail.take();
                         g.detail = Some(DetailTex {
                             texture: ctx.load_texture("earth_detail", img, options),
@@ -196,13 +196,13 @@ impl SterMusic {
         }
     }
 
-    /// Vue « Globe » de la page Webradios : la Terre remplit toute la zone de contenu, l'en-tête,
-    /// les commandes et le panneau d'un lieu flottent par-dessus.
+    /// "Globe" view of the Web radio page: the Earth fills the whole content area, the header, the
+    /// controls and the panel of a place float on top.
     pub(super) fn globe_view(&mut self, ui: &mut egui::Ui, area: Rect) {
         let ctx = ui.ctx().clone();
         self.radio.globe.ensure_loaded(&ctx, false);
         let panel_open = self.radio.globe.selected.is_some();
-        // Ce qui flotte sur la carte : en-tête, barre de commandes, panneau du lieu.
+        // What floats on the map: header, control bar, place panel.
         let header = Rect::from_min_size(area.min + vec2(32.0, 24.0), vec2(area.width() - 48.0, 40.0));
         let toolbar = Rect::from_min_max(
             pos2(area.left() + 28.0, header.bottom() + 10.0),
@@ -215,13 +215,13 @@ impl SterMusic {
         ui.allocate_rect(area, Sense::hover());
         let resp = ui.interact(area, ui.id().with("globe"), Sense::click_and_drag());
         let dt = ui.input(|i| i.stable_dt).min(0.1);
-        // Pointeur sur la carte, hors de ce qui flotte dessus.
+        // Pointer on the map, outside what floats over it.
         let over_ui = |p: egui::Pos2| p.y < toolbar.bottom() || (panel_open && panel.contains(p));
         let pointer = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|p| area.contains(*p) && !over_ui(*p));
 
-        // Le globe se tourne vers le pays choisi dans l'annuaire (au début, celui du bureau).
+        // The globe turns to the country chosen in the directory (at first, the desktop's).
         let country = self.radio.filter_country();
         if self.radio.globe.centered_on.as_ref() != Some(&country) && !self.radio.globe.world.is_empty() {
             let first = self.radio.globe.centered_on.is_none();
@@ -233,7 +233,7 @@ impl SterMusic {
             }
         }
 
-        // Zone utile sous l'en-tête ; le globe glisse à gauche quand le panneau s'ouvre.
+        // Usable area under the header; the globe slides left when the panel opens.
         let shift = crate::anim::toggle(
             &ctx,
             egui::Id::new("globe_panel_shift"),
@@ -251,7 +251,7 @@ impl SterMusic {
             radius: base * g.zoom,
         };
 
-        // Glisser : le globe suit la souris ; lâché, il garde un peu d'élan.
+        // Drag: the globe follows the mouse; released, it keeps a bit of momentum.
         if resp.dragged() {
             let d = resp.drag_delta();
             view.drag(d);
@@ -264,7 +264,7 @@ impl SterMusic {
         } else {
             g.velocity = egui::Vec2::ZERO;
         }
-        // Molette : zoom vers le point sous le pointeur.
+        // Wheel: zoom towards the point under the pointer.
         if pointer.is_some() {
             let scroll = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll.abs() > 0.0 {
@@ -282,7 +282,7 @@ impl SterMusic {
                 g.fly_to = None;
             }
         }
-        // Vol vers un lieu, en douceur.
+        // Smooth flight to a place.
         if let Some((lat, lon, zoom)) = g.fly_to {
             let k = 1.0 - (-dt * 5.0).exp();
             let dlon = globe::wrap_rad(lon - view.lon);
@@ -294,7 +294,7 @@ impl SterMusic {
                 g.fly_to = None;
             }
         } else if !g.touched && self.focused {
-            // Tant que personne n'y touche, la Terre tourne doucement.
+            // As long as nobody touches it, the Earth spins gently.
             view.lon = globe::wrap_rad(view.lon + dt * 0.08);
         }
         g.lon = view.lon;
@@ -348,7 +348,7 @@ impl SterMusic {
             }
         }
 
-        // Stations : un point par lieu, plus gros quand il y a beaucoup de stations.
+        // Stations: one dot per place, bigger when there are many stations.
         let live_url = self
             .radio
             .live
@@ -360,17 +360,17 @@ impl SterMusic {
         let scale = (0.85 + g.zoom.sqrt() * 0.15).min(1.8);
         let time = ui.input(|i| i.time) as f32;
         let mut live_place = None;
-        // Points aux couleurs du thème, éclaircies pour ressortir sur la carte.
+        // Dots in the theme colors, lightened to stand out on the map.
         let dot = theme::accent_light().lerp_to_gamma(Color32::WHITE, 0.25);
         for (k, place) in g.places.iter().enumerate() {
             let Some((p, z)) = view.project(place.lat, place.lon) else {
                 continue;
             };
-            // Rien sous le panneau : on n'en voit que des taches à travers son fond.
+            // Nothing under the panel: only blotches of it would show through its background.
             if !area.expand(10.0).contains(p) || (panel_open && panel.expand(4.0).contains(p)) {
                 continue;
             }
-            // Les points s'effacent en approchant du bord du globe.
+            // Dots fade out as they approach the edge of the globe.
             let fade = ((z - 0.05) / 0.35).clamp(0.0, 1.0);
             let fade = fade * fade * (3.0 - 2.0 * fade);
             if fade <= 0.01 {
@@ -399,7 +399,7 @@ impl SterMusic {
                 live_place = Some(p);
             }
         }
-        // Lieu choisi : l'anneau se resserre sur le point, avec une onde qui s'en échappe.
+        // Chosen place: the ring tightens on the dot, with a ripple escaping from it.
         let ring = crate::anim::pulse(
             &ctx,
             egui::Id::new("globe_ring"),
@@ -423,7 +423,7 @@ impl SterMusic {
             }
         }
         if let Some(p) = live_place {
-            // Lieu de la station en cours : une onde qui s'élargit.
+            // Place of the current station: a widening ripple.
             let t = (time * 0.8).fract();
             painter.circle_stroke(
                 p,
@@ -433,7 +433,7 @@ impl SterMusic {
             ctx.request_repaint();
         }
 
-        // Survol et clic.
+        // Hover and click.
         if let Some((k, _)) = nearest {
             let place = &g.places[k];
             let label = format!(
@@ -442,7 +442,7 @@ impl SterMusic {
                 crate::i18n::plural(place.stations.len(), "station", "stations")
             );
             if let Some(ptr) = pointer {
-                // La bulle du lieu survolé apparaît en fondu, en remontant un peu.
+                // The tooltip of the hovered place fades in, moving up a little.
                 let t = crate::anim::appear_each(
                     &ctx,
                     egui::Id::new(("globe_tip", k)),
@@ -466,9 +466,9 @@ impl SterMusic {
             }
         }
 
-        // Voiles dégradés en haut et en bas : l'en-tête et les légendes restent lisibles.
+        // Gradient veils at the top and bottom: the header and the captions stay readable.
         let bg = theme::bg();
-        // Le voile du haut suit le coin arrondi de la zone (sinon il en dessine un carré).
+        // The top veil follows the rounded corner of the area (otherwise it draws a square one).
         vertical_fade(
             &painter,
             Rect::from_min_max(area.min, pos2(area.right(), toolbar.bottom() + 36.0)),
@@ -490,10 +490,10 @@ impl SterMusic {
             });
         });
         self.globe_overlay(ui, area, toolbar, panel_open);
-        // Le panneau glisse depuis la droite en s'ouvrant, et repart de même en se fermant.
+        // The panel slides in from the right when opening, and slides back out when closing.
         if let Some(k) = self.radio.globe.selected {
-            // Ouverture du panneau : ses stations arrivent en cascade (un changement de lieu
-            // relance aussi la cascade, dans `place_panel`).
+            // Opening the panel: its stations arrive in a cascade (a change of place also restarts the
+            // cascade, in `place_panel`).
             if self.radio.globe.shown.is_none() {
                 super::lists::restart_cascade(&ctx);
             }
@@ -507,7 +507,7 @@ impl SterMusic {
         } else if !panel_open {
             self.radio.globe.shown = None;
         }
-        // Liseré de la zone de contenu, par-dessus la carte.
+        // Border of the content area, on top of the map.
         ui.painter().rect_stroke(
             area,
             CornerRadius {
@@ -519,7 +519,7 @@ impl SterMusic {
         );
     }
 
-    /// Demande les tuiles détaillées de la zone visible, une fois le globe immobile.
+    /// Requests the detailed tiles of the visible area, once the globe is still.
     fn request_detail(&mut self, ctx: &egui::Context, view: &View, area: Rect, now: f64) {
         let g = &mut self.radio.globe;
         if g.zoom < 1.4 || g.detail_rx.is_some() || now < g.detail_retry_at || !globe::available() {
@@ -533,8 +533,8 @@ impl SterMusic {
         let Some((bounds, need)) = visible_area(view, area, ctx.pixels_per_point()) else {
             return;
         };
-        // Le niveau le moins fin qui suffit à l'écran ; moins fin encore si la zone demande
-        // trop de tuiles.
+        // The coarsest level that is enough for the screen; coarser still if the area needs too many
+        // tiles.
         let mut level = (globe::MIN_LEVEL..=globe::MAX_LEVEL)
             .find(|&l| globe::level_px_per_deg(l) >= need * 0.85)
             .unwrap_or(globe::MAX_LEVEL);
@@ -546,7 +546,7 @@ impl SterMusic {
         if range.count() > globe::MAX_TILES {
             return;
         }
-        // L'image déjà là couvre la zone assez finement : rien à faire.
+        // The image already there covers the area finely enough: nothing to do.
         if g.detail.as_ref().is_some_and(|d| d.range.contains(&range)) {
             return;
         }
@@ -559,7 +559,7 @@ impl SterMusic {
         g.detail_rx = Some(rx);
     }
 
-    /// Boutons et légende posés sur le globe.
+    /// Buttons and caption laid over the globe.
     fn globe_overlay(&mut self, ui: &mut egui::Ui, area: Rect, bar: Rect, panel_open: bool) {
         let g = &self.radio.globe;
         let status = if g.loading.is_some() && g.world.is_empty() {
@@ -652,7 +652,7 @@ impl SterMusic {
                 },
             ),
         ] {
-            // Place comptée (ou panneau ouvert) : seule la mention des sources reste.
+            // Limited room (or panel open): only the credits remain.
             if align == Align2::LEFT_BOTTOM && (area.width() < 760.0 || panel_open) {
                 continue;
             }
@@ -666,19 +666,19 @@ impl SterMusic {
         }
     }
 
-    /// Panneau des stations du lieu choisi.
+    /// Panel of the stations of the chosen place.
     fn place_panel(&mut self, ui: &mut egui::Ui, rect: Rect, k: usize, opacity: f32) {
         let Some(place) = self.radio.globe.places.get(k).cloned() else {
             return;
         };
-        // Autre lieu : les stations repartent en cascade.
+        // Another place: the stations cascade in again.
         if crate::anim::key_changed(ui.ctx(), egui::Id::new("globe_place"), k as u64) {
             super::lists::restart_cascade(ui.ctx());
         }
         let mut scoped = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
         scoped.multiply_opacity(opacity);
         let ui = &mut scoped;
-        // Panneau posé sur la carte : ombre douce, fond presque opaque.
+        // Panel laid over the map: soft shadow, almost opaque background.
         ui.painter().add(
             egui::Shadow {
                 offset: [0, 6],
@@ -745,14 +745,14 @@ impl SterMusic {
     }
 }
 
-/// Rectangle en dégradé vertical (voile au-dessus de la carte), le coin haut gauche arrondi
-/// de `corner` points.
+/// Rectangle with a vertical gradient (veil above the map), the top left corner rounded by
+/// `corner` points.
 fn vertical_fade(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32, corner: f32) {
     let color_at = |y: f32| {
         let t = ((y - rect.top()) / rect.height()).clamp(0.0, 1.0);
         top.lerp_to_gamma(bottom, t)
     };
-    // Contour (convexe) : l'arrondi du coin, puis les trois autres coins.
+    // (Convex) outline: the rounded corner, then the other three corners.
     let mut outline = Vec::new();
     if corner > 0.0 {
         let c = rect.left_top() + vec2(corner, corner);
@@ -777,8 +777,8 @@ fn vertical_fade(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Colo
     painter.add(mesh);
 }
 
-/// La zone de la Terre visible dans `area` (degrés), et les pixels d'écran par degré qu'il y
-/// faudrait ; `None` si elle est trop grande (globe entier).
+/// The area of the Earth visible in `area` (degrees), and the screen pixels per degree it would
+/// need; `None` if it is too large (whole globe).
 fn visible_area(view: &View, area: Rect, ppp: f32) -> Option<([f32; 4], f32)> {
     let mut lats = Vec::new();
     let mut lons = Vec::new();

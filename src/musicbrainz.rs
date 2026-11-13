@@ -1,6 +1,6 @@
-//! Import depuis MusicBrainz (recherche d'albums, liste des pistes) et le Cover Art Archive
-//! (pochettes). API publique, sans clé ; MusicBrainz demande au plus une requête par seconde
-//! et un User-Agent qui nomme l'application.
+//! Import from MusicBrainz (album search, track list) and the Cover Art Archive (album art).
+//! Public API, no key; MusicBrainz asks for at most one request per second and a User-Agent
+//! that names the application.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -23,7 +23,7 @@ pub struct Hit {
     pub country: String,
     pub tracks: u32,
     pub format: String,
-    /// Précision (« Deluxe », « remaster »…) et type (album, single…).
+    /// Disambiguation ("Deluxe", "remaster"…) and type (album, single…).
     pub extra: String,
 }
 
@@ -32,7 +32,7 @@ pub struct Track {
     pub disc: u32,
     pub discs: u32,
     pub position: u32,
-    /// Nombre de pistes du disque.
+    /// Number of tracks on the disc.
     pub total: u32,
     pub title: String,
     pub artist: String,
@@ -55,7 +55,7 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
-/// Une requête par seconde au plus, toutes recherches confondues.
+/// One request per second at most, across all searches.
 fn throttle() {
     static LAST: Mutex<Option<Instant>> = Mutex::new(None);
     let mut last = LAST.lock().unwrap();
@@ -94,7 +94,7 @@ fn encode(s: &str) -> String {
     out
 }
 
-/// Terme de recherche Lucene entre guillemets (les caractères spéciaux sont échappés).
+/// Lucene search term in quotes (special characters are escaped).
 fn quoted(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.trim().chars() {
@@ -107,7 +107,7 @@ fn quoted(s: &str) -> String {
     out
 }
 
-/// Typographie simple : tirets et apostrophes ASCII, comme dans la plupart des bibliothèques.
+/// Plain typography: ASCII dashes and apostrophes, as in most libraries.
 fn plain(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -133,7 +133,7 @@ fn credit(v: &Value) -> String {
         .unwrap_or_default()
 }
 
-/// Albums correspondant à l'artiste et au titre (l'un des deux peut être vide).
+/// Albums matching the artist and the title (either may be empty).
 pub fn search(artist: &str, album: &str) -> Result<Vec<Hit>, String> {
     let mut terms = Vec::new();
     if !album.trim().is_empty() {
@@ -193,7 +193,7 @@ pub fn search(artist: &str, album: &str) -> Result<Vec<Hit>, String> {
     Ok(hits)
 }
 
-/// Le genre le plus voté (celui du groupe de sorties, sinon de la sortie), en « Title Case ».
+/// The most voted genre (of the release group, otherwise of the release), in "Title Case".
 fn genre(json: &Value) -> String {
     let best = |v: Option<&Value>| -> Option<String> {
         v?.get("genres")?
@@ -254,7 +254,7 @@ pub fn release(id: &str) -> Result<Release, String> {
     })
 }
 
-/// Pochette avant (500 px) du Cover Art Archive ; `None` s'il n'y en a pas.
+/// Front cover (500 px) from the Cover Art Archive; `None` if there is none.
 pub fn cover(id: &str) -> Result<Option<Vec<u8>>, String> {
     let url = format!("https://coverartarchive.org/release/{id}/front-500");
     match agent().get(&url).call() {
@@ -283,7 +283,7 @@ mod tests {
         assert_eq!(plain("alt‐J’s"), "alt-J's");
     }
 
-    /// Requête réelle : `cargo test musicbrainz -- --ignored`.
+    /// Real request: `cargo test musicbrainz -- --ignored`.
     #[test]
     #[ignore]
     fn live_lookup() {
@@ -304,7 +304,7 @@ mod tests {
     }
 }
 
-/// Un disque reconnu d'après sa table des matières : titre, artiste, année, titres des pistes.
+/// A disc recognized from its table of contents: title, artist, year, track titles.
 #[derive(Clone, Debug, Default)]
 pub struct Disc {
     pub album: String,
@@ -313,8 +313,8 @@ pub struct Disc {
     pub titles: Vec<(String, String)>,
 }
 
-/// Cherche un CD d'après sa table des matières : `offsets` = début de chaque piste et
-/// `leadout` = fin du disque, en secteurs (1/75 s, 150 de prégap compris). Bloquant.
+/// Looks up a CD from its table of contents: `offsets` = start of each track and `leadout` =
+/// end of the disc, in sectors (1/75 s, 150 of pregap included). Blocking.
 pub fn disc_by_toc(offsets: &[u32], leadout: u32) -> Result<Option<Disc>, String> {
     let toc: Vec<String> = [1, offsets.len() as u32, leadout]
         .into_iter()
@@ -329,7 +329,7 @@ pub fn disc_by_toc(offsets: &[u32], leadout: u32) -> Result<Option<Disc>, String
     let Some(release) = json["releases"].as_array().and_then(|r| r.first()) else {
         return Ok(None);
     };
-    // Le support dont le nombre de pistes correspond.
+    // The medium whose track count matches.
     let medium = release["media"]
         .as_array()
         .and_then(|m| {

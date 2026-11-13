@@ -1,5 +1,5 @@
-//! Ce que le lecteur ouvre : un fichier, un morceau d'un fichier (feuille CUE), ou une adresse
-//! (serveur de musique, podcast), et le moteur qui le décode.
+//! What the player opens: a file, a track within a file (CUE sheet), or an address (music
+//! server, podcast), and the engine that decodes it.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -15,10 +15,10 @@ pub enum Input {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Media {
     pub input: Input,
-    /// Début et fin du morceau dans le fichier (morceau d'un fichier CUE).
+    /// Start and end of the track within the file (track of a CUE sheet).
     pub start: Duration,
     pub end: Option<Duration>,
-    /// Durée connue (pour le décodage par ffmpeg, qui ne la donne pas).
+    /// Known duration (for ffmpeg decoding, which doesn't report it).
     pub duration: Option<Duration>,
 }
 
@@ -41,7 +41,7 @@ impl Media {
         }
     }
 
-    /// Le fichier, s'il y en a un.
+    /// The file, if there is one.
     pub fn path(&self) -> Option<&std::path::Path> {
         match &self.input {
             Input::File(p) => Some(p),
@@ -49,7 +49,7 @@ impl Media {
         }
     }
 
-    /// Vrai si ffmpeg doit s'en charger (adresse distante, ou format inconnu de Symphonia).
+    /// True if ffmpeg must handle it (remote address, or format unknown to Symphonia).
     pub fn needs_ffmpeg(&self) -> bool {
         match &self.input {
             Input::Url(_) => true,
@@ -57,7 +57,7 @@ impl Media {
         }
     }
 
-    /// Ce que reçoit ffmpeg : le chemin ou l'adresse.
+    /// What ffmpeg receives: the path or the address.
     pub fn ffmpeg_input(&self) -> String {
         match &self.input {
             Input::File(p) => p.to_string_lossy().into_owned(),
@@ -66,15 +66,15 @@ impl Media {
     }
 }
 
-/// Un morceau découpé dans une source plus longue : il commence à `start` et s'arrête à `end`,
-/// y compris après un déplacement (ce que `take_duration` de rodio ne recalcule pas).
+/// A track cut out of a longer source: it starts at `start` and stops at `end`, including after
+/// a seek (which rodio's `take_duration` does not recompute).
 pub struct Span<S: Source> {
     inner: S,
     start: Duration,
-    /// Durée du morceau (sa fin moins son début).
+    /// Duration of the track (its end minus its start).
     length: Option<Duration>,
-    /// Échantillons lus depuis le début du morceau ou le dernier déplacement, et la position
-    /// à ce moment-là.
+    /// Samples read since the start of the track or the last seek, and the position at that
+    /// moment.
     samples: u64,
     base: Duration,
 }
@@ -104,7 +104,7 @@ impl<S: Source> Iterator for Span<S> {
 
     fn next(&mut self) -> Option<f32> {
         if let Some(len) = self.length {
-            // Vérifié une fois par bloc de 1024 échantillons : assez précis, peu coûteux.
+            // Checked once per block of 1024 samples: precise enough, cheap.
             if self.samples.is_multiple_of(1024) && self.elapsed() >= len {
                 return None;
             }
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn span_cuts_and_seeks() {
-        // 10 s de silence à 1000 Hz mono : le morceau de 2 s à 5 s.
+        // 10 s of silence at 1000 Hz mono: the track from 2 s to 5 s.
         let src = rodio::source::Zero::new(1, 1000).take_duration(Duration::from_secs(10));
         let mut span = Span::new(src, Duration::from_secs(2), Some(Duration::from_secs(5)));
         let n = span.by_ref().take(10_000).count();

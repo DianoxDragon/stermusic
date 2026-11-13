@@ -44,9 +44,9 @@ use std::path::PathBuf;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
-    // `stermusic ~/Musique` ajoute ce dossier à la bibliothèque ; `stermusic morceau.mp3…` joue
-    // ces morceaux (double-clic dans Dolphin) ; `stermusic --tags fichiers…` ouvre l'éditeur de
-    // tags. S'il y a déjà une fenêtre SterMusic, c'est elle qui s'en charge.
+    // `stermusic ~/Music` adds this folder to the library; `stermusic track.mp3…` plays these
+    // tracks (double click in Dolphin); `stermusic --tags files…` opens the tag editor. If a
+    // SterMusic window is already open, that window takes care of it.
     let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let absolute = |p: &PathBuf| std::path::absolute(p).unwrap_or_else(|_| p.clone());
     let mut launch = app::Launch::default();
@@ -66,15 +66,15 @@ fn main() -> eframe::Result<()> {
         if !launch.play_files.is_empty() && ipc::send_play(&launch.play_files) {
             return Ok(());
         }
-        // Relancé depuis le menu alors qu'il tourne déjà : on montre la fenêtre ouverte.
+        // Launched again from the menu while it is already running: show the open window.
         if args.is_empty() && ipc::send_show() {
             return Ok(());
         }
     }
 
-    // Le son passe par le greffon ALSA de PipeWire, qui ne nomme pas le flux et n'indique pas le
-    // processus : Plasma mettait alors plusieurs secondes à relier le son à la fenêtre (icône de
-    // haut-parleur de la barre des tâches). On lui donne ces informations (avant tout thread).
+    // Sound goes through PipeWire's ALSA plugin, which neither names the stream nor reports the
+    // process: Plasma then took several seconds to link the sound to the window (speaker icon in
+    // the task bar). We give it this information (before any thread).
     if std::env::var_os("PIPEWIRE_PROPS").is_none() {
         std::env::set_var(
             "PIPEWIRE_PROPS",
@@ -92,7 +92,7 @@ fn main() -> eframe::Result<()> {
         .with_app_id("stermusic")
         .with_inner_size([1240.0, 800.0])
         .with_min_inner_size([760.0, 520.0])
-        // Barre de titre dessinée par l'application, fondue dans l'interface.
+        // Title bar drawn by the application, blended into the interface.
         .with_decorations(false)
         .with_transparent(true)
         .with_drag_and_drop(true);
@@ -101,10 +101,10 @@ fn main() -> eframe::Result<()> {
     }
     let options = eframe::NativeOptions {
         viewport,
-        // Pas de synchronisation verticale : sous Wayland, une fenêtre réduite (ou cachée dans
-        // la zone de notification) ne reçoit plus d'images du compositeur, et la présentation
-        // d'une image bloquerait toute l'application, lecture comprise (plus de morceau
-        // suivant). La cadence est tenue par `app::pace` à la fréquence de l'écran.
+        // No vertical sync: under Wayland, a minimized window (or one hidden in the system tray) no
+        // longer receives frames from the compositor, and presenting a frame would block the whole
+        // application, playback included (no more next track). Pacing is handled by `app::pace` at
+        // the screen's refresh rate.
         vsync: false,
         ..Default::default()
     };

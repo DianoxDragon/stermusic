@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Liste les bibliothèques Rust compilées dans SterMusic (Linux x86_64, dépendances normales
-seulement) avec le texte de leur licence, repris de leurs propres fichiers. Les textes identiques
-ne sont écrits qu'une fois. Usage : third_party.py fichier-de-sortie.txt
+"""Lists the Rust libraries compiled into SterMusic (Linux x86_64, normal dependencies only)
+with the text of their license, taken from their own files. Identical texts are only written
+once. Usage: third_party.py output-file.txt
 """
-import glob, hashlib, json, os, subprocess, sys
+import glob, hashlib, json, os, re, subprocess, sys
 
+# License texts provided by the system: Debian/Ubuntu, then Arch Linux (licenses package).
 COMMON = "/usr/share/common-licenses"
+SPDX = "/usr/share/licenses/spdx"
 NAMES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "UNLICENSE", "LICENSE-*", "LICENCE-*")
 
 meta = json.loads(subprocess.check_output(
@@ -14,7 +16,7 @@ pkgs = {p["id"]: p for p in meta["packages"]}
 nodes = {n["id"]: n for n in meta["resolve"]["nodes"]}
 root = meta["resolve"]["root"]
 
-# Dépendances normales (pas de compilation ni de tests), en partant du programme.
+# Normal dependencies (no build or test dependencies), starting from the program.
 seen, todo = set(), [root]
 while todo:
     nid = todo.pop()
@@ -33,7 +35,7 @@ def license_files(pkg):
         for f in glob.glob(os.path.join(d, pat)) + glob.glob(os.path.join(d, pat.lower())):
             if os.path.isfile(f) and f not in files:
                 files.append(f)
-    # Polices embarquées (egui) : leurs licences sont rangées à côté d'elles.
+    # Embedded fonts (egui): their licenses are stored next to them.
     for f in sorted(glob.glob(os.path.join(d, "fonts", "*.txt"))):
         if f not in files:
             files.append(f)
@@ -44,16 +46,22 @@ def license_files(pkg):
     return sorted(files)
 
 def fallback(pkg):
-    """Texte de référence quand le paquet n'embarque pas sa licence."""
+    """Reference text when the package doesn't ship its license."""
     lic = pkg.get("license") or ""
     authors = ", ".join(pkg.get("authors") or []) or f"the {pkg['name']} authors"
     if "MIT" in lic:
         return MIT.format(holders=authors)
     if lic == "ISC":
         return ISC.format(holders=authors)
-    for name, file in (("Apache-2.0", "Apache-2.0"), ("MPL-2.0", "MPL-2.0"), ("CC0-1.0", "CC0-1.0"), ("BSD", "BSD")):
-        if name in lic and os.path.exists(os.path.join(COMMON, file)):
-            return open(os.path.join(COMMON, file), encoding="utf-8").read()
+    bsd = re.search(r"BSD-[0-9]-Clause", lic)
+    for name, file, spdx in (("Apache-2.0", "Apache-2.0", "Apache-2.0"), ("MPL-2.0", "MPL-2.0", "MPL-2.0"),
+                             ("CC0-1.0", "CC0-1.0", "CC0-1.0"),
+                             ("BSD", "BSD", bsd.group(0) if bsd else "BSD-3-Clause")):
+        if name not in lic:
+            continue
+        for path in (os.path.join(COMMON, file), os.path.join(SPDX, spdx + ".txt")):
+            if os.path.exists(path):
+                return open(path, encoding="utf-8").read()
     return f"License: {lic} (text not shipped with the package; see {pkg.get('repository') or 'crates.io'})."
 
 MIT = """Copyright (c) {holders}
@@ -88,7 +96,7 @@ NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE US
 OF THIS SOFTWARE.
 """
 
-texts = {}   # empreinte -> (texte, [paquets])
+texts = {}   # fingerprint -> (text, [packages])
 rows = []
 for pid in sorted(seen, key=lambda i: (pkgs[i]["name"], pkgs[i]["version"])):
     p = pkgs[pid]

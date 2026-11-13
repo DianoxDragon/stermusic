@@ -1,9 +1,9 @@
-//! Webradios : annuaire, connexion au flux, titre diffusé.
+//! Web radio: directory, connection to the stream, title on air.
 //!
-//! L'annuaire est celui de radio-browser.info (libre, sans clé). Un flux est lu par un thread
-//! qui remplit un tampon ; le décodeur (Symphonia, via rodio) y puise comme dans un fichier qu'on
-//! ne peut pas rembobiner. Les serveurs Icecast et Shoutcast glissent le titre en cours dans le
-//! flux (métadonnées ICY) : le thread les retire du son et les garde pour l'affichage.
+//! The directory is radio-browser.info's (free, no key). A stream is read by a thread that
+//! fills a buffer; the decoder (Symphonia, through rodio) draws from it as from a file that
+//! cannot be rewound. Icecast and Shoutcast servers slip the current title into the stream
+//! (ICY metadata): the thread removes it from the audio and keeps it for display.
 
 use std::collections::VecDeque;
 use std::io::{Read, Seek, SeekFrom};
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 const USER_AGENT: &str = concat!("SterMusic/", env!("CARGO_PKG_VERSION"));
 
-/// Serveurs de l'annuaire, essayés dans l'ordre.
+/// Directory servers, tried in order.
 const DIRECTORY: &[&str] = &[
     "https://de1.api.radio-browser.info",
     "https://de2.api.radio-browser.info",
@@ -26,27 +26,27 @@ const DIRECTORY: &[&str] = &[
 #[serde(default)]
 pub struct Station {
     pub name: String,
-    /// Adresse du flux (ou d'une playlist .pls / .m3u qui y mène).
+    /// Address of the stream (or of a .pls / .m3u playlist leading to it).
     pub url: String,
-    /// Logo de la station (adresse d'une image).
+    /// Station logo (address of an image).
     pub favicon: String,
     pub country: String,
-    /// Genres, séparés par des virgules (« jazz,lounge »).
+    /// Genres, separated by commas ("jazz,lounge").
     pub tags: String,
     pub codec: String,
     pub bitrate: u32,
     pub homepage: String,
-    /// Identifiant dans l'annuaire (vide pour une station ajoutée à la main).
+    /// Identifier in the directory (empty for a station added by hand).
     pub uuid: String,
-    /// Code du pays (« FR ») et région, pour le globe.
+    /// Country code ("FR") and region, for the globe.
     pub countrycode: String,
     pub state: String,
-    /// Latitude et longitude (degrés), si l'annuaire les connaît.
+    /// Latitude and longitude (degrees), if the directory knows them.
     pub geo: Option<[f32; 2]>,
 }
 
 impl Station {
-    /// « Jazz · Lounge · 128 kb/s » : de quoi reconnaître la station dans une liste.
+    /// "Jazz · Lounge · 128 kb/s": enough to recognize the station in a list.
     pub fn details(&self) -> String {
         let mut parts: Vec<String> = self
             .tags
@@ -74,7 +74,7 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-// ---------- Annuaire ----------
+// ---------- Directory ----------
 
 #[derive(Default, Deserialize)]
 #[serde(default)]
@@ -135,7 +135,7 @@ impl ApiStation {
     }
 }
 
-/// Formats que le décodeur sait lire (Opus et HLS ne le sont pas).
+/// Formats the decoder can read (Opus and HLS can't be).
 fn playable(codec: &str, hls: bool) -> bool {
     !hls && matches!(
         codec.to_ascii_uppercase().as_str(),
@@ -151,19 +151,19 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .build()
 }
 
-/// Ce qu'on demande à l'annuaire : les filtres se combinent ; sans aucun, les stations les plus
-/// écoutées du monde.
+/// What is asked of the directory: the filters combine; with none, the most listened stations
+/// in the world.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Query {
-    /// Morceau du nom de la station.
+    /// Part of the station name.
     pub name: String,
-    /// Genre (étiquette de l'annuaire : « jazz »).
+    /// Genre (directory tag: "jazz").
     pub tag: String,
-    /// Pays (code ISO : « FR »).
+    /// Country (ISO code: "FR").
     pub country: String,
 }
 
-/// Appel à l'annuaire, sur le premier serveur qui répond.
+/// Call to the directory, on the first server that answers.
 fn directory_get(path: &str, params: &[(&str, &str)], timeout: Duration) -> Result<ureq::Response, String> {
     let agent = agent(timeout);
     let mut last_error = String::new();
@@ -180,7 +180,7 @@ fn directory_get(path: &str, params: &[(&str, &str)], timeout: Duration) -> Resu
     Err(last_error)
 }
 
-/// Interroge l'annuaire (bloquant : à appeler depuis un thread).
+/// Queries the directory (blocking: to be called from a thread).
 pub fn search(query: &Query) -> Result<Vec<Station>, String> {
     let mut params = vec![
         ("limit", "100"),
@@ -202,7 +202,7 @@ pub fn search(query: &Query) -> Result<Vec<Station>, String> {
     Ok(list.into_iter().filter_map(ApiStation::into_station).collect())
 }
 
-/// Un pays de l'annuaire.
+/// A country of the directory.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Country {
     pub code: String,
@@ -210,7 +210,7 @@ pub struct Country {
     pub stations: u32,
 }
 
-/// Les pays qui ont des stations, par ordre alphabétique (bloquant).
+/// The countries that have stations, in alphabetical order (blocking).
 pub fn countries() -> Result<Vec<Country>, String> {
     #[derive(Deserialize)]
     struct Api {
@@ -236,10 +236,10 @@ pub fn countries() -> Result<Vec<Country>, String> {
     Ok(out)
 }
 
-/// « The United States Of America » → « United States Of America » : l'article gêne le tri.
+/// "The United States Of America" → "United States Of America": the article gets in the way of sorting.
 fn country_name(name: &str) -> String {
     let name = name.strip_prefix("The ").unwrap_or(name).trim();
-    // L'annuaire donne les noms officiels, parfois à rallonge.
+    // The directory gives official names, sometimes very long ones.
     let short = match name {
         "United Kingdom Of Great Britain And Northern Ireland" => "United Kingdom",
         "United States Of America" => "United States",
@@ -261,16 +261,16 @@ fn country_name(name: &str) -> String {
     short.to_owned()
 }
 
-// ---------- Stations du monde (globe) ----------
+// ---------- Stations of the world (globe) ----------
 
-/// Les stations géolocalisées du monde entier, gardées une semaine sur le disque.
+/// Geolocated stations from all over the world, kept on disk for a week.
 const WORLD_MAX_AGE: Duration = Duration::from_secs(7 * 24 * 3600);
 
 fn world_file() -> std::path::PathBuf {
     crate::library::cache_dir().join("radio-world.json")
 }
 
-/// Stations du cache, et vrai s'il est encore frais ; `None` s'il n'y en a pas.
+/// Cached stations, and true if the cache is still fresh; `None` if there is none.
 pub fn load_world() -> Option<(Vec<Station>, bool)> {
     let file = world_file();
     let fresh = std::fs::metadata(&file)
@@ -282,7 +282,7 @@ pub fn load_world() -> Option<(Vec<Station>, bool)> {
     (!list.is_empty()).then_some((list, fresh))
 }
 
-/// Télécharge toutes les stations géolocalisées (une dizaine de mégaoctets) et les garde en cache.
+/// Downloads all the geolocated stations (about ten megabytes) and caches them.
 pub fn fetch_world() -> Result<Vec<Station>, String> {
     let params = [
         ("has_geo_info", "true"),
@@ -311,22 +311,22 @@ pub fn fetch_world() -> Result<Vec<Station>, String> {
     Ok(stations)
 }
 
-/// Un lieu du globe : une ville et ses stations (ou, loin de toute ville connue, une zone d'un
-/// demi-degré).
+/// A place on the globe: a city and its stations (or, far from any known city, an area of half
+/// a degree).
 #[derive(Clone, Debug)]
 pub struct Place {
     pub lat: f32,
     pub lon: f32,
-    /// La ville (« Lorient »), ou la région quand il n'y en a pas.
+    /// The city ("Lorient"), or the region when there is none.
     pub name: String,
-    /// La région et le pays (« Bretagne, France »), ou le pays seul.
+    /// The region and the country ("Bretagne, France"), or the country alone.
     pub region: String,
-    /// Indices dans la liste des stations du monde, les plus écoutées d'abord.
+    /// Indices in the list of the world's stations, the most listened first.
     pub stations: Vec<usize>,
 }
 
 impl Place {
-    /// « Lorient, France » : pour une bulle d'aide.
+    /// "Lorient, France": for a tooltip.
     pub fn full_name(&self) -> String {
         if self.region.is_empty() || self.region == self.name {
             self.name.clone()
@@ -337,10 +337,10 @@ impl Place {
     }
 }
 
-// ---------- Villes (GeoNames) ----------
+// ---------- Cities (GeoNames) ----------
 
-/// Villes de plus de 15 000 habitants (GeoNames, CC BY 4.0) : nom, latitude, longitude, pays,
-/// population.
+/// Cities with more than 15,000 inhabitants (GeoNames, CC BY 4.0): name, latitude, longitude,
+/// country, population.
 const CITIES_TSV: &str = include_str!("../assets/cities.tsv");
 
 struct City {
@@ -352,11 +352,11 @@ struct City {
 
 struct Cities {
     list: Vec<City>,
-    /// Villes rangées par case d'un degré, pour chercher seulement autour d'un point.
+    /// Cities sorted into one-degree cells, to search only around a point.
     grid: std::collections::HashMap<(i32, i32), Vec<u32>>,
 }
 
-/// Distance maximale entre une station et la ville à laquelle elle est rattachée (km).
+/// Maximum distance between a station and the city it is attached to (km).
 const CITY_RADIUS_KM: f32 = 40.0;
 
 fn cities() -> &'static Cities {
@@ -389,8 +389,8 @@ fn cities() -> &'static Cities {
 }
 
 impl Cities {
-    /// La ville à laquelle rattacher un point : la plus proche, les grandes villes comptant un
-    /// peu plus (une station « de Paris » placée en banlieue reste à Paris).
+    /// The city to attach a point to: the closest one, with large cities counting a little more (a
+    /// "Paris" station placed in the suburbs stays in Paris).
     fn nearest(&self, lat: f32, lon: f32) -> Option<usize> {
         let (cy, cx) = (lat.floor() as i32, lon.floor() as i32);
         let reach = if lat.abs() > 60.0 { 2 } else { 1 };
@@ -419,7 +419,7 @@ impl Cities {
     }
 }
 
-/// « Bretagne, France » : la région et le pays le plus souvent donnés par ces stations.
+/// "Bretagne, France": the region and the country most often given by these stations.
 fn region_of(world: &[Station], stations: &[usize]) -> String {
     let mut names: std::collections::HashMap<String, usize> = Default::default();
     for &i in stations {
@@ -439,7 +439,7 @@ fn region_of(world: &[Station], stations: &[usize]) -> String {
         .unwrap_or_default()
 }
 
-/// Regroupe les stations en lieux : par ville, sinon par zone d'un demi-degré.
+/// Groups the stations into places: by city, otherwise by area of half a degree.
 pub fn places(world: &[Station]) -> Vec<Place> {
     #[derive(Hash, PartialEq, Eq)]
     enum Key {
@@ -485,12 +485,12 @@ pub fn places(world: &[Station]) -> Vec<Place> {
             }
         })
         .collect();
-    // Les gros lieux en dernier : dessinés par-dessus les petits.
+    // Big places last: drawn on top of the small ones.
     out.sort_by_key(|p| p.stations.len());
     out
 }
 
-/// Centre approximatif d'un pays (moyenne de ses stations), pour y tourner le globe.
+/// Approximate center of a country (average of its stations), to turn the globe towards it.
 pub fn country_center(world: &[Station], code: &str) -> Option<(f32, f32)> {
     let pts: Vec<[f32; 2]> = world
         .iter()
@@ -500,7 +500,7 @@ pub fn country_center(world: &[Station], code: &str) -> Option<(f32, f32)> {
     if pts.is_empty() {
         return None;
     }
-    // Médiane plutôt que moyenne : quelques territoires lointains ne déplacent pas le centre.
+    // Median rather than mean: a few remote territories don't move the center.
     let mut lats: Vec<f32> = pts.iter().map(|p| p[0]).collect();
     let mut lons: Vec<f32> = pts.iter().map(|p| p[1]).collect();
     lats.sort_by(f32::total_cmp);
@@ -508,7 +508,7 @@ pub fn country_center(world: &[Station], code: &str) -> Option<(f32, f32)> {
     Some((lats[lats.len() / 2], lons[lons.len() / 2]))
 }
 
-/// Signale à l'annuaire qu'une station a été écoutée (son classement en dépend).
+/// Tells the directory that a station was listened to (its ranking depends on it).
 fn count_click(uuid: &str) {
     if uuid.is_empty() {
         return;
@@ -521,7 +521,7 @@ fn count_click(uuid: &str) {
     }
 }
 
-/// Code pays de la langue du bureau (`fr_FR.UTF-8` → `FR`), pour les stations proposées.
+/// Country code of the desktop language (`fr_FR.UTF-8` → `FR`), for the suggested stations.
 pub fn desktop_country() -> String {
     ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
@@ -534,7 +534,7 @@ pub fn desktop_country() -> String {
         .unwrap_or_else(|| "FR".into())
 }
 
-/// Télécharge une image (logo de station, image de podcast : 3 Mo au plus).
+/// Downloads an image (station logo, podcast image: 3 MB at most).
 pub fn fetch_image(url: &str) -> Option<Vec<u8>> {
     if !url.starts_with("http") {
         return None;
@@ -545,9 +545,9 @@ pub fn fetch_image(url: &str) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-// ---------- Flux ----------
+// ---------- Stream ----------
 
-/// Tampon partagé entre le thread réseau (qui écrit) et le décodeur (qui lit).
+/// Buffer shared between the network thread (which writes) and the decoder (which reads).
 struct Pipe {
     buf: Mutex<Buffer>,
     cond: Condvar,
@@ -556,16 +556,16 @@ struct Pipe {
 #[derive(Default)]
 struct Buffer {
     data: VecDeque<u8>,
-    /// Le flux est terminé (coupure, serveur arrêté) : plus rien n'arrivera.
+    /// The stream is over (drop, server stopped): nothing more will arrive.
     ended: bool,
 }
 
-/// Au-delà, le thread réseau attend que le décodeur consomme.
+/// Beyond this, the network thread waits for the decoder to consume.
 const MAX_BUFFER: usize = 2 * 1024 * 1024;
-/// Le décodeur attend au plus ce temps des données avant de tenir le flux pour terminé.
+/// The decoder waits at most this long for data before considering the stream over.
 const STALL_TIMEOUT: Duration = Duration::from_secs(12);
 
-/// Ce que le décodeur lit : le son du flux, sans les métadonnées ICY.
+/// What the decoder reads: the audio of the stream, without the ICY metadata.
 pub struct StreamReader {
     pipe: Arc<Pipe>,
     pos: u64,
@@ -598,7 +598,7 @@ impl Read for StreamReader {
 }
 
 impl Seek for StreamReader {
-    /// Un direct ne se rembobine pas : seule la position courante peut être demandée.
+    /// A live stream can't be rewound: only the current position can be requested.
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         match pos {
             SeekFrom::Current(0) => Ok(self.pos),
@@ -612,19 +612,19 @@ impl Seek for StreamReader {
 }
 
 impl Drop for StreamReader {
-    /// Décodeur arrêté (pause, autre station) : le thread réseau se termine.
+    /// Decoder stopped (pause, other station): the network thread ends.
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         self.pipe.cond.notify_all();
     }
 }
 
-/// Ce que l'interface suit d'une station en cours d'écoute.
+/// What the interface follows of a station being listened to.
 #[derive(Clone)]
 pub struct LiveInfo {
-    /// Titre diffusé (« Artiste - Titre »), mis à jour par le thread réseau.
+    /// Title on air ("Artist - Title"), updated by the network thread.
     pub title: Arc<Mutex<String>>,
-    /// Nom donné par le serveur (en-tête `icy-name`), à défaut du nom de l'annuaire.
+    /// Name given by the server (`icy-name` header), when the directory has none.
     pub server_name: String,
     pub stop: Arc<AtomicBool>,
 }
@@ -635,10 +635,10 @@ impl LiveInfo {
     }
 }
 
-/// Une station prête à jouer : le décodeur et ce que l'interface en suit.
+/// A station ready to play: the decoder and what the interface follows of it.
 pub type Connected = (rodio::Decoder<StreamReader>, LiveInfo);
 
-/// Se connecte au flux et prépare le décodeur (bloquant : quelques secondes au plus).
+/// Connects to the stream and prepares the decoder (blocking: a few seconds at most).
 pub fn connect(station: &Station) -> Result<Connected, String> {
     let url = resolve(&station.url)?;
     let agent = ureq::AgentBuilder::new()
@@ -676,7 +676,7 @@ pub fn connect(station: &Station) -> Result<Connected, String> {
     let uuid = station.uuid.clone();
     std::thread::spawn(move || count_click(&uuid));
 
-    // Un peu d'avance avant de lancer le son : le réseau peut hoqueter.
+    // A little head start before starting the sound: the network may hiccup.
     let start = Instant::now();
     loop {
         let (len, ended) = {
@@ -721,7 +721,7 @@ pub fn connect(station: &Station) -> Result<Connected, String> {
     ))
 }
 
-/// Extension qui aide le décodeur à reconnaître le format.
+/// Extension that helps the decoder recognize the format.
 fn codec_hint(content_type: &str, codec: &str, url: &str) -> Option<&'static str> {
     let codec = codec.to_ascii_lowercase();
     if content_type.contains("mpeg") || codec == "mp3" {
@@ -740,8 +740,8 @@ fn codec_hint(content_type: &str, codec: &str, url: &str) -> Option<&'static str
     }
 }
 
-/// Thread réseau : copie le flux dans le tampon, en retirant les métadonnées ICY (un bloc tous
-/// les `metaint` octets de son).
+/// Network thread: copies the stream into the buffer, removing the ICY metadata (one block
+/// every `metaint` bytes of audio).
 fn pump(mut reader: impl Read, metaint: usize, pipe: &Pipe, stop: &AtomicBool, title: &Mutex<String>) {
     let mut chunk = vec![0u8; 16 * 1024];
     let mut until_meta = metaint;
@@ -794,11 +794,11 @@ fn pump(mut reader: impl Read, metaint: usize, pipe: &Pipe, stop: &AtomicBool, t
     pipe.cond.notify_all();
 }
 
-/// Titre en cours dans un bloc ICY : `StreamTitle='Artiste - Titre';StreamUrl='…';`.
+/// Current title in an ICY block: `StreamTitle='Artist - Title';StreamUrl='…';`.
 fn stream_title(meta: &[u8]) -> Option<String> {
     let end = meta.iter().position(|&b| b == 0).unwrap_or(meta.len());
     let raw = &meta[..end];
-    // UTF-8 le plus souvent ; les vieux serveurs envoient du Latin-1.
+    // UTF-8 most of the time; old servers send Latin-1.
     let text = match std::str::from_utf8(raw) {
         Ok(s) => s.to_owned(),
         Err(_) => raw.iter().map(|&b| b as char).collect(),
@@ -809,7 +809,7 @@ fn stream_title(meta: &[u8]) -> Option<String> {
         .find("';")
         .unwrap_or(rest.len().saturating_sub(rest.ends_with('\'') as usize));
     let title = rest[..stop].trim();
-    // Certaines stations n'envoient qu'un tiret ou des espaces entre deux titres.
+    // Some stations only send a dash or spaces between two titles.
     let meaningful = title.chars().any(char::is_alphanumeric);
     Some(if meaningful {
         title.to_owned()
@@ -818,7 +818,7 @@ fn stream_title(meta: &[u8]) -> Option<String> {
     })
 }
 
-/// Une adresse de playlist (.pls, .m3u) mène au vrai flux : on prend sa première entrée.
+/// A playlist address (.pls, .m3u) leads to the real stream: its first entry is taken.
 pub fn resolve(url: &str) -> Result<String, String> {
     let lower = url.to_ascii_lowercase();
     let path = lower.split('?').next().unwrap_or("");
@@ -837,7 +837,7 @@ pub fn resolve(url: &str) -> Result<String, String> {
 
 fn playlist_entry(text: &str) -> Option<String> {
     text.lines().map(str::trim).find_map(|l| {
-        // .pls : « File1=http://… » ; .m3u : une adresse par ligne ; .asx : href="…".
+        // .pls: "File1=http://…"; .m3u: one address per line; .asx: href="…".
         let candidate = if let Some((key, value)) = l.split_once('=') {
             if key.to_ascii_lowercase().starts_with("file") {
                 value.trim()
@@ -862,7 +862,7 @@ mod tests {
         let meta = b"StreamTitle='Daft Punk - One More Time';StreamUrl='';\0\0\0";
         assert_eq!(stream_title(meta).as_deref(), Some("Daft Punk - One More Time"));
         assert_eq!(stream_title(b"StreamTitle=' - ';").as_deref(), Some(""));
-        // Latin-1 : « é » sur un octet.
+        // Latin-1: "é" on one byte.
         let latin = b"StreamTitle='Caf\xe9';";
         assert_eq!(stream_title(latin).as_deref(), Some("Café"));
         assert_eq!(stream_title(b"rien"), None);
@@ -883,7 +883,7 @@ mod tests {
 
     #[test]
     fn stripping_metadata() {
-        // Deux blocs de 4 octets de son, séparés par un bloc de métadonnées de 16 octets.
+        // Two 4-byte blocks of audio, separated by a 16-byte metadata block.
         let mut stream = b"abcd".to_vec();
         let mut meta = b"StreamTitle='X';".to_vec();
         meta.resize(16, 0);
@@ -903,7 +903,7 @@ mod tests {
         assert_eq!(*title.lock().unwrap(), "X");
     }
 
-    /// Réseau : annuaire, puis quelques secondes de son d'une vraie station (MP3 et AAC).
+    /// Network: directory, then a few seconds of audio from a real station (MP3 and AAC).
     #[test]
     #[ignore]
     fn live_radio() {
@@ -963,7 +963,7 @@ mod tests {
         let places = places(&world);
         let names: Vec<String> = places.iter().map(|p| p.full_name()).collect();
         assert_eq!(places.len(), 3, "{names:?}");
-        // Deux stations de la région parisienne : un seul lieu, Paris.
+        // Two stations of the Paris region: a single place, Paris.
         let paris = places.iter().find(|p| p.stations.len() == 2).unwrap();
         assert_eq!(paris.name, "Paris");
         assert_eq!(paris.region, "Île-de-France, France");
@@ -976,7 +976,7 @@ mod tests {
             country_name("The United Kingdom Of Great Britain And Northern Ireland"),
             "United Kingdom"
         );
-        // Loin de toute ville : une zone, nommée d'après son pays.
+        // Far from any city: an area, named after its country.
         let sea = super::places(&[st("E", "FR", "", 46.0, -12.0)]);
         assert_eq!(sea[0].name, "France");
         let (lat, lon) = country_center(&world, "fr").unwrap();
@@ -991,7 +991,7 @@ mod tests {
 
 #[cfg(test)]
 mod real_world {
-    /// Sur le cache réel des stations du monde : `cargo test real_places -- --ignored --nocapture`.
+    /// On the real cache of the world's stations: `cargo test real_places -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn real_places() {

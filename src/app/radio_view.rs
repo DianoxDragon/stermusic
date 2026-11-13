@@ -1,4 +1,4 @@
-//! Page « Webradios » : mes stations, l'annuaire, et l'écoute en direct.
+//! "Web radio" page: my stations, the directory, and live listening.
 
 use std::collections::HashMap;
 use std::sync::atomic::Ordering;
@@ -14,7 +14,7 @@ use crate::radio::{self, Connected, LiveInfo, Query, Station};
 use crate::trf;
 use crate::{theme, widgets};
 
-/// Genres proposés en raccourci (nom affiché, étiquette de l'annuaire).
+/// Genres offered as shortcuts (displayed name, directory tag).
 const GENRES: &[(&str, &str)] = &[
     (crate::i18n::n_("Pop"), "pop"),
     (crate::i18n::n_("Rock"), "rock"),
@@ -30,15 +30,15 @@ const GENRES: &[(&str, &str)] = &[
     (crate::i18n::n_("Info"), "news"),
 ];
 
-/// Station en cours d'écoute.
+/// Station being listened to.
 pub struct Live {
     pub station: Station,
     pub info: LiveInfo,
-    /// Arrêtée par l'utilisateur (un direct ne se met pas en pause : il se relance).
+    /// Stopped by the user (a live stream doesn't pause: it restarts).
     pub paused: bool,
-    /// Reconnexions tentées depuis la dernière coupure.
+    /// Reconnections attempted since the last drop.
     retries: u8,
-    /// Dernier titre diffusé vu par l'interface (notification quand il change).
+    /// Last title on air seen by the interface (notification when it changes).
     pub last_title: String,
 }
 
@@ -51,10 +51,10 @@ enum Logo {
 pub struct RadioState {
     pub live: Option<Live>,
     pub connecting: Option<(Station, Receiver<Result<Connected, String>>)>,
-    /// Diffusion : recherche de l'adresse du flux, que l'appareil lira lui-même.
+    /// Casting: looking up the stream address, which the device will play itself.
     pub cast_rx: Option<(Station, Receiver<Result<String, String>>)>,
     query: String,
-    /// Filtres de l'annuaire (nom, genre, pays), et la recherche affichée.
+    /// Directory filters (name, genre, country), and the search shown.
     filter: Query,
     results: Vec<Station>,
     shown_query: Option<Query>,
@@ -63,13 +63,13 @@ pub struct RadioState {
     logos: HashMap<String, Logo>,
     logo_tx: Sender<(String, Option<egui::ColorImage>)>,
     logo_rx: Receiver<(String, Option<egui::ColorImage>)>,
-    /// Ajout d'une station par son adresse : nom et adresse saisis.
+    /// Adding a station by its address: name and address typed in.
     pub add: Option<(String, String)>,
-    /// Pays de l'annuaire (chargés à la première visite), et le filtre du choix de pays.
+    /// Directory countries (loaded on the first visit), and the filter of the country picker.
     countries: Vec<radio::Country>,
     countries_rx: Option<Receiver<Result<Vec<radio::Country>, String>>>,
     country_search: String,
-    /// Globe des stations du monde.
+    /// Globe of the world's stations.
     pub globe: super::radio_globe::GlobeState,
 }
 
@@ -102,7 +102,7 @@ impl Default for RadioState {
 }
 
 impl RadioState {
-    /// Station qui joue (ou se connecte) : son nom.
+    /// Station playing (or connecting): its name.
     pub fn connecting_to(&self) -> Option<&Station> {
         self.connecting
             .as_ref()
@@ -110,7 +110,7 @@ impl RadioState {
             .or(self.cast_rx.as_ref().map(|(s, _)| s))
     }
 
-    /// Station en cours (diffusée : sans titre diffusé).
+    /// Current station (when cast: without the title on air).
     pub fn set_live(&mut self, station: Station, info: LiveInfo) {
         if let Some(old) = self.live.take() {
             old.info.stop.store(true, Ordering::Relaxed);
@@ -124,12 +124,12 @@ impl RadioState {
         });
     }
 
-    /// Logo d'une station (téléchargé en arrière-plan à la première demande).
+    /// Logo of a station (downloaded in the background on first request).
     pub fn logo(&mut self, ctx: &egui::Context, station: &Station) -> Option<egui::TextureHandle> {
         self.image(ctx, &station.favicon)
     }
 
-    /// Image en ligne (logo de station, image de podcast), téléchargée à la première demande.
+    /// Online image (station logo, podcast image), downloaded on first request.
     pub fn image(&mut self, ctx: &egui::Context, url: &str) -> Option<egui::TextureHandle> {
         if url.is_empty() {
             return None;
@@ -149,7 +149,7 @@ impl RadioState {
         None
     }
 
-    /// Nom d'un pays d'après son code (« FR » → « France »), une fois la liste chargée.
+    /// Name of a country from its code ("FR" → "France"), once the list is loaded.
     pub fn country_label(&self, code: &str) -> String {
         self.countries
             .iter()
@@ -158,7 +158,7 @@ impl RadioState {
             .unwrap_or_else(|| code.to_owned())
     }
 
-    /// Pays du filtre de l'annuaire (celui du bureau s'il n'y en a pas).
+    /// Country of the directory filter (the desktop's if there is none).
     pub fn filter_country(&self) -> String {
         if self.filter.country.is_empty() {
             radio::desktop_country()
@@ -194,7 +194,7 @@ impl RadioState {
     }
 }
 
-/// Logo en petite texture carrée (le format est deviné ; un SVG ou une icône .ico échouent).
+/// Logo as a small square texture (the format is guessed; an SVG or a .ico icon fails).
 fn decode_logo(bytes: &[u8]) -> Option<egui::ColorImage> {
     let img = image::load_from_memory(bytes).ok()?;
     let img = img
@@ -207,8 +207,8 @@ fn decode_logo(bytes: &[u8]) -> Option<egui::ColorImage> {
 }
 
 impl SterMusic {
-    /// Lance l'écoute d'une station (la connexion se fait en arrière-plan ; la musique en
-    /// cours continue jusqu'à ce que la station réponde).
+    /// Starts listening to a station (the connection happens in the background; the music playing
+    /// goes on until the station answers).
     pub(super) fn play_station(&mut self, ctx: &egui::Context, station: Station) {
         if self.player.as_ref().is_some_and(|p| p.casting().is_some()) {
             self.play_station_cast(ctx, station);
@@ -224,7 +224,7 @@ impl SterMusic {
         self.radio.connecting = Some((station, rx));
     }
 
-    /// Arrête la station en cours (elle reste affichée, prête à être relancée).
+    /// Stops the current station (it stays shown, ready to be restarted).
     pub(super) fn pause_station(&mut self) {
         if let Some(p) = &mut self.player {
             p.stop();
@@ -235,7 +235,7 @@ impl SterMusic {
         }
     }
 
-    /// Quitte la radio (un morceau de la bibliothèque va jouer).
+    /// Leaves the radio (a library track is about to play).
     pub(super) fn leave_radio(&mut self) {
         if let Some(live) = self.radio.live.take() {
             live.info.stop.store(true, Ordering::Relaxed);
@@ -244,7 +244,7 @@ impl SterMusic {
         self.radio.cast_rx = None;
     }
 
-    /// Station suivante (ou précédente) parmi « Mes stations ».
+    /// Next (or previous) station among "My stations".
     pub(super) fn step_station(&mut self, ctx: &egui::Context, delta: isize) {
         let list = &self.settings.radios;
         if list.is_empty() {
@@ -286,7 +286,7 @@ impl SterMusic {
                 match result {
                     Ok(list) => {
                         self.radio.results = list;
-                        // Les nouveaux résultats arrivent en cascade, comme à l'ouverture de la page.
+                        // New results arrive in a cascade, as when the page opens.
                         super::lists::restart_cascade(ctx);
                     }
                     Err(e) => {
@@ -323,7 +323,7 @@ impl SterMusic {
                 }
             }
         }
-        // Coupure du flux : on retente trois fois, puis on s'arrête.
+        // Stream dropped: retry three times, then stop.
         let ended = self.radio.live.as_ref().is_some_and(|l| !l.paused)
             && self.radio.connecting.is_none()
             && self.radio.cast_rx.is_none()
@@ -339,7 +339,7 @@ impl SterMusic {
                 self.toast(tr("La station a coupé le flux"));
             }
         }
-        // Titre diffusé : il change en cours d'écoute.
+        // Title on air: it changes while listening.
         if let Some(live) = &mut self.radio.live {
             if !live.paused {
                 let title = live.info.title();
@@ -367,7 +367,7 @@ impl SterMusic {
         if self.player.is_none() {
             return;
         }
-        // Station ajoutée par son adresse, sans nom : celui que donne le serveur.
+        // Station added by its address, without a name: the one given by the server.
         if station.name == station.url && !info.server_name.is_empty() {
             let url = station.url.clone();
             station.name = info.server_name.clone();
@@ -400,7 +400,7 @@ impl SterMusic {
         self.seeked = true;
     }
 
-    /// Ajoute (ou retire) une station de « Mes stations ».
+    /// Adds (or removes) a station from "My stations".
     pub(super) fn toggle_saved_station(&mut self, station: &Station) {
         match self.settings.radios.iter().position(|s| s.url == station.url) {
             Some(i) => {
@@ -416,7 +416,7 @@ impl SterMusic {
 
     // ---------- Page ----------
 
-    /// En-tête de la page : titre, bascule Annuaire / Globe, ajout d'une adresse.
+    /// Page header: title, Directory / Globe switch, add an address.
     pub(super) fn radio_header(&mut self, ui: &mut egui::Ui) {
         self.radio.load_countries(&ui.ctx().clone());
         ui.horizontal(|ui| {
@@ -438,7 +438,7 @@ impl SterMusic {
         });
     }
 
-    /// Page Webradios, vue Annuaire (la vue Globe occupe toute la zone : voir `globe_view`).
+    /// Web radio page, Directory view (the Globe view takes the whole area: see `globe_view`).
     pub(super) fn radio_page(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.radio_header(ui);
@@ -483,7 +483,7 @@ impl SterMusic {
                     );
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let go = widgets::secondary_button(ui, Some(Icon::Search), tr("Chercher")).clicked();
-                    // Champ vidé : la recherche par nom s'arrête aussi.
+                    // Field cleared: the search by name stops too.
                     let name = self.radio.query.trim().to_owned();
                     if enter || go || (name.is_empty() && !self.radio.filter.name.is_empty()) {
                         self.radio.filter.name = name;
@@ -543,7 +543,7 @@ impl SterMusic {
             });
     }
 
-    /// Bouton du pays, avec une liste à filtrer ; vrai si le choix a changé.
+    /// Country button, with a list to filter; true if the choice changed.
     fn country_picker(&mut self, ui: &mut egui::Ui) -> bool {
         let code = self.radio.filter.country.clone();
         let label = if code.is_empty() {
@@ -614,7 +614,7 @@ impl SterMusic {
         changed
     }
 
-    /// Vignette de station (logo ou couleur, nom) : un clic lance l'écoute.
+    /// Station thumbnail (logo or color, name): a click starts listening.
     fn station_tile(&mut self, ui: &mut egui::Ui, s: &Station, w: f32) {
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
         let h = widgets::hover_t(ui, resp.id, resp.hovered());
@@ -660,14 +660,14 @@ impl SterMusic {
             });
     }
 
-    /// Ligne d'un résultat de l'annuaire.
+    /// Row of a directory result.
     pub(super) fn station_row(&mut self, ui: &mut egui::Ui, s: &Station, i: usize) {
         let w = ui.available_width();
         let (slot, resp) = ui.allocate_exact_size(vec2(w, 56.0), Sense::click());
         if !ui.is_rect_visible(slot) {
             return;
         }
-        // Arrivée en cascade : chaque ligne glisse un peu depuis la droite en apparaissant.
+        // Cascade arrival: each row slides in a little from the right as it appears.
         let a = super::lists::stagger(ui.ctx(), i);
         let rect = slot.translate(vec2(14.0 * (1.0 - a), 0.0));
         ui.scope(|ui| {
@@ -721,7 +721,7 @@ impl SterMusic {
             .on_hover_text(tr("Écouter"));
     }
 
-    /// « En direct : titre », « Connexion… » si la station est la station en cours.
+    /// "Live: title", "Connecting…" if the station is the current one.
     fn station_state(&self, s: &Station) -> Option<String> {
         if self.radio.connecting_to().is_some_and(|c| c.url == s.url) {
             return Some(tr("Connexion…").into());
@@ -738,12 +738,12 @@ impl SterMusic {
         })
     }
 
-    /// Logo de la station, sinon une tuile colorée avec l'icône radio.
+    /// Logo of the station, otherwise a colored tile with the radio icon.
     pub(super) fn paint_logo(&mut self, ui: &egui::Ui, rect: Rect, s: &Station) {
         let radius = CornerRadius::same((rect.width() * 0.18) as u8);
         match self.radio.logo(ui.ctx(), s) {
             Some(tex) => {
-                // Logo tout juste téléchargé : il se pose en fondu.
+                // Logo just downloaded: it fades in.
                 let t = widgets::texture_in(ui.ctx(), &tex);
                 let mut p = ui.painter().clone();
                 p.multiply_opacity(t);
@@ -783,7 +783,7 @@ impl SterMusic {
         }
     }
 
-    /// Fenêtre « Ajouter une station par son adresse ».
+    /// "Add a station by its address" window.
     pub(super) fn radio_dialog(&mut self, ctx: &egui::Context) {
         let Some((name, url)) = &mut self.radio.add else {
             return;
@@ -851,7 +851,7 @@ impl SterMusic {
     }
 }
 
-/// Colonnes et largeur des vignettes de « Mes stations ».
+/// Columns and width of the "My stations" thumbnails.
 fn station_grid(width: f32) -> (usize, f32) {
     let cols = ((width + 12.0) / (240.0 + 12.0)).floor().max(1.0) as usize;
     (cols, (width - 12.0 * (cols - 1) as f32) / cols as f32)

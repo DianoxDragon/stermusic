@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Fabrique les installateurs de SterMusic à partager, dans dist/ :
-#   - stermusic_<version>_amd64.deb : Kubuntu, Ubuntu, Debian, Mint… (double-clic → Discover,
-#     ou « sudo apt install ./stermusic_….deb ») ;
-#   - stermusic-<version>-x86_64.tar.gz : toute autre distribution, installation sans sudo
-#     (./install.sh dans le dossier décompressé).
-# Le binaire demande glibc 2.35 ou plus (Ubuntu 22.04, Debian 12, Fedora 36…) : voir src/compat.rs.
+# Builds the SterMusic installers to share, in dist/:
+#   - stermusic_<version>_amd64.deb: Kubuntu, Ubuntu, Debian, Mint… (double click → Discover,
+#     or "sudo apt install ./stermusic_….deb");
+#   - stermusic-<version>-x86_64.tar.gz: any other distribution, installed without sudo
+#     (./install.sh in the extracted folder);
+#   - stermusic-<version>-1-x86_64.pkg.tar.zst: Arch Linux, EndeavourOS, Manjaro… ("sudo pacman
+#     -U ./stermusic-….pkg.tar.zst"), only built where makepkg exists.
+# The .deb is only built if dpkg-deb is available (dpkg package on Arch).
+# The binary needs glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36…): see src/compat.rs.
 #
-# Variables facultatives : MAINTAINER="Nom <adresse>" (champ « Maintainer » du paquet .deb),
-# HOMEPAGE="https://…" (adresse du dépôt, où trouver le code source).
+# Optional variables: MAINTAINER="Name <address>" ("Maintainer" field of the .deb package),
+# HOMEPAGE="https://…" (address of the repository, where to find the source code).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -21,29 +24,31 @@ cargo build --release
 TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
 BIN="$TARGET_DIR/release/stermusic"
 
-# Garde-fou : aucune version de glibc au-delà de 2.35 ne doit être exigée (hors références faibles).
+# Safeguard: no glibc version beyond 2.35 may be required (weak references aside).
 TOO_NEW="$(objdump -T "$BIN" | awk '$2 != "w" && /GLIBC_2\.(3[6-9]|[4-9][0-9])/' || true)"
 if [ -n "$TOO_NEW" ]; then
-    echo "Le binaire exige une glibc trop récente pour être partagé :"
+    echo "The binary requires a glibc too recent for it to be shared:"
     echo "$TOO_NEW"
-    echo "Ajouter les fonctions en cause à src/compat.rs."
+    echo "Add the functions involved to src/compat.rs."
     exit 1
 fi
 
-# Le paquet est assemblé hors du projet (disque NTFS : les droits Unix n'y tiennent pas).
+# The package is assembled outside the project (NTFS disk: Unix permissions don't stick there).
 STAGE="$TARGET_DIR/package"
 rm -rf "$STAGE"
 mkdir -p "$STAGE" "$ROOT/dist"
 
-# Licences des bibliothèques compilées dans le programme (à joindre au binaire).
+# Licenses of the libraries compiled into the program (to ship with the binary).
 python3 packaging/third_party.py "$STAGE/THIRD-PARTY-LICENSES.txt"
 
-# ---------- Paquet .deb ----------
+# ---------- .deb package ----------
+DEB_FILE=""
+if command -v dpkg-deb >/dev/null; then
 DEB="$STAGE/deb"
 install -Dm755 "$BIN" "$DEB/usr/bin/stermusic"
 install -Dm644 stermusic.desktop "$DEB/usr/share/applications/stermusic.desktop"
 install -Dm644 assets/icon.png "$DEB/usr/share/icons/hicolor/256x256/apps/stermusic.png"
-# Clic droit dans Dolphin : « Modifier les tags avec SterMusic ».
+# Right click in Dolphin: "Edit tags with SterMusic".
 install -Dm644 stermusic-tags.desktop "$DEB/usr/share/kio/servicemenus/stermusic-tags.desktop"
 install -Dm644 /dev/stdin "$DEB/usr/share/doc/stermusic/copyright" <<COPYRIGHT
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
@@ -102,8 +107,11 @@ Description: music player for Linux (Windows 11 look, KDE integration)
 CONTROL
 DEB_FILE="$ROOT/dist/stermusic_${VERSION}_amd64.deb"
 dpkg-deb --root-owner-group -Zxz --build "$DEB" "$DEB_FILE" >/dev/null
+else
+    echo "dpkg-deb is missing: no .deb package (on Arch: sudo pacman -S dpkg)."
+fi
 
-# ---------- Archive portable ----------
+# ---------- Portable archive ----------
 NAME="stermusic-$VERSION-x86_64"
 PORT="$STAGE/$NAME"
 install -Dm755 "$BIN" "$PORT/stermusic"
@@ -119,7 +127,14 @@ install -Dm644 "$STAGE/THIRD-PARTY-LICENSES.txt" "$PORT/THIRD-PARTY-LICENSES.txt
 TAR_FILE="$ROOT/dist/$NAME.tar.gz"
 tar -C "$STAGE" --owner=0 --group=0 -czf "$TAR_FILE" "$NAME"
 
-echo "Installateurs prêts :"
-for f in "$DEB_FILE" "$TAR_FILE"; do
+# ---------- Arch Linux package ----------
+ARCH_FILES=()
+if command -v makepkg >/dev/null; then
+    "$ROOT/packaging/make-arch-package.sh"
+    ARCH_FILES=("$ROOT/dist/stermusic-$VERSION-"*-x86_64.pkg.tar.zst)
+fi
+
+echo "Installers ready:"
+for f in ${DEB_FILE:+"$DEB_FILE"} "$TAR_FILE" "${ARCH_FILES[@]}"; do
     echo "    $(du -h "$f" | cut -f1)  $f"
 done

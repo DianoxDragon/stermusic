@@ -1,5 +1,5 @@
-//! MPRIS : SterMusic apparaît dans le widget lecteur de KDE / GNOME, et les touches multimédia
-//! du clavier le pilotent.
+//! MPRIS: SterMusic shows up in the KDE / GNOME media player widget, and the keyboard's media
+//! keys control it.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -85,7 +85,7 @@ impl Mpris {
         self.rx.try_iter().collect()
     }
 
-    /// Met à jour titre / artiste / pochette (seulement si quelque chose a changé).
+    /// Updates title / artist / album art (only if something changed).
     pub fn set_track(&mut self, track: Option<&Track>, cover: Option<&Path>) {
         let Some(controls) = &mut self.controls else {
             return;
@@ -109,7 +109,7 @@ impl Mpris {
         let _ = controls.set_metadata(meta);
     }
 
-    /// État de lecture ; `force` après un déplacement dans le morceau.
+    /// Playback state; `force` after seeking within the track.
     pub fn set_state(&mut self, state: State, position: Duration, force: bool) {
         let Some(controls) = &mut self.controls else {
             return;

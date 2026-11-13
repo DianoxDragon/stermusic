@@ -1,5 +1,5 @@
-//! Minuterie de sommeil, sortie audio, notifications du bureau et scrobbling : la logique, et
-//! leurs réglages dans la page Paramètres.
+//! Sleep timer, audio output, desktop notifications and scrobbling: the logic, and their
+//! settings in the Settings page.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
@@ -15,13 +15,13 @@ use crate::scrobble;
 use crate::trf;
 use crate::{theme, widgets};
 
-/// Choix proposés par la minuterie (minutes).
+/// Choices offered by the timer (minutes).
 pub const SLEEP_CHOICES: [u32; 6] = [15, 30, 45, 60, 90, 120];
 
-/// Où en est la connexion aux services de scrobbling.
+/// State of the connection to the scrobbling services.
 #[derive(Default)]
 pub struct OnlineState {
-    /// Formulaire d'ajout d'un serveur de musique.
+    /// Form to add a music server.
     pub server_form: super::servers_view::ServerForm,
     lb_check: Option<Receiver<Result<String, String>>>,
     lastfm: LastfmStep,
@@ -32,9 +32,9 @@ pub struct OnlineState {
 enum LastfmStep {
     #[default]
     Idle,
-    /// Demande d'un jeton à Last.fm.
+    /// Token request to Last.fm.
     Starting(Receiver<Result<(String, String), String>>),
-    /// Le navigateur est ouvert sur la page d'autorisation : on attend que l'utilisateur valide.
+    /// The browser is open on the authorization page: waiting for the user to confirm.
     Authorizing {
         token: String,
         url: String,
@@ -42,7 +42,7 @@ enum LastfmStep {
     Finishing(Receiver<Result<(String, String), String>>),
 }
 
-/// « 1 h 05 », « 12:34 » : temps restant de la minuterie.
+/// "1 h 05", "12:34": time left on the timer.
 pub fn fmt_remaining(secs: f32) -> String {
     let s = secs.max(0.0).ceil() as u64;
     if s >= 3600 {
@@ -53,7 +53,7 @@ pub fn fmt_remaining(secs: f32) -> String {
 }
 
 impl SterMusic {
-    // ---------- Minuterie de sommeil ----------
+    // ---------- Sleep timer ----------
 
     pub(super) fn set_sleep(&mut self, kind: Option<SleepKind>) {
         self.sleep = kind.map(|kind| super::Sleep {
@@ -73,7 +73,7 @@ impl SterMusic {
         }
     }
 
-    /// Secondes avant l'arrêt, si la minuterie tourne.
+    /// Seconds before stopping, if the timer is running.
     pub(super) fn sleep_remaining(&self) -> Option<f32> {
         let sleep = self.sleep.as_ref()?;
         Some(match sleep.kind {
@@ -91,7 +91,7 @@ impl SterMusic {
         })
     }
 
-    /// Fondu de la fin de minuterie, puis arrêt.
+    /// Fade at the end of the timer, then stop.
     pub(super) fn sleep_tick(&mut self, ctx: &egui::Context) {
         if self.sleep.is_none() {
             return;
@@ -101,7 +101,7 @@ impl SterMusic {
             .as_ref()
             .is_some_and(|s| s.kind == SleepKind::EndOfTrack);
         let Some(remaining) = self.sleep_remaining() else {
-            // « Fin du morceau » sans morceau (webradio, file vide) : rien à attendre.
+            // "End of track" without a track (web radio, empty queue): nothing to wait for.
             if end_of_track && !self.is_playing() {
                 return;
             }
@@ -119,7 +119,7 @@ impl SterMusic {
             self.sleep_done();
             return;
         }
-        // Le volume ne descend que pendant la lecture (une pause en fin de minuterie le garde).
+        // The volume only goes down during playback (a pause at the end of the timer keeps it).
         let gain = if playing {
             (remaining / fade).clamp(0.0, 1.0)
         } else {
@@ -136,7 +136,7 @@ impl SterMusic {
         });
     }
 
-    /// La minuterie arrive au bout : la lecture s'arrête, le volume revient pour la prochaine fois.
+    /// The timer runs out: playback stops, the volume comes back for next time.
     pub(super) fn sleep_done(&mut self) {
         self.sleep = None;
         if self.radio.live.as_ref().is_some_and(|l| !l.paused) {
@@ -154,7 +154,7 @@ impl SterMusic {
         self.toast(tr("Minuterie : lecture arrêtée. Bonne nuit !"));
     }
 
-    /// Bulle de la minuterie, ouverte depuis la barre de lecture.
+    /// Timer popup, opened from the playback bar.
     pub(super) fn sleep_menu(&mut self, ui: &mut egui::Ui) {
         ui.set_min_width(230.0);
         ui.label(RichText::new(tr("Minuterie de sommeil")).font(theme::semibold(15.0)));
@@ -200,9 +200,9 @@ impl SterMusic {
         }
     }
 
-    // ---------- Zone de notification ----------
+    // ---------- System tray ----------
 
-    /// Place l'icône dans la zone de notification ; sans zone compatible, l'option se décoche.
+    /// Places the icon in the system tray; without a compatible tray, the option is unchecked.
     pub(super) fn start_tray(&mut self) {
         if self.tray.is_some() {
             return;
@@ -221,8 +221,8 @@ impl SterMusic {
         }
     }
 
-    /// Vrai si fermer la fenêtre la cache dans la zone de notification (il faut KWin pour
-    /// cacher une fenêtre sous Wayland).
+    /// True if closing the window hides it in the system tray (KWin is needed to hide a window
+    /// under Wayland).
     pub(super) fn closes_to_tray(&self) -> bool {
         self.tray.is_some() && self.kwin.active() && !self.quitting
     }
@@ -241,11 +241,11 @@ impl SterMusic {
         self.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
-    /// Commandes venues de l'icône, et fermeture de la fenêtre interceptée.
+    /// Commands coming from the icon, and intercepted window closing.
     pub(super) fn poll_tray(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.viewport().close_requested()) && self.closes_to_tray() {
             if crate::kwin::session_ending() {
-                // Déconnexion ou redémarrage : on se ferme pour de bon, sans retenir KDE.
+                // Logout or reboot: quit for good, without holding KDE back.
                 self.quitting = true;
                 self.hidden = false;
             } else {
@@ -272,7 +272,7 @@ impl SterMusic {
         }
     }
 
-    // ---------- Sortie audio ----------
+    // ---------- Audio output ----------
 
     pub(super) fn refresh_outputs(&mut self) {
         self.outputs = crate::outputs::list();
@@ -309,7 +309,7 @@ impl SterMusic {
         self.toast(trf!("Sortie audio : {0}", label));
     }
 
-    /// Menu des sorties audio (clic droit sur le volume, paramètres).
+    /// Audio output menu (right click on the volume, settings).
     pub(super) fn output_menu(&mut self, ui: &mut egui::Ui) {
         if self.outputs.is_empty() {
             self.refresh_outputs();
@@ -341,7 +341,7 @@ impl SterMusic {
 
     // ---------- Notifications ----------
 
-    /// Notifie un changement (morceau, titre d'une webradio) si la fenêtre n'est pas au premier plan.
+    /// Notifies a change (track, web radio title) if the window is not in the foreground.
     pub(super) fn notify_change(&mut self, title: String, body: String, image: Option<PathBuf>) {
         if !self.settings.notify_tracks || self.focused || self.mini {
             return;
@@ -349,7 +349,7 @@ impl SterMusic {
         self.notifier.send(crate::notify::Note { title, body, image });
     }
 
-    /// Le morceau vient de changer : on attend sa pochette (au plus une seconde et demie).
+    /// The track just changed: wait for its album art (a second and a half at most).
     pub(super) fn send_pending_note(&mut self, ctx: &egui::Context) {
         let Some((path, deadline)) = self.pending_note.clone() else {
             return;
@@ -439,9 +439,9 @@ impl SterMusic {
         }
     }
 
-    // ---------- Paramètres ----------
+    // ---------- Settings ----------
 
-    /// Ligne « Sortie audio » de la carte Son.
+    /// "Audio output" row of the Sound card.
     pub(super) fn output_setting(&mut self, ui: &mut egui::Ui) {
         if self.outputs.is_empty() {
             self.refresh_outputs();
@@ -490,7 +490,7 @@ impl SterMusic {
         );
     }
 
-    /// Lignes « Notifications » et « Minuterie » de la carte Lecture.
+    /// "Notifications" and "Timer" rows of the Playback card.
     pub(super) fn playback_extra_settings(&mut self, ui: &mut egui::Ui) {
         separator(ui);
         let mut notify = self.settings.notify_tracks;
@@ -519,7 +519,7 @@ impl SterMusic {
         });
     }
 
-    /// Section « Scrobbling ».
+    /// "Scrobbling" section.
     pub(super) fn scrobble_settings(&mut self, ui: &mut egui::Ui) {
         subtitle(ui, tr("Scrobbling"));
         card(ui, |ui| {
@@ -536,7 +536,7 @@ impl SterMusic {
             });
             separator(ui);
 
-            // ListenBrainz : un jeton suffit.
+            // ListenBrainz: a token is enough.
             let lb_on = self.settings.scrobble.listenbrainz && !self.settings.scrobble.lb_user.is_empty();
             let desc = if lb_on {
                 trf!("Connecté : {0}", self.settings.scrobble.lb_user)
@@ -592,7 +592,7 @@ impl SterMusic {
             });
             separator(ui);
 
-            // Last.fm : clé d'API personnelle, puis autorisation dans le navigateur.
+            // Last.fm: personal API key, then authorization in the browser.
             let fm_on = !self.settings.scrobble.lastfm_session.is_empty();
             let desc = if fm_on {
                 trf!("Connecté : {0}", self.settings.scrobble.lastfm_user)

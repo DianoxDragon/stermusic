@@ -1,4 +1,4 @@
-//! Bibliothèque : scan des dossiers (avec cache), tags, regroupement en albums et artistes.
+//! Library: folder scanning (with a cache), tags, grouping into albums and artists.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ pub const AUDIO_EXTENSIONS: &[&str] = &[
 pub const UNKNOWN_ARTIST: &str = crate::i18n::n_("Artiste inconnu");
 pub const UNKNOWN_ALBUM: &str = crate::i18n::n_("Album inconnu");
 
-/// « Artiste inconnu » dans la langue de l'interface (la bibliothèque est reconstruite quand elle change).
+/// "Unknown artist" in the interface language (the library is rebuilt when it changes).
 pub fn unknown_artist() -> &'static str {
     crate::i18n::tr(UNKNOWN_ARTIST)
 }
@@ -41,21 +41,21 @@ pub struct Track {
     pub track_no: Option<u32>,
     pub disc_no: Option<u32>,
     pub duration_ms: u64,
-    /// Date de modification du fichier (secondes) : sert au cache et à « Ajoutés récemment ».
+    /// Modification date of the file (seconds): used by the cache and by "Recently added".
     pub mtime: u64,
     #[serde(default)]
     pub composer: String,
-    /// Version de la lecture des tags : un morceau du cache lu par une version plus ancienne
-    /// (sans le compositeur, par exemple) est relu.
+    /// Version of the tag reading: a cache track read by an older version (without the composer,
+    /// for example) is read again.
     #[serde(default)]
     pub schema: u8,
-    /// Morceau d'un fichier découpé par une feuille CUE : le vrai fichier, son début et sa fin.
+    /// Track of a file split by a CUE sheet: the real file, its start and its end.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cue: Option<CueSpan>,
-    /// Morceau d'un serveur de musique : où le lire, sa pochette.
+    /// Track of a music server: where to play it from, its album art.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote: Option<Remote>,
-    /// Note (1 à 5 étoiles) inscrite dans le fichier.
+    /// Rating (1 to 5 stars) written in the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rating: Option<u8>,
 }
@@ -64,21 +64,21 @@ pub struct Track {
 pub struct CueSpan {
     pub file: PathBuf,
     pub start_ms: u64,
-    /// Fin du morceau (`None` : jusqu'à la fin du fichier).
+    /// End of the track (`None`: up to the end of the file).
     pub end_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Remote {
-    /// Adresse du son.
+    /// Address of the audio.
     pub stream: String,
-    /// Adresse de la pochette (vide s'il n'y en a pas).
+    /// Address of the album art (empty if there is none).
     pub cover: String,
-    /// Serveur d'où vient le morceau.
+    /// Server the track comes from.
     pub server: String,
 }
 
-/// Ce qu'il faut ouvrir pour jouer un morceau.
+/// What must be opened to play a track.
 pub fn media(t: &Track) -> crate::media::Media {
     if let Some(r) = &t.remote {
         return crate::media::Media::url(&r.stream, Some(t.duration()).filter(|d| !d.is_zero()));
@@ -95,8 +95,8 @@ pub fn media(t: &Track) -> crate::media::Media {
     m
 }
 
-/// Pour un morceau d'un fichier CUE ou d'un serveur, son vrai fichier et l'adresse de sa
-/// pochette (les pochettes et les paroles ne connaissent que le chemin du morceau).
+/// For a track of a CUE sheet or a server, its real file and the address of its album art
+/// (album art and lyrics only know the track's path).
 #[derive(Clone, Debug, Default)]
 pub struct Resolved {
     pub file: Option<PathBuf>,
@@ -105,7 +105,7 @@ pub struct Resolved {
 
 static RESOLVE: std::sync::RwLock<Option<HashMap<PathBuf, Resolved>>> = std::sync::RwLock::new(None);
 
-/// Le vrai fichier d'un morceau (celui d'un morceau CUE, rien pour un morceau distant).
+/// The real file of a track (that of a CUE track, nothing for a remote track).
 pub fn real_file(path: &Path) -> Option<PathBuf> {
     match RESOLVE.read().ok().and_then(|m| m.as_ref().and_then(|m| m.get(path).cloned())) {
         Some(r) => r.file,
@@ -113,7 +113,7 @@ pub fn real_file(path: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Adresse de la pochette d'un morceau distant.
+/// Address of the album art of a remote track.
 pub fn cover_url(path: &Path) -> Option<String> {
     RESOLVE
         .read()
@@ -124,12 +124,12 @@ pub fn cover_url(path: &Path) -> Option<String> {
         .filter(|u| !u.is_empty())
 }
 
-/// Morceaux qui ne doivent pas prendre l'image de leur dossier pour pochette (voir
+/// Tracks that must not take their folder's image as album art (see
 /// [`without_folder_art`]).
 static NO_FOLDER_ART: std::sync::RwLock<Option<std::collections::HashSet<PathBuf>>> =
     std::sync::RwLock::new(None);
 
-/// Vrai si l'image du dossier (cover.jpg, Folder.jpg…) peut servir de pochette à ce morceau.
+/// True if the folder image (cover.jpg, Folder.jpg…) can serve as album art for this track.
 pub fn folder_art_allowed(path: &Path) -> bool {
     !NO_FOLDER_ART
         .read()
@@ -137,10 +137,10 @@ pub fn folder_art_allowed(path: &Path) -> bool {
         .is_some_and(|s| s.as_ref().is_some_and(|s| s.contains(path)))
 }
 
-/// Dans un dossier où se mélangent plusieurs albums, l'image du dossier (souvent un Folder.jpg
-/// laissé par le lecteur Windows Media) n'est la pochette que d'un seul : un morceau sans
-/// pochette y recevait celle d'un autre. Elle ne vaut donc que pour l'album qui occupe plus de
-/// la moitié du dossier, s'il y en a un ; les autres morceaux sont listés ici.
+/// In a folder mixing several albums, the folder image (often a Folder.jpg left by Windows
+/// Media Player) is the album art of only one of them: a track without album art there used to
+/// get another album's. It therefore only applies to the album taking up more than half of the
+/// folder, if there is one; the other tracks are listed here.
 fn without_folder_art(tracks: &[Track]) -> std::collections::HashSet<PathBuf> {
     let mut dirs: HashMap<&Path, Vec<&Track>> = HashMap::new();
     for t in tracks.iter().filter(|t| t.is_plain_file()) {
@@ -171,17 +171,17 @@ fn without_folder_art(tracks: &[Track]) -> std::collections::HashSet<PathBuf> {
     denied
 }
 
-/// Voir `Track::schema`.
+/// See `Track::schema`.
 pub const TRACK_SCHEMA: u8 = 2;
 
-/// Genres d'un morceau : le champ peut en contenir plusieurs (« Rock; Pop »).
+/// Genres of a track: the field may contain several ("Rock; Pop").
 pub fn split_genres(genre: &str) -> impl Iterator<Item = &str> {
     genre.split([';', '\0']).map(str::trim).filter(|g| !g.is_empty())
 }
 
 impl Track {
-    /// Vrai pour un vrai fichier de musique sur le disque (ni morceau CUE, ni morceau distant) :
-    /// ses tags peuvent être modifiés.
+    /// True for a real music file on disk (neither a CUE track nor a remote track): its tags can
+    /// be modified.
     pub fn is_plain_file(&self) -> bool {
         self.cue.is_none() && self.remote.is_none()
     }
@@ -206,7 +206,7 @@ impl Track {
         }
     }
 
-    /// Artiste sous lequel l'album est rangé.
+    /// Artist the album is filed under.
     pub fn album_artist_or_artist(&self) -> &str {
         if !self.album_artist.is_empty() {
             &self.album_artist
@@ -239,13 +239,13 @@ pub struct Library {
     pub tracks: Vec<Track>,
     pub albums: Vec<Album>,
     pub artists: Vec<Artist>,
-    /// Album de chaque morceau.
+    /// Album of each track.
     pub track_album: Vec<usize>,
-    /// Artiste de chaque album.
+    /// Artist of each album.
     pub album_artist: Vec<usize>,
     search_text: Vec<String>,
-    /// Tout ce qu'on peut vouloir filtrer dans une liste : comme `search_text`, plus le genre,
-    /// l'année, le compositeur et le nom du fichier.
+    /// Everything one may want to filter in a list: like `search_text`, plus the genre, the year,
+    /// the composer and the file name.
     filter_text: Vec<String>,
     by_path: HashMap<PathBuf, usize>,
 }
@@ -254,7 +254,7 @@ fn lower(s: &str) -> String {
     s.to_lowercase()
 }
 
-/// Minuscules sans accents, pour chercher « pokemon » et trouver « Pokémon ».
+/// Lowercase without accents, to search for "pokemon" and find "Pokémon".
 pub fn fold(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars().flat_map(char::to_lowercase) {
@@ -318,7 +318,7 @@ impl Library {
                 .then_with(|| lower(&a.title).cmp(&lower(&b.title)))
         });
 
-        // Albums : même artiste d'album + même titre.
+        // Albums: same album artist + same title.
         let mut album_index: HashMap<(String, String), usize> = HashMap::new();
         let mut albums: Vec<Album> = Vec::new();
         let mut track_album = Vec::with_capacity(tracks.len());
@@ -349,7 +349,7 @@ impl Library {
             track_album.push(idx);
         }
 
-        // Albums triés par titre ; on renumérote les références.
+        // Albums sorted by title; the references are renumbered.
         let mut order: Vec<usize> = (0..albums.len()).collect();
         order.sort_by(|&a, &b| {
             let (x, y) = (&albums[a], &albums[b]);
@@ -366,7 +366,7 @@ impl Library {
         let albums: Vec<Album> = order.iter().map(|&o| sorted[o].take().unwrap()).collect();
         let track_album: Vec<usize> = track_album.into_iter().map(|a| remap[a]).collect();
 
-        // Artistes (d'album).
+        // (Album) artists.
         let mut artist_index: HashMap<String, usize> = HashMap::new();
         let mut artists: Vec<Artist> = Vec::new();
         let mut album_artist = vec![0; albums.len()];
@@ -399,7 +399,7 @@ impl Library {
         let album_artist = album_artist.into_iter().map(|a| remap[a]).collect();
         for artist in &mut artists {
             artist.tracks.sort_unstable();
-            // Albums les plus récents d'abord.
+            // Most recent albums first.
             artist
                 .albums
                 .sort_by(|&a, &b| albums[b].year.cmp(&albums[a].year));
@@ -447,7 +447,7 @@ impl Library {
         self.by_path.get(path).copied()
     }
 
-    /// Le fichier du morceau `i` a été renommé (ses tags, donc sa place, ne changent pas).
+    /// The file of track `i` was renamed (its tags, hence its place, don't change).
     pub fn rename(&mut self, i: usize, path: PathBuf) {
         self.by_path.remove(&self.tracks[i].path);
         self.by_path.insert(path.clone(), i);
@@ -458,9 +458,9 @@ impl Library {
         self.tracks.is_empty()
     }
 
-    /// Filtre de la bibliothèque : les éléments de `list` dont le texte contient tous les mots.
-    /// Les morceaux de `list` qui contiennent tous les mots de `query`, où que ce soit : titre,
-    /// artiste, album, genre, année, compositeur, nom du fichier.
+    /// Library filter: the items of `list` whose text contains all the words. The tracks of `list`
+    /// that contain all the words of `query`, anywhere: title, artist, album, genre, year, composer,
+    /// file name.
     pub fn filter_tracks(&self, list: &[usize], query: &str) -> Vec<usize> {
         let words = words(query);
         list.iter()
@@ -469,7 +469,7 @@ impl Library {
             .collect()
     }
 
-    /// Vrai si le morceau `i` contient tous les mots (déjà repliés par [`fold`]) de `query`.
+    /// True if track `i` contains all the words (already folded by [`fold`]) of `query`.
     pub fn track_matches(&self, i: usize, folded_query: &str) -> bool {
         folded_query.split_whitespace().all(|w| self.filter_text[i].contains(w))
     }
@@ -496,7 +496,7 @@ impl Library {
             .collect()
     }
 
-    /// Morceaux, albums et artistes qui contiennent tous les mots de la recherche.
+    /// Tracks, albums and artists that contain all the words of the search.
     pub fn search(&self, query: &str) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
         let words = words(query);
         if words.is_empty() {
@@ -544,7 +544,7 @@ fn mtime(path: &Path) -> u64 {
         .unwrap_or(0)
 }
 
-/// Lit les tags d'un fichier ; sans tags, le titre est le nom du fichier.
+/// Reads the tags of a file; without tags, the title is the file name.
 pub fn read_track(path: &Path) -> Track {
     let mut track = Track {
         path: path.to_path_buf(),
@@ -567,8 +567,8 @@ pub fn read_track(path: &Path) -> Track {
         rating: None,
         remote: None,
     };
-    // MP3 : la note (trame POPM) ne passe pas par le tag générique de lofty ; le fichier est lu
-    // une seule fois, sous sa forme ID3v2, puis converti.
+    // MP3: the rating (POPM frame) doesn't go through lofty's generic tag; the file is read only
+    // once, in its ID3v2 form, then converted.
     let tagged = if path
         .extension()
         .and_then(|e| e.to_str())
@@ -611,7 +611,7 @@ pub fn read_track(path: &Path) -> Track {
             track.disc_no = tag.disk();
         }
     } else if let Some(p) = crate::ffdecode::probe(path) {
-        // Formats inconnus de lofty (WMA, DSD…) : ffprobe.
+        // Formats unknown to lofty (WMA, DSD…): ffprobe.
         if !p.title.is_empty() {
             track.title = p.title;
         }
@@ -628,14 +628,14 @@ pub fn read_track(path: &Path) -> Track {
     track
 }
 
-// ---------- Feuilles CUE ----------
+// ---------- CUE sheets ----------
 
-/// Les morceaux décrits par une feuille CUE (un album en un seul fichier).
+/// The tracks described by a CUE sheet (an album in a single file).
 pub fn read_cue(cue: &Path) -> Vec<Track> {
     let Ok(bytes) = std::fs::read(cue) else {
         return Vec::new();
     };
-    // UTF-8 (avec ou sans BOM), sinon Latin-1 / Windows-1252 des vieux extracteurs.
+    // UTF-8 (with or without BOM), otherwise the Latin-1 / Windows-1252 of old rippers.
     let text = match std::str::from_utf8(&bytes) {
         Ok(t) => t.trim_start_matches('\u{feff}').to_owned(),
         Err(_) => bytes.iter().map(|&b| b as char).collect(),
@@ -652,7 +652,7 @@ fn parse_cue(text: &str, dir: &Path, mtime: u64) -> Vec<Track> {
             rest.to_owned()
         }
     }
-    // « 03:25:40 » : minutes, secondes, images (1/75 s).
+    // "03:25:40": minutes, seconds, frames (1/75 s).
     fn time(s: &str) -> Option<u64> {
         let mut p = s.trim().split(':').map(|x| x.parse::<u64>().ok());
         let (m, sec, f) = (p.next()??, p.next()??, p.next()??);
@@ -675,7 +675,7 @@ fn parse_cue(text: &str, dir: &Path, mtime: u64) -> Vec<Track> {
         let (word, rest) = line.split_once(' ').unwrap_or((line, ""));
         match word.to_ascii_uppercase().as_str() {
             "FILE" => {
-                // « FILE "album.flac" WAVE » : le nom, sans le type à la fin.
+                // "FILE "album.flac" WAVE": the name, without the type at the end.
                 let r = rest.trim();
                 let name = if r.starts_with('"') {
                     value(r)
@@ -728,7 +728,7 @@ fn parse_cue(text: &str, dir: &Path, mtime: u64) -> Vec<Track> {
         if !r.file.is_file() {
             continue;
         }
-        // Fin : le début du morceau suivant du même fichier, sinon la fin du fichier.
+        // End: the start of the next track of the same file, otherwise the end of the file.
         let end = raws.get(i + 1).filter(|n| n.file == r.file).map(|n| n.start);
         let file_ms = || {
             Probe::open(&r.file)
@@ -775,15 +775,15 @@ fn parse_cue(text: &str, dir: &Path, mtime: u64) -> Vec<Track> {
     out
 }
 
-/// Vrai pour une feuille CUE.
+/// True for a CUE sheet.
 pub fn is_cue_file(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("cue"))
 }
 
-/// Parcourt les dossiers ; les fichiers inchangés depuis le dernier scan sont repris du cache.
-/// Un album décrit par une feuille CUE donne ses morceaux, à la place du grand fichier.
+/// Walks the folders; files unchanged since the last scan are taken from the cache. An album
+/// described by a CUE sheet gives its tracks, instead of the big file.
 pub fn scan(dirs: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<ScanMsg>) {
     let mut tracks = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -830,14 +830,14 @@ pub fn scan(dirs: Vec<PathBuf>, cache: HashMap<PathBuf, Track>, tx: Sender<ScanM
     let _ = tx.send(ScanMsg::Done(tracks));
 }
 
-// ---------- Cache sur disque ----------
+// ---------- Disk cache ----------
 
-/// `~/.local/share/stermusic` (ou `$XDG_DATA_HOME/stermusic`).
+/// `~/.local/share/stermusic` (or `$XDG_DATA_HOME/stermusic`).
 pub fn data_dir() -> PathBuf {
     xdg_dir("XDG_DATA_HOME", ".local/share").join("stermusic")
 }
 
-/// `~/.cache/stermusic` (ou `$XDG_CACHE_HOME/stermusic`).
+/// `~/.cache/stermusic` (or `$XDG_CACHE_HOME/stermusic`).
 pub fn cache_dir() -> PathBuf {
     xdg_dir("XDG_CACHE_HOME", ".cache").join("stermusic")
 }
@@ -862,7 +862,7 @@ pub fn load_cache() -> Vec<Track> {
 
 pub fn save_cache(tracks: &[Track]) {
     let _ = std::fs::create_dir_all(data_dir());
-    // Les morceaux des serveurs ont leur propre cache (voir `servers`).
+    // Server tracks have their own cache (see `servers`).
     let local: Vec<&Track> = tracks.iter().filter(|t| t.remote.is_none()).collect();
     if let Ok(json) = serde_json::to_vec(&local) {
         let tmp = cache_file().with_extension("json.tmp");
@@ -872,7 +872,7 @@ pub fn save_cache(tracks: &[Track]) {
     }
 }
 
-/// Dossier « Musique » de l'utilisateur (xdg-user-dirs), s'il existe.
+/// The user's "Music" folder (xdg-user-dirs), if it exists.
 pub fn default_music_dir() -> Option<PathBuf> {
     let from_xdg = std::process::Command::new("xdg-user-dir")
         .arg("MUSIC")
@@ -889,7 +889,7 @@ pub fn default_music_dir() -> Option<PathBuf> {
     })
 }
 
-/// Formate une durée en `m:ss` (ou `h:mm:ss`).
+/// Formats a duration as `m:ss` (or `h:mm:ss`).
 pub fn fmt_duration(d: Duration) -> String {
     let s = d.as_secs();
     if s >= 3600 {
@@ -899,7 +899,7 @@ pub fn fmt_duration(d: Duration) -> String {
     }
 }
 
-/// Durée longue, lisible : « 1 h 12 min », « 42 min ».
+/// Long, readable duration: "1 h 12 min", "42 min".
 pub fn fmt_long(d: Duration) -> String {
     let m = d.as_secs().div_ceil(60);
     if m >= 60 {
@@ -909,7 +909,7 @@ pub fn fmt_long(d: Duration) -> String {
     }
 }
 
-/// « 3 fichiers », « 1 fichier », dans la langue de l'interface (voir `i18n::plural`).
+/// "3 files", "1 file", in the interface language (see `i18n::plural`).
 pub fn plural(n: usize, one: &str, many: &str) -> String {
     crate::i18n::plural(n, one, many)
 }
@@ -934,7 +934,7 @@ mod cue_tests {
         assert_eq!((t[1].artist.as_str(), t[1].album_artist.as_str()), ("Invité", "Groupe"));
         assert_eq!(t[0].album, "Le disque");
         assert_eq!((t[0].genre.as_str(), t[0].year), ("Rock", Some(1997)));
-        // 4:00 et 37 images (1/75 s) : 240 493 ms ; le premier morceau finit là.
+        // 4:00 and 37 frames (1/75 s): 240,493 ms; the first track ends there.
         let c = t[1].cue.as_ref().unwrap();
         assert_eq!(c.start_ms, 240_493);
         assert_eq!(t[0].cue.as_ref().unwrap().end_ms, Some(240_493));
@@ -969,19 +969,19 @@ mod folder_art_tests {
         }
     }
 
-    /// L'image d'un dossier ne sert qu'à l'album qui l'occupe : jamais aux morceaux d'un
-    /// dossier fourre-tout, ni aux quelques intrus d'un dossier d'album.
+    /// A folder's image only serves the album that occupies it: never the tracks of a catch-all
+    /// folder, nor the few strays of an album folder.
     #[test]
     fn folder_art_only_for_the_album_of_the_folder() {
         let tracks = vec![
-            // Dossier d'un seul album : tous y ont droit.
+            // Single-album folder: every track gets it.
             track("/m/Album/01.mp3", "Album"),
             track("/m/Album/02.mp3", "album"),
-            // Fourre-tout : personne.
+            // Catch-all: nobody.
             track("/m/Vrac/a.mp3", "Un"),
             track("/m/Vrac/b.mp3", "Deux"),
             track("/m/Vrac/c.mp3", ""),
-            // Album avec un intrus : l'album oui, l'intrus non.
+            // Album with a stray: the album yes, the stray no.
             track("/m/Live/1.mp3", "Live"),
             track("/m/Live/2.mp3", "Live"),
             track("/m/Live/3.mp3", "Live"),

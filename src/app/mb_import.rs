@@ -1,6 +1,6 @@
-//! Import depuis MusicBrainz, à la Mp3tag : on cherche l'album de la sélection, on choisit la
-//! bonne sortie, on vérifie l'association pistes ↔ fichiers, puis les infos remplissent les
-//! champs de l'éditeur (rien n'est écrit avant « Enregistrer »).
+//! Import from MusicBrainz, Mp3tag style: we look up the album of the selection, pick the right
+//! release, check the tracks ↔ files matching, then the data fills the editor's fields (nothing
+//! is written before "Save").
 
 use std::sync::mpsc::{channel, Receiver};
 use std::time::Duration;
@@ -31,7 +31,7 @@ const OPTIONS: [&str; 6] = [
 ];
 
 pub struct MbImport {
-    /// Fichiers à associer aux pistes, dans l'ordre (disque, piste) s'ils sont numérotés.
+    /// Files to match with the tracks, in (disc, track) order if they are numbered.
     targets: Vec<usize>,
     artist: String,
     album: String,
@@ -47,7 +47,7 @@ pub struct MbImport {
     options: [bool; 6],
 }
 
-/// Valeur la plus fréquente (non vide) d'un champ parmi les fichiers.
+/// Most frequent (non-empty) value of a field among the files.
 fn common(ed: &TagEditor, ks: &[usize], f: Field) -> String {
     let mut counts: Vec<(&str, usize)> = Vec::new();
     for &k in ks {
@@ -129,7 +129,7 @@ impl MbImport {
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let result = musicbrainz::release(&id).map(|r| {
-                // Pas de pochette n'est pas une erreur : l'import continue sans.
+                // No album art is not an error: the import goes on without it.
                 let cover = musicbrainz::cover(&id)
                     .ok()
                     .flatten()
@@ -150,7 +150,7 @@ impl MbImport {
                 match r {
                     Ok(hits) => {
                         self.hits = hits;
-                        // Le premier résultat qui a autant de pistes que de fichiers est proposé d'office.
+                        // The first result with as many tracks as there are files is offered right away.
                         let n = self.targets.len() as u32;
                         let best = self
                             .hits
@@ -181,14 +181,14 @@ impl MbImport {
         }
     }
 
-    /// Remplit les champs de l'éditeur ; renvoie le nombre de fichiers touchés.
+    /// Fills the editor's fields; returns the number of files touched.
     fn apply(&self, ed: &mut TagEditor) -> usize {
         let Some(rel) = &self.release else { return 0 };
         let [titles, artists, album, numbers, genre, cover] = self.options;
         for (i, &k) in self.targets.iter().enumerate() {
             let v = &mut ed.values[k];
             let mut set = |f: Field, s: &str| v[f.index()] = s.to_owned();
-            // Champs de l'album : pour tous les fichiers.
+            // Album fields: for every file.
             if album {
                 set(Field::Album, &rel.title);
                 set(Field::AlbumArtist, &rel.artist);
@@ -199,7 +199,7 @@ impl MbImport {
             if genre && !rel.genre.is_empty() {
                 set(Field::Genre, &rel.genre);
             }
-            // Champs de la piste : seulement pour les fichiers associés à une piste.
+            // Track fields: only for files matched with a track.
             if let Some(t) = rel.tracks.get(i) {
                 if titles {
                     set(Field::Title, &t.title);
@@ -257,7 +257,7 @@ impl SterMusic {
                 });
                 ui.add_space(14.0);
 
-                // Recherche.
+                // Search.
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     let enter = |r: &egui::Response, ui: &egui::Ui| {
@@ -431,7 +431,7 @@ fn detail(ui: &mut egui::Ui, mb: &mut MbImport, ed: &TagEditor) {
         }
         return;
     };
-    // En-tête de l'album.
+    // Album header.
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 84.0), Sense::hover());
     let art = Rect::from_min_size(row.min, vec2(84.0, 84.0));
     match &mb.cover {
@@ -499,7 +499,7 @@ fn detail(ui: &mut egui::Ui, mb: &mut MbImport, ed: &TagEditor) {
                 let half = (w - 30.0) / 2.0;
                 let file = mb.targets.get(i).map(|&k| &ed.files[k]);
                 let track = rel.tracks.get(i);
-                // Durées très différentes : probablement le mauvais fichier en face.
+                // Very different durations: probably the wrong file opposite.
                 let off = match (file, track.and_then(|t| t.length_ms)) {
                     (Some(f), Some(l)) if f.duration_ms > 0 => (f.duration_ms as i64 - l as i64).abs() > 5000,
                     _ => false,

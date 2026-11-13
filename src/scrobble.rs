@@ -1,12 +1,12 @@
-//! Scrobbling : envoie les écoutes à ListenBrainz et/ou Last.fm.
+//! Scrobbling: sends plays to ListenBrainz and/or Last.fm.
 //!
-//! Règle commune aux deux services : un morceau d'au moins 30 secondes compte une fois écouté
-//! à moitié, ou pendant 4 minutes. Le morceau en cours est aussi signalé (« en écoute »).
-//! Un thread fait les envois ; ce qui n'a pas pu partir (pas de réseau) attend dans
-//! `scrobbles.json` et repart au prochain envoi réussi.
+//! Rule shared by both services: a track of at least 30 seconds counts once half of it has
+//! been heard, or 4 minutes of it. The current track is also reported ("now playing"). A thread
+//! does the sending; what could not go out (no network) waits in `scrobbles.json` and leaves
+//! with the next successful submission.
 //!
-//! ListenBrainz se contente d'un jeton personnel. Last.fm demande une clé d'API (gratuite, à
-//! créer sur last.fm) et une autorisation donnée dans le navigateur.
+//! ListenBrainz only needs a personal token. Last.fm asks for an API key (free, to be created
+//! on last.fm) and an authorization given in the browser.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
@@ -25,12 +25,12 @@ pub const LB_TOKEN_PAGE: &str = "https://listenbrainz.org/settings/";
 pub struct Config {
     pub listenbrainz: bool,
     pub lb_token: String,
-    /// Nom du compte, connu une fois le jeton vérifié.
+    /// Account name, known once the token has been checked.
     pub lb_user: String,
     pub lastfm: bool,
     pub lastfm_key: String,
     pub lastfm_secret: String,
-    /// Clé de session donnée par Last.fm après l'autorisation, et nom du compte.
+    /// Session key given by Last.fm after authorization, and account name.
     pub lastfm_session: String,
     pub lastfm_user: String,
 }
@@ -62,7 +62,7 @@ pub struct Song {
     pub track_no: Option<u32>,
 }
 
-/// Une écoute à envoyer : le morceau, le moment où elle a commencé, et à quel(s) service(s).
+/// A play to submit: the track, when it started, and to which service(s).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Pending {
     song: Song,
@@ -73,12 +73,12 @@ struct Pending {
     lastfm: bool,
 }
 
-/// Faut-il envoyer cette écoute ? (`heard` : secondes vraiment entendues.)
+/// Should this play be submitted? (`heard`: seconds really heard.)
 pub fn counts(duration: f32, heard: f32) -> bool {
     duration >= 30.0 && heard >= (duration / 2.0).min(240.0)
 }
 
-/// Où en sont les envois, pour les paramètres.
+/// State of the submissions, for the settings.
 #[derive(Clone, Debug, Default)]
 pub struct Status {
     pub sent: usize,
@@ -154,7 +154,7 @@ fn worker(rx: Receiver<Msg>, mut config: Config, status: Arc<Mutex<Status>>) {
                 next_retry = Instant::now();
             }
             Some(Msg::NowPlaying(song)) => {
-                // Sans importance si ça échoue : rien n'est gardé.
+                // It doesn't matter if this fails: nothing is kept.
                 if config.lb_ready() {
                     let _ = lb_submit(&agent, &config, "playing_now", &[(&song, None)]);
                 }
@@ -182,7 +182,7 @@ fn worker(rx: Receiver<Msg>, mut config: Config, status: Arc<Mutex<Status>>) {
         let error = flush(&agent, &config, &mut pending);
         let sent = before - pending.len();
         save_pending(&pending);
-        // Échec : on réessaie dans cinq minutes (ou au prochain morceau écouté).
+        // Failure: try again in five minutes (or at the next track played).
         next_retry = Instant::now()
             + if error.is_some() {
                 Duration::from_secs(300)
@@ -193,10 +193,10 @@ fn worker(rx: Receiver<Msg>, mut config: Config, status: Arc<Mutex<Status>>) {
     }
 }
 
-/// Envoie ce qui attend, par paquets ; garde ce qui n'est pas parti. Rend la dernière erreur.
+/// Submits what is waiting, in batches; keeps what didn't go out. Returns the last error.
 fn flush(agent: &ureq::Agent, config: &Config, pending: &mut Vec<Pending>) -> Option<String> {
     let mut error = None;
-    // Une écoute destinée à un service désactivé depuis n'attend plus rien de lui.
+    // A play meant for a service disabled since then no longer waits for it.
     for p in pending.iter_mut() {
         p.lb &= config.lb_ready();
         p.lastfm &= config.lastfm_ready();
@@ -280,7 +280,7 @@ fn lb_submit(
         .map_err(describe)
 }
 
-/// Vérifie un jeton ListenBrainz ; rend le nom du compte (bloquant).
+/// Checks a ListenBrainz token; returns the account name (blocking).
 pub fn lb_validate(token: &str) -> Result<String, String> {
     #[derive(Deserialize)]
     struct Reply {
@@ -303,7 +303,7 @@ pub fn lb_validate(token: &str) -> Result<String, String> {
 
 // ---------- Last.fm ----------
 
-/// Signature d'un appel : MD5 des paramètres triés (clé puis valeur), suivis du secret.
+/// Signature of a call: MD5 of the sorted parameters (key then value), followed by the secret.
 fn lastfm_sign(params: &[(String, String)], secret: &str) -> String {
     let mut sorted: Vec<&(String, String)> = params.iter().filter(|(k, _)| k != "format").collect();
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
@@ -382,8 +382,8 @@ fn lastfm_scrobble(agent: &ureq::Agent, config: &Config, items: &[(&Song, u64)])
     lastfm_call(agent, &config.lastfm_key, &config.lastfm_secret, params).map(|_| ())
 }
 
-/// Première étape de l'autorisation : un jeton, et la page à ouvrir dans le navigateur pour
-/// que l'utilisateur autorise SterMusic (bloquant).
+/// First step of authorization: a token, and the page to open in the browser so that the user
+/// authorizes SterMusic (blocking).
 pub fn lastfm_begin(key: &str, secret: &str) -> Result<(String, String), String> {
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(15)).build();
     let reply = lastfm_call(
@@ -405,7 +405,7 @@ pub fn lastfm_begin(key: &str, secret: &str) -> Result<(String, String), String>
     Ok((token, url))
 }
 
-/// Seconde étape, une fois l'autorisation donnée : la clé de session et le nom du compte.
+/// Second step, once authorization is given: the session key and the account name.
 pub fn lastfm_finish(key: &str, secret: &str, token: &str) -> Result<(String, String), String> {
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(15)).build();
     let reply = lastfm_call(
@@ -428,7 +428,7 @@ pub fn lastfm_finish(key: &str, secret: &str, token: &str) -> Result<(String, St
     Ok((sk.to_owned(), name.to_owned()))
 }
 
-/// Message lisible d'une erreur HTTP (le corps de la réponse dit souvent pourquoi).
+/// Readable message for an HTTP error (the response body often says why).
 fn describe(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(code, resp) => {
@@ -451,7 +451,7 @@ fn describe(e: ureq::Error) -> String {
     }
 }
 
-// ---------- File d'attente sur disque ----------
+// ---------- Queue on disk ----------
 
 fn pending_file() -> PathBuf {
     crate::library::data_dir().join("scrobbles.json")
@@ -479,7 +479,7 @@ fn save_pending(pending: &[Pending]) {
     }
 }
 
-// ---------- MD5 (signature des appels Last.fm) ----------
+// ---------- MD5 (signing Last.fm calls) ----------
 
 pub(crate) fn md5_hex(data: &[u8]) -> String {
     const S: [u32; 64] = [
@@ -540,7 +540,7 @@ mod tests {
             md5_hex(b"The quick brown fox jumps over the lazy dog"),
             "9e107d9d372bb6826bd81d3542a419d6"
         );
-        // Plus long qu'un bloc de 64 octets.
+        // Longer than a 64-byte block.
         assert_eq!(md5_hex(&[b'a'; 100]), "36a92cc94a9e0fa21f625f8bfb007adf");
     }
 

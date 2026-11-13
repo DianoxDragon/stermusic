@@ -1,11 +1,11 @@
-//! Petites animations interpolées, avec les courbes de SterCode (ease-out, ease-out-expo).
+//! Small interpolated animations, with SterCode's curves (ease-out, ease-out-expo).
 //!
-//! Chaque valeur animée est identifiée par un `Id` et mémorisée dans egui : quand la cible
-//! change, l'animation repart de la valeur courante vers la nouvelle cible.
+//! Each animated value is identified by an `Id` and stored in egui: when the target changes,
+//! the animation starts again from the current value towards the new target.
 
 use eframe::egui::{Context, Id};
 
-/// Durées de référence de SterCode.
+/// SterCode's reference durations.
 pub const FAST: f32 = 0.12;
 pub const NORMAL: f32 = 0.22;
 pub const SLOW: f32 = 0.32;
@@ -14,7 +14,7 @@ pub const SLOW: f32 = 0.32;
 pub enum Easing {
     Out,
     OutExpo,
-    /// Dépasse un peu le but avant de s'y poser (un ressort).
+    /// Overshoots the goal a little before settling (a spring).
     OutBack,
 }
 
@@ -46,7 +46,7 @@ struct Tween {
     start: f64,
 }
 
-/// Valeur qui glisse vers `target` en `duration` secondes. La première fois, elle part de `initial`.
+/// Value gliding towards `target` in `duration` seconds. The first time, it starts from `initial`.
 pub fn value_from(ctx: &Context, id: Id, initial: f32, target: f32, duration: f32, easing: Easing) -> f32 {
     let now = ctx.input(|i| i.time);
     let mut tween = ctx.data_mut(|d| {
@@ -72,23 +72,23 @@ pub fn value_from(ctx: &Context, id: Id, initial: f32, target: f32, duration: f3
     value
 }
 
-/// Comme [`value_from`], sans animation la première fois.
+/// Like [`value_from`], without animation the first time.
 pub fn value(ctx: &Context, id: Id, target: f32, duration: f32, easing: Easing) -> f32 {
     value_from(ctx, id, target, target, duration, easing)
 }
 
-/// 0 → 1 quand `on` devient vrai, 1 → 0 quand il redevient faux.
+/// 0 → 1 when `on` becomes true, 1 → 0 when it becomes false again.
 pub fn toggle(ctx: &Context, id: Id, on: bool, duration: f32) -> f32 {
     value(ctx, id, if on { 1.0 } else { 0.0 }, duration, Easing::Out)
 }
 
-/// Apparition : 0 → 1 dès la première frame où l'élément est affiché.
+/// Appearance: 0 → 1 from the first frame where the element is shown.
 pub fn appear(ctx: &Context, id: Id, duration: f32) -> f32 {
     value_from(ctx, id, 0.0, 1.0, duration, Easing::Out)
 }
 
-/// Vrai si l'élément `id` n'était pas affiché à l'image précédente (fenêtre qui s'ouvre, état vide
-/// qui revient…). À appeler une seule fois par image et par élément.
+/// True if element `id` was not shown on the previous frame (window opening, empty state coming
+/// back…). To be called only once per frame and per element.
 pub fn fresh(ctx: &Context, id: Id) -> bool {
     let slot = id.with("seen");
     let pass = ctx.cumulative_pass_nr();
@@ -100,7 +100,7 @@ pub fn fresh(ctx: &Context, id: Id) -> bool {
     !prev.is_some_and(|p| p + 1 >= pass)
 }
 
-/// Comme [`appear`], mais rejouée chaque fois que l'élément réapparaît après avoir disparu.
+/// Like [`appear`], but replayed each time the element reappears after disappearing.
 pub fn appear_each(ctx: &Context, id: Id, duration: f32, easing: Easing) -> f32 {
     if fresh(ctx, id) {
         reset(ctx, id);
@@ -108,7 +108,7 @@ pub fn appear_each(ctx: &Context, id: Id, duration: f32, easing: Easing) -> f32 
     value_from(ctx, id, 0.0, 1.0, duration, easing)
 }
 
-/// Vrai quand `key` diffère de la valeur vue à l'appel précédent (jamais au premier appel).
+/// True when `key` differs from the value seen on the previous call (never on the first call).
 pub fn key_changed(ctx: &Context, id: Id, key: u64) -> bool {
     let slot = id.with("key");
     let before = ctx.data_mut(|d| {
@@ -119,19 +119,19 @@ pub fn key_changed(ctx: &Context, id: Id, key: u64) -> bool {
     before.is_some_and(|b| b != key)
 }
 
-/// Impulsion : 1 au moment où `key` change, qui retombe à 0 en `duration` secondes (pastille qui
-/// rebondit quand son nombre change…).
+/// Pulse: 1 when `key` changes, falling back to 0 in `duration` seconds (badge that bounces
+/// when its number changes…).
 pub fn pulse(ctx: &Context, id: Id, key: u64, duration: f32) -> f32 {
     if key_changed(ctx, id, key) {
-        // L'heure est lue avant : `ctx.input` dans `ctx.data_mut` reprendrait le verrou d'egui
-        // déjà tenu, et l'interface se figerait (la musique, elle, continue).
+        // The time is read beforehand: `ctx.input` inside `ctx.data_mut` would take egui's lock again
+        // while it is held, and the interface would freeze (the music keeps playing).
         let start = ctx.input(|i| i.time);
         ctx.data_mut(|d| d.insert_temp(id, Tween { from: 1.0, to: 0.0, start }));
     }
     value(ctx, id, 0.0, duration, Easing::Out)
 }
 
-/// Oublie une animation (ex. pour rejouer une apparition).
+/// Forgets an animation (e.g. to replay an appearance).
 pub fn reset(ctx: &Context, id: Id) {
     ctx.data_mut(|d| d.remove::<Tween>(id));
 }

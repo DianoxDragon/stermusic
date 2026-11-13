@@ -1,18 +1,18 @@
-//! Moteur audio : une fine couche au-dessus de rodio.
+//! Audio engine: a thin layer on top of rodio.
 //!
-//! En pause, la sortie audio est libérée tout de suite (à l'arrêt, après un court délai, pour
-//! ne pas couper entre deux morceaux) : sinon PipeWire voit un flux actif (du silence) et Plasma
-//! affiche SterMusic « en lecture ». À la reprise, le morceau est rouvert au même endroit.
+//! When paused, the audio output is released right away (when stopped, after a short delay, so
+//! as not to cut between two tracks): otherwise PipeWire sees an active stream (silence) and
+//! Plasma shows SterMusic as "playing". On resume, the track is reopened at the same place.
 //!
-//! **Lecture sans blanc** : le son d'une sortie est une [`Chain`]. Quelques secondes avant la
-//! fin d'un morceau, l'application y met le suivant ([`Player::queue_next`]) : il démarre à
-//! l'échantillon près quand le premier s'arrête, sans rouvrir ni la sortie ni le décodeur.
+//! **Gapless playback**: the sound of an output is a [`Chain`]. A few seconds before the end of
+//! a track, the application appends the next one to it ([`Player::queue_next`]): it starts at
+//! the exact sample where the first one stops, without reopening the output or the decoder.
 //!
-//! **Sortie bit-perfect** ([`Player::set_exact`]) : la sortie est ouverte à la fréquence et au
-//! nombre de canaux du fichier, en flottants 32 bits (exacts pour du 24 bits), et le son ne
-//! passe par aucun traitement (égaliseur, nivellement, limiteur, volume). PipeWire, qui
-//! rééchantillonne d'habitude tout vers 48 kHz, est réglé sur la fréquence du morceau pendant
-//! la lecture (`clock.force-rate`, rendu à la normale dès que SterMusic ne joue plus).
+//! **Bit-perfect output** ([`Player::set_exact`]): the output is opened at the file's sample
+//! rate and channel count, in 32-bit floats (exact for 24-bit), and the sound goes through no
+//! processing (equalizer, leveling, limiter, volume). PipeWire, which usually resamples
+//! everything to 48 kHz, is set to the track's rate during playback (`clock.force-rate`, back
+//! to normal as soon as SterMusic stops playing).
 
 use std::fs::File;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -27,20 +27,20 @@ use rodio::{ChannelCount, Decoder, OutputStream, OutputStreamBuilder, SampleRate
 use crate::dsp::{self, Processor};
 use crate::media::{Media, Span};
 
-/// Délai avant de libérer la sortie audio quand rien ne joue (entre deux morceaux, elle reste).
+/// Delay before releasing the audio output when nothing is playing (between two tracks, it stays).
 pub const RELEASE_AFTER: Duration = Duration::from_millis(300);
 
 type BoxSource = Box<dyn Source + Send>;
 
-// ---------- Chaîne de morceaux (lecture sans blanc) ----------
+// ---------- Track chain (gapless playback) ----------
 
-/// Ce que le lecteur et la chaîne qui joue dans la sortie audio partagent.
+/// What the player and the chain playing in the audio output share.
 struct ChainShared {
-    /// Le morceau mis à la suite : son numéro et son son.
+    /// The track queued next: its number and its audio.
     next: Mutex<Option<(u64, BoxSource)>>,
-    /// Numéro du morceau qui joue (0 : le premier de la chaîne).
+    /// Number of the track playing (0: the first of the chain).
     playing: AtomicU64,
-    /// Position dans ce morceau (µs).
+    /// Position in this track (µs).
     position: AtomicU64,
     rate: SampleRate,
     channels: ChannelCount,
@@ -52,13 +52,13 @@ impl ChainShared {
     }
 }
 
-/// Le son d'une sortie : le morceau en cours, puis celui mis à la suite, sans un échantillon de
-/// silence entre les deux. Les deux ont le même format (sinon rien n'est mis à la suite).
+/// The sound of an output: the current track, then the one queued next, without a single
+/// sample of silence in between. Both have the same format (otherwise nothing is queued).
 struct Chain {
     current: BoxSource,
     shared: Arc<ChainShared>,
-    /// Échantillons joués depuis le début du morceau ou le dernier déplacement, et la position
-    /// à ce moment-là.
+    /// Samples played since the start of the track or the last seek, and the position at that
+    /// moment.
     samples: u64,
     base: Duration,
 }
@@ -100,7 +100,7 @@ impl Iterator for Chain {
                 }
                 return Some(s);
             }
-            // Fin du morceau : le suivant prend sa place tout de suite, s'il y en a un.
+            // End of the track: the next one takes its place right away, if there is one.
             let (id, source) = self.shared.next.lock().ok()?.take()?;
             self.current = source;
             self.samples = 0;
@@ -137,45 +137,44 @@ impl Source for Chain {
     }
 }
 
-// ---------- Lecteur ----------
+// ---------- Player ----------
 
 pub struct Player {
     stream: Option<OutputStream>,
-    /// Format de la sortie ouverte en bit-perfect (fréquence, canaux) ; `None` : sortie ordinaire.
+    /// Format of the output opened in bit-perfect mode (rate, channels); `None`: regular output.
     stream_exact: Option<(SampleRate, ChannelCount)>,
     sink: Option<Sink>,
-    /// La chaîne qui joue dans `sink` (position, morceau mis à la suite).
+    /// The chain playing in `sink` (position, track queued next).
     chain: Option<Arc<ChainShared>>,
-    /// Morceau mis à la suite dans la chaîne, et son numéro.
+    /// Track queued next in the chain, and its number.
     queued: Option<(u64, Media)>,
     next_id: u64,
-    /// Morceau qui n'a pas pu être mis à la suite (format différent, illisible) : on ne
-    /// réessaie pas à chaque image.
+    /// Track that could not be queued (different format, unreadable): no retry on every frame.
     refused: Option<Media>,
-    /// Ce qui est chargé (fichier, morceau d'un fichier CUE, adresse).
+    /// What is loaded (file, track of a CUE sheet, address).
     media: Option<Media>,
-    /// Morceau chargé dont la sortie audio a été libérée : sa position.
+    /// Loaded track whose audio output was released: its position.
     parked: Option<Duration>,
-    /// Depuis quand rien ne joue (pause ou arrêt).
+    /// Since when nothing has been playing (pause or stop).
     idle_since: Option<Instant>,
     volume: f32,
-    /// Égaliseur et nivellement (réglages partagés avec l'interface).
+    /// Equalizer and leveling (settings shared with the interface).
     audio: dsp::Shared,
-    /// Copie du son pour le visualiseur.
+    /// Audio copy for the visualizer.
     tap: dsp::SharedTap,
-    /// Fondu enchaîné : le morceau précédent qui s'efface, depuis quand, et la durée du fondu.
+    /// Crossfade: the previous track fading out, since when, and the fade duration.
     fading: Option<(Sink, Instant, Duration)>,
-    /// Webradio en cours : un direct ne se met pas en pause, il s'arrête.
+    /// Web radio playing: a live stream doesn't pause, it stops.
     live: bool,
-    /// Diffusion vers un appareil du réseau : tout passe alors par lui.
+    /// Casting to a network device: everything then goes through it.
     cast: Option<crate::cast::Session>,
-    /// Ce que l'appareil affiche pour le prochain chargement.
+    /// What the device displays for the next load.
     meta: crate::cast::Meta,
-    /// Sortie bit-perfect demandée.
+    /// Bit-perfect output requested.
     exact: bool,
-    /// Fréquence imposée à PipeWire (0 : aucune).
+    /// Rate forced on PipeWire (0: none).
     forced_rate: u32,
-    /// ReplayGain : gain de l'album plutôt que celui du morceau (écoute d'un album à la suite).
+    /// ReplayGain: album gain rather than track gain (listening to an album in sequence).
     album_gain: bool,
 }
 
@@ -203,14 +202,14 @@ impl Player {
             forced_rate: 0,
             album_gain: false,
         };
-        // On vérifie tout de suite qu'une sortie audio existe ; elle sera libérée si rien ne joue.
+        // Check right away that an audio output exists; it will be released if nothing plays.
         player.stream_for(None)?;
         player.idle_since = Some(Instant::now());
         Ok(player)
     }
 
-    /// La sortie audio, ouverte au besoin. En bit-perfect, `format` (celui du morceau) fixe sa
-    /// fréquence et ses canaux : une sortie ouverte dans un autre format est rouverte.
+    /// The audio output, opened as needed. In bit-perfect mode, `format` (the track's) sets its
+    /// rate and channels: an output opened in another format is reopened.
     fn stream_for(&mut self, format: Option<(SampleRate, ChannelCount)>) -> Result<&OutputStream, String> {
         let want = format.filter(|_| self.exact);
         if self.stream.is_some() && self.stream_exact != want {
@@ -243,14 +242,14 @@ impl Player {
         Ok(self.stream.as_ref().unwrap())
     }
 
-    /// Ferme la sortie audio (PipeWire retrouve sa fréquence habituelle).
+    /// Closes the audio output (PipeWire gets its usual rate back).
     fn release_stream(&mut self) {
         self.stream = None;
         self.stream_exact = None;
         self.force_rate(0);
     }
 
-    /// Impose (ou rend, avec 0) la fréquence de PipeWire.
+    /// Forces (or restores, with 0) PipeWire's rate.
     fn force_rate(&mut self, rate: u32) {
         if rate != self.forced_rate {
             crate::outputs::force_rate(rate);
@@ -258,7 +257,7 @@ impl Player {
         }
     }
 
-    /// Arrête la sortie en cours et oublie sa chaîne ; rend la position atteinte.
+    /// Stops the current output and forgets its chain; returns the position reached.
     fn drop_sink(&mut self) -> Option<Duration> {
         let pos = self.sink.as_ref().map(|_| self.position());
         if let Some(sink) = self.sink.take() {
@@ -269,8 +268,8 @@ impl Player {
         pos
     }
 
-    /// Sortie bit-perfect : activée ou coupée, elle s'applique tout de suite (le morceau en cours
-    /// reprend au même endroit).
+    /// Bit-perfect output: turned on or off, it applies right away (the current track resumes at
+    /// the same place).
     pub fn set_exact(&mut self, on: bool) -> Result<(), String> {
         if on == self.exact {
             return Ok(());
@@ -279,14 +278,14 @@ impl Player {
         self.reopen()
     }
 
-    /// ReplayGain : gain de l'album (vrai) ou du morceau, pour les prochains morceaux ouverts.
+    /// ReplayGain: album gain (true) or track gain, for the next tracks opened.
     pub fn set_album_gain(&mut self, album: bool) {
         self.album_gain = album;
     }
 
-    // ---------- Diffusion ----------
+    // ---------- Casting ----------
 
-    /// Titre, artiste et pochette du prochain chargement (affichés par l'appareil diffusé).
+    /// Title, artist and album art of the next load (shown by the cast device).
     pub fn set_meta(&mut self, meta: crate::cast::Meta) {
         self.meta = meta;
     }
@@ -299,7 +298,7 @@ impl Player {
         self.cast.as_ref().and_then(|c| c.error())
     }
 
-    /// Passe la lecture sur un appareil : le morceau en cours y reprend au même endroit.
+    /// Moves playback to a device: the current track resumes there at the same place.
     pub fn start_cast(&mut self, device: crate::cast::Device) -> Result<(), String> {
         let pos = self.position().as_secs_f32();
         let playing = self.is_playing();
@@ -320,7 +319,7 @@ impl Player {
         Ok(())
     }
 
-    /// Revient sur les haut-parleurs de l'ordinateur, au même endroit (en pause si l'appareil l'était).
+    /// Comes back to the computer's speakers, at the same place (paused if the device was).
     pub fn stop_cast(&mut self) {
         let Some(mut session) = self.cast.take() else {
             return;
@@ -343,7 +342,7 @@ impl Player {
         }
     }
 
-    /// Webradio diffusée : l'appareil lit lui-même l'adresse du flux.
+    /// Web radio being cast: the device plays the stream address itself.
     pub fn cast_live(&mut self, url: &str) {
         if let Some(c) = &mut self.cast {
             let media = Media::url(url, None);
@@ -355,7 +354,7 @@ impl Player {
         }
     }
 
-    /// Joue un flux de webradio (remplace le morceau en cours).
+    /// Plays a web radio stream (replaces the current track).
     pub fn play_stream<S>(&mut self, source: S) -> Result<(), String>
     where
         S: rodio::Source + Send + 'static,
@@ -371,7 +370,7 @@ impl Player {
         Ok(())
     }
 
-    /// Vrai pendant l'écoute d'une webradio.
+    /// True while listening to a web radio.
     pub fn is_live(&self) -> bool {
         if let Some(c) = &self.cast {
             return c.is_live();
@@ -379,8 +378,8 @@ impl Player {
         self.live && self.sink.is_some()
     }
 
-    /// Rouvre la sortie audio (une autre sortie vient d'être choisie) ; le morceau en cours
-    /// reprend au même endroit. Un direct, lui, est arrêté : c'est à l'appelant de le relancer.
+    /// Reopens the audio output (another output was just chosen); the current track resumes at the
+    /// same place. A live stream is stopped instead: it is up to the caller to restart it.
     pub fn reopen(&mut self) -> Result<(), String> {
         if self.cast.is_some() {
             return Ok(());
@@ -402,7 +401,7 @@ impl Player {
         Ok(())
     }
 
-    /// Charge un fichier (remplace le morceau en cours), en lecture ou en pause.
+    /// Loads a file (replaces the current track), playing or paused.
     pub fn load(&mut self, media: &Media, paused: bool) -> Result<(), String> {
         if let Some(c) = &mut self.cast {
             c.load(media, self.meta.clone(), 0.0, paused);
@@ -413,7 +412,7 @@ impl Player {
         self.stop();
         self.media = Some(media.clone());
         if paused {
-            // En pause : rien n'est ouvert tant qu'on ne relance pas la lecture.
+            // Paused: nothing is opened until playback is started again.
             self.parked = Some(Duration::ZERO);
             return Ok(());
         }
@@ -421,7 +420,7 @@ impl Player {
         self.open(&media, Duration::ZERO)
     }
 
-    /// Le son de `media`, décodé et passé par le traitement (sauf en bit-perfect).
+    /// The audio of `media`, decoded and passed through the processing (except in bit-perfect mode).
     fn source(&self, media: &Media) -> Result<BoxSource, String> {
         let gain = if self.exact {
             None
@@ -445,15 +444,15 @@ impl Player {
         }
         let path = media.path().unwrap_or(Path::new(""));
         let file = File::open(path).map_err(|e| crate::trf!("Ouverture impossible : {e}", e))?;
-        // `try_from(File)` donne au décodeur la taille du fichier : sans elle, Symphonia échoue
-        // (voire panique, avec rodio 0.20) sur les M4A/AAC. Les décodeurs de rodio retirent
-        // aussi le silence ajouté par l'encodeur au début et à la fin des MP3 et des AAC.
-        // Filet de sécurité : un décodeur qui panique sur un fichier exotique ne doit pas
-        // emporter toute l'application.
+        // `try_from(File)` gives the decoder the file size: without it, Symphonia fails (or even
+        // panics, with rodio 0.20) on M4A/AAC. rodio's decoders also remove the silence added by the
+        // encoder at the start and end of MP3 and AAC files.
+        // Safety net: a decoder panicking on an exotic file must not take the whole application down
+        // with it.
         let source = catch_unwind(AssertUnwindSafe(|| Decoder::try_from(file)))
             .map_err(|_| crate::i18n::tr("Format non pris en charge (le décodeur a échoué)").to_owned())?
             .map_err(|e| crate::trf!("Format non lisible : {e}", e))?;
-        // Morceau d'un fichier CUE : découpé entre son début et sa fin.
+        // Track of a CUE sheet: cut between its start and its end.
         let source = Span::new(source, media.start, media.end);
         Ok(Box::new(Processor::new(source, self.audio.clone(), gain, tap)))
     }
@@ -480,11 +479,11 @@ impl Player {
         Ok(())
     }
 
-    // ---------- Lecture sans blanc ----------
+    // ---------- Gapless playback ----------
 
-    /// Met `media` à la suite du morceau en cours : il démarrera sans le moindre blanc. Faux si
-    /// ce n'est pas possible (diffusion, direct, pause, format différent du morceau en cours,
-    /// fichier illisible) : le passage se fera alors comme d'habitude.
+    /// Queues `media` after the current track: it will start without the slightest gap. False if
+    /// that's not possible (casting, live stream, paused, format different from the current track,
+    /// unreadable file): the transition then happens as usual.
     pub fn queue_next(&mut self, media: &Media) -> bool {
         if self.cast.is_some() || self.live || self.fading.is_some() {
             return false;
@@ -517,7 +516,7 @@ impl Player {
         true
     }
 
-    /// Retire le morceau mis à la suite (la file d'attente a changé).
+    /// Removes the track queued next (the queue changed).
     pub fn clear_next(&mut self) {
         if let Some(chain) = &self.chain {
             if let Ok(mut slot) = chain.next.lock() {
@@ -527,12 +526,12 @@ impl Player {
         self.queued = None;
     }
 
-    /// Le morceau mis à la suite.
+    /// The track queued next.
     pub fn queued(&self) -> Option<&Media> {
         self.queued.as_ref().map(|(_, m)| m)
     }
 
-    /// Le morceau mis à la suite vient de commencer : le voici (à appeler à chaque image).
+    /// The track queued next just started: here it is (to be called every frame).
     pub fn take_started(&mut self) -> Option<Media> {
         let chain = self.chain.as_ref()?;
         let (id, _) = self.queued.as_ref()?;
@@ -544,12 +543,12 @@ impl Player {
         Some(media)
     }
 
-    /// Fondu enchaîné : `media` démarre en silence et monte pendant que le morceau en cours s'efface.
+    /// Crossfade: `media` starts silent and rises while the current track fades out.
     pub fn crossfade_to(&mut self, media: &Media, duration: Duration) -> Result<(), String> {
         if self.cast.is_some() || self.exact {
             return self.load(media, false);
         }
-        // Le morceau qui s'efface ne doit pas enchaîner sur un autre.
+        // The fading track must not chain into another one.
         self.clear_next();
         let Some(old) = self.sink.take().filter(|s| !s.is_paused()) else {
             return self.load(media, false);
@@ -572,7 +571,7 @@ impl Player {
         }
     }
 
-    /// Vrai pendant un fondu enchaîné.
+    /// True during a crossfade.
     pub fn is_fading(&self) -> bool {
         self.fading.is_some()
     }
@@ -586,8 +585,8 @@ impl Player {
         }
     }
 
-    /// À appeler régulièrement : fait avancer le fondu enchaîné, et libère la sortie audio quand
-    /// rien ne joue depuis un moment.
+    /// To be called regularly: advances the crossfade, and releases the audio output when nothing
+    /// has been playing for a while.
     pub fn tick(&mut self) {
         if self.cast.is_some() {
             return;
@@ -597,7 +596,7 @@ impl Player {
             if t >= 1.0 {
                 self.finish_fade();
             } else {
-                // Courbes à puissance constante : pas de creux de volume au milieu du fondu.
+                // Constant power curves: no volume dip in the middle of the fade.
                 let angle = t * std::f32::consts::FRAC_PI_2;
                 old.set_volume(self.volume * angle.cos());
                 if let Some(sink) = &self.sink {
@@ -623,7 +622,7 @@ impl Player {
         self.release_stream();
     }
 
-    /// Vrai si la sortie audio est ouverte sans rien jouer (elle sera bientôt libérée).
+    /// True if the audio output is open without playing anything (it will soon be released).
     pub fn holds_idle_output(&self) -> bool {
         if self.cast.is_some() {
             return false;
@@ -631,8 +630,7 @@ impl Player {
         self.stream.is_some() && !self.is_playing()
     }
 
-    /// Le fichier chargé a été renommé : une reprise après une pause le rouvrira sous son
-    /// nouveau nom.
+    /// The loaded file was renamed: resuming after a pause will reopen it under its new name.
     pub fn renamed(&mut self, old: &Path, new: &Path) {
         if let Some(m) = &mut self.media {
             if m.path() == Some(old) {
@@ -662,7 +660,7 @@ impl Player {
                 crate::cast::State::Paused | crate::cast::State::Loading | crate::cast::State::Playing => {
                     c.play()
                 }
-                // Fini ou jamais chargé : on recharge.
+                // Finished or never loaded: reload.
                 _ => {
                     if let Some(m) = self.media.clone() {
                         c.load(&m, self.meta.clone(), 0.0, false);
@@ -681,7 +679,7 @@ impl Player {
         Ok(())
     }
 
-    /// Met en pause et libère aussitôt la sortie audio : l'indicateur de son de Plasma s'éteint.
+    /// Pauses and immediately releases the audio output: Plasma's audio indicator goes off.
     pub fn pause(&mut self) {
         if let Some(c) = &mut self.cast {
             if self.live {
@@ -719,7 +717,7 @@ impl Player {
         }
     }
 
-    /// Vrai si un morceau est chargé (en lecture ou en pause).
+    /// True if a track is loaded (playing or paused).
     pub fn has_track(&self) -> bool {
         if let Some(c) = &self.cast {
             return c.has_media();
@@ -738,7 +736,7 @@ impl Player {
         self.sink.as_ref().is_some_and(|s| !s.is_paused())
     }
 
-    /// Vrai si le morceau chargé est arrivé à la fin.
+    /// True if the loaded track has reached the end.
     pub fn finished(&self) -> bool {
         if let Some(c) = &self.cast {
             return c.has_media() && c.state() == crate::cast::State::Finished;
@@ -781,7 +779,7 @@ impl Player {
             return;
         }
         if self.fading.is_some() {
-            return; // le fondu applique le nouveau volume à la prochaine étape
+            return; // the fade applies the new volume at the next step
         }
         if let Some(sink) = &self.sink {
             sink.set_volume(volume);
@@ -791,7 +789,7 @@ impl Player {
 
 impl Drop for Player {
     fn drop(&mut self) {
-        // PipeWire retrouve sa fréquence habituelle même si SterMusic se ferme en pleine lecture.
+        // PipeWire gets its usual rate back even if SterMusic closes in the middle of playback.
         self.force_rate(0);
     }
 }
@@ -801,8 +799,8 @@ mod tests {
     use super::*;
     use rodio::buffer::SamplesBuffer;
 
-    /// Le morceau mis à la suite démarre juste après le dernier échantillon du premier : rien
-    /// n'est perdu ni ajouté, et la position repart de zéro.
+    /// The track queued next starts right after the last sample of the first one: nothing is lost
+    /// or added, and the position starts again from zero.
     #[test]
     fn chain_is_gapless() {
         let a: Vec<f32> = (0..1000).map(|i| i as f32 / 1000.0).collect();
@@ -815,19 +813,19 @@ mod tests {
         let second: Vec<f32> = chain.by_ref().collect();
         assert_eq!(second, b);
         assert_eq!(shared.playing.load(Ordering::Acquire), 7);
-        // 500 échantillons stéréo à 44,1 kHz : 250 trames, soit 5,67 ms (relevé tous les 256).
+        // 500 stereo samples at 44.1 kHz: 250 frames, i.e. 5.67 ms (checked every 256).
         assert!(shared.position() <= Duration::from_micros(5_700));
     }
 
-    /// Sans morceau à la suite, la chaîne s'arrête avec le premier.
+    /// Without a track queued next, the chain stops with the first one.
     #[test]
     fn chain_ends_alone() {
         let (chain, _) = Chain::new(Box::new(SamplesBuffer::new(1, 48_000, vec![0.5; 10])));
         assert_eq!(chain.count(), 10);
     }
 
-    /// Au-delà de 100 % : un son faible est amplifié d'autant, un son fort est retenu par le
-    /// limiteur (jamais au-dessus de 1), et à 100 % rien ne change.
+    /// Beyond 100 %: a quiet sound is amplified accordingly, a loud sound is held back by the
+    /// limiter (never above 1), and at 100 % nothing changes.
     #[test]
     fn boost_amplifies_without_clipping() {
         let quiet: Vec<f32> = (0..2000).map(|i| ((i as f32) * 0.21).sin() * 0.2).collect();
@@ -847,8 +845,8 @@ mod tests {
         assert!(peak <= 1.0 && peak > 0.97, "{peak}");
     }
 
-    /// En bit-perfect, le traitement rend le son exactement tel qu'il est entré (même au-delà
-    /// du seuil du limiteur), égaliseur et nivellement allumés ou non.
+    /// In bit-perfect mode, the processing returns the sound exactly as it came in (even beyond
+    /// the limiter threshold), equalizer and leveling on or off.
     #[test]
     fn exact_is_untouched() {
         let input: Vec<f32> = (0..4000).map(|i| ((i as f32) * 0.37).sin() * 0.999).collect();
@@ -858,7 +856,7 @@ mod tests {
         let p = Processor::new(SamplesBuffer::new(2, 44_100, input.clone()), settings.clone(), Some(-6.0), None);
         let out: Vec<f32> = p.collect();
         assert_eq!(out, input);
-        // Et sans bit-perfect, ce même réglage change bien le son.
+        // And without bit-perfect, the same setting does change the sound.
         settings.set_exact(false);
         let p = Processor::new(SamplesBuffer::new(2, 44_100, input.clone()), settings, Some(-6.0), None);
         let out: Vec<f32> = p.collect();

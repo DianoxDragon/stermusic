@@ -1,6 +1,5 @@
-//! Conversion de morceaux par ffmpeg (MP3, Opus, AAC, Vorbis, FLAC) : outil « Convertir »,
-//! extraction de CD et synchronisation vers un appareil. Les tags suivent, la pochette aussi
-//! quand le format la garde.
+//! Track conversion with ffmpeg (MP3, Opus, AAC, Vorbis, FLAC): the "Convert" tool, CD ripping
+//! and syncing to a device. Tags follow, and album art too when the format keeps it.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -64,23 +63,23 @@ impl Format {
         }
     }
 
-    /// ffmpeg sait-il recopier la pochette dans ce format ?
+    /// Can ffmpeg copy the album art into this format?
     fn keeps_cover(self) -> bool {
         matches!(self, Format::Mp3 | Format::Mp3V0 | Format::Aac | Format::Flac)
     }
 }
 
-/// Ce qu'on donne à ffmpeg comme entrée.
+/// What is given to ffmpeg as input.
 pub struct Source {
     pub input: String,
-    /// Format d'entrée forcé (« libcdio » pour un CD).
+    /// Forced input format ("libcdio" for a CD).
     pub format: Option<&'static str>,
     pub start: Option<Duration>,
     pub end: Option<Duration>,
 }
 
 impl Source {
-    /// La source d'un morceau de la bibliothèque (fichier, morceau CUE, morceau distant).
+    /// The source of a library track (file, CUE track, remote track).
     pub fn of(t: &Track) -> Self {
         let m = crate::library::media(t);
         Self {
@@ -92,7 +91,7 @@ impl Source {
     }
 }
 
-/// Tags écrits dans le fichier converti.
+/// Tags written to the converted file.
 pub fn tags_of(t: &Track) -> Vec<(&'static str, String)> {
     let mut v = vec![
         ("title", t.title.clone()),
@@ -120,7 +119,7 @@ pub fn tags_of(t: &Track) -> Vec<(&'static str, String)> {
     v
 }
 
-/// Nom de fichier sans caractères gênants (pour Windows, Android et les cartes FAT).
+/// File name without troublesome characters (for Windows, Android and FAT cards).
 pub fn safe_name(s: &str) -> String {
     let cleaned: String = s
         .chars()
@@ -140,7 +139,7 @@ pub fn safe_name(s: &str) -> String {
     out
 }
 
-/// « Artiste/Album/03 - Titre.mp3 ».
+/// "Artist/Album/03 - Title.mp3".
 pub fn relative_path(t: &Track, ext: &str) -> PathBuf {
     let artist = safe_name(t.album_artist_or_artist());
     let album = safe_name(t.album_or_unknown());
@@ -153,7 +152,7 @@ pub fn relative_path(t: &Track, ext: &str) -> PathBuf {
         .join(format!("{}.{ext}", safe_name(&name)))
 }
 
-/// Convertit `src` vers `out` (dossiers créés au besoin). Bloquant ; `stop` interrompt.
+/// Converts `src` to `out` (folders created as needed). Blocking; `stop` interrupts.
 pub fn run(
     src: &Source,
     out: &Path,
@@ -222,9 +221,9 @@ pub fn run(
     }
 }
 
-// ---------- CD audio ----------
+// ---------- Audio CD ----------
 
-/// Le lecteur de CD, s'il y en a un.
+/// The CD drive, if there is one.
 pub fn cd_drive() -> Option<PathBuf> {
     ["/dev/sr0", "/dev/cdrom", "/dev/sr1"]
         .iter()
@@ -232,7 +231,7 @@ pub fn cd_drive() -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
-/// Les pistes du CD (début et fin), lues par ffprobe (libcdio). Bloquant.
+/// The CD tracks (start and end), read by ffprobe (libcdio). Blocking.
 pub fn cd_tracks(drive: &Path) -> Result<Vec<(Duration, Duration)>, String> {
     let out = Command::new("ffprobe")
         .args([
@@ -274,7 +273,7 @@ pub fn cd_tracks(drive: &Path) -> Result<Vec<(Duration, Duration)>, String> {
     Ok(chapters)
 }
 
-/// Table des matières pour MusicBrainz : débuts des pistes et fin du disque, en secteurs.
+/// Table of contents for MusicBrainz: track starts and end of the disc, in sectors.
 pub fn toc(tracks: &[(Duration, Duration)]) -> (Vec<u32>, u32) {
     let sector = |d: Duration| (d.as_secs_f64() * 75.0).round() as u32 + 150;
     let offsets = tracks.iter().map(|t| sector(t.0)).collect();
@@ -325,7 +324,7 @@ mod tests {
         assert_eq!(toc(&tracks), (vec![150, 15_150], 33_900));
     }
 
-    /// Avec ffmpeg : un FLAC avec pochette devient un MP3 qui la garde, tags compris.
+    /// With ffmpeg: a FLAC with album art becomes an MP3 that keeps it, tags included.
     #[test]
     fn mp3_with_tags() {
         if !crate::ffdecode::available() {

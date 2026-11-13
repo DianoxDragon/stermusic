@@ -1,24 +1,24 @@
-//! Intégration à KWin (KDE Plasma).
+//! KWin (KDE Plasma) integration.
 //!
-//! Sous Wayland, une application ne connaît pas la position de sa fenêtre à l'écran. KWin, lui,
-//! la connaît : au lancement, SterMusic charge un petit script KWin qui lui envoie (par D-Bus) la
-//! position de sa fenêtre et l'écran où elle se trouve, à chaque déplacement. Le fond Mica peut
-//! ainsi montrer la portion du fond d'écran qui est vraiment derrière la fenêtre.
+//! Under Wayland, an application doesn't know the position of its window on screen. KWin does:
+//! at startup, SterMusic loads a small KWin script that sends it (over D-Bus) the position of
+//! its window and the screen it is on, on every move. The Mica background can thus show the
+//! part of the wallpaper that is really behind the window.
 //!
-//! Le même script garde le mini lecteur au premier plan (Wayland ne laisse pas les applications
-//! le demander elles-mêmes), et cache la fenêtre dans la zone de notification (Wayland ne sait
-//! pas non plus cacher une fenêtre) : réduite, hors de la barre des tâches et du sélecteur de
-//! fenêtres, puis rendue et activée. Les demandes passent par une marque à la fin du titre de
-//! la fenêtre. Le script est déchargé à la fermeture de SterMusic.
+//! The same script keeps the mini player on top (Wayland doesn't let applications ask for it
+//! themselves), and hides the window in the system tray (Wayland can't hide a window either):
+//! minimized, out of the task bar and the window switcher, then restored and activated.
+//! Requests go through a marker at the end of the window title. The script is unloaded when
+//! SterMusic closes.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use eframe::egui::{self, pos2, Rect};
 
-/// Vrai pendant que KDE ferme la session (déconnexion, redémarrage, extinction) : le service
-/// `org.kde.Shutdown` n'existe que le temps de cette fermeture. SterMusic doit alors vraiment se
-/// fermer quand on le lui demande, au lieu de se cacher dans la zone de notification (sinon KDE
-/// attend la fenêtre, et le redémarrage reste bloqué).
+/// True while KDE is ending the session (logout, reboot, shutdown): the `org.kde.Shutdown`
+/// service only exists during that time. SterMusic must then really quit when asked to,
+/// instead of hiding in the system tray (otherwise KDE waits for the window, and the reboot
+/// stays blocked).
 pub fn session_ending() -> bool {
     let Ok(conn) = zbus::blocking::Connection::session() else {
         return false;
@@ -35,7 +35,7 @@ pub fn session_ending() -> bool {
     .unwrap_or(false)
 }
 
-/// Position de la fenêtre et de son écran, en coordonnées du bureau (pixels logiques).
+/// Position of the window and of its screen, in desktop coordinates (logical pixels).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Geometry {
     pub window: Rect,
@@ -43,15 +43,15 @@ pub struct Geometry {
     pub output: String,
 }
 
-/// Suffixe du titre de la fenêtre qui demande au script de la garder au premier plan.
+/// Window title suffix asking the script to keep the window on top.
 pub const KEEP_ABOVE_MARK: &str = " · Mini lecteur";
-/// Suffixe du titre qui demande au script de cacher la fenêtre (zone de notification).
+/// Title suffix asking the script to hide the window (system tray).
 pub const HIDDEN_MARK: &str = " · Zone de notification";
 
 const SERVICE: &str = "org.stermusic.SterMusic";
 const SCRIPT_NAME: &str = "stermusic";
 
-const SCRIPT: &str = r#"// Script KWin de SterMusic (chargé et déchargé automatiquement par SterMusic).
+const SCRIPT: &str = r#"// SterMusic's KWin script (loaded and unloaded automatically by SterMusic).
 const miniState = {};
 
 function send(w) {
@@ -130,7 +130,7 @@ struct Iface {
 
 #[zbus::interface(name = "org.stermusic.Geometry")]
 impl Iface {
-    /// Appelé par le script : « x;y;largeur;hauteur;écran x;écran y;écran largeur;écran hauteur;nom ».
+    /// Called by the script: "x;y;width;height;screen x;screen y;screen width;screen height;name".
     fn update(&self, data: String) {
         if let Some(g) = parse(&data) {
             let _ = self.tx.send(Msg::Geometry(g));
@@ -138,8 +138,8 @@ impl Iface {
         }
     }
 
-    /// Appelé par le script quand la fenêtre est réduite ou rendue (Wayland ne le dit pas aux
-    /// applications) : réduite, elle n'anime plus rien.
+    /// Called by the script when the window is minimized or restored (Wayland doesn't tell
+    /// applications): while minimized, it animates nothing.
     fn minimized(&self, on: bool) {
         let _ = self.tx.send(Msg::Minimized(on));
         self.ctx.request_repaint();
@@ -165,9 +165,9 @@ fn parse(data: &str) -> Option<Geometry> {
 pub struct KWin {
     conn: Option<zbus::blocking::Connection>,
     rx: Receiver<Msg>,
-    /// Dernière position connue de la fenêtre.
+    /// Last known position of the window.
     pub geometry: Option<Geometry>,
-    /// La fenêtre est réduite (ou cachée dans la zone de notification).
+    /// The window is minimized (or hidden in the system tray).
     pub minimized: bool,
 }
 
@@ -187,7 +187,7 @@ impl KWin {
         }
     }
 
-    /// Vrai si le script tourne (la position de la fenêtre est suivie).
+    /// True if the script is running (the window position is tracked).
     pub fn active(&self) -> bool {
         self.conn.is_some()
     }
@@ -201,7 +201,7 @@ impl KWin {
         }
     }
 
-    /// Décharge le script de KWin.
+    /// Unloads the KWin script.
     pub fn stop(&mut self) {
         if let Some(conn) = self.conn.take() {
             let _ = call(&conn, "unloadScript", &(SCRIPT_NAME,));
@@ -241,7 +241,7 @@ fn start(tx: Sender<Msg>, ctx: egui::Context) -> zbus::Result<zbus::blocking::Co
         .replace("HIDDEN_MARK", HIDDEN_MARK);
     std::fs::write(&path, script)
         .map_err(|e| zbus::Error::Failure(e.to_string()))?;
-    // Un script resté chargé (SterMusic fermé brutalement) est remplacé.
+    // A script left loaded (SterMusic closed abruptly) is replaced.
     let _ = call(&conn, "unloadScript", &(SCRIPT_NAME,));
     let path = path.to_string_lossy().into_owned();
     let id: i32 = call(&conn, "loadScript", &(path.as_str(), SCRIPT_NAME))?
@@ -256,7 +256,7 @@ fn start(tx: Sender<Msg>, ctx: egui::Context) -> zbus::Result<zbus::blocking::Co
 
 #[cfg(test)]
 mod session_tests {
-    /// Sur un bus privé : `dbus-run-session -- cargo test session_ending -- --ignored`.
+    /// On a private bus: `dbus-run-session -- cargo test session_ending -- --ignored`.
     #[test]
     #[ignore]
     fn session_ending() {

@@ -1,9 +1,9 @@
-//! Calcul du ReplayGain : chaque morceau est décodé et mesuré (voir `loudness`), puis le gain du
-//! morceau et celui de son album sont inscrits dans les tags. Le son des fichiers n'est pas
-//! modifié ; le « nivellement du volume » du lecteur s'en sert pour tout jouer au même niveau.
+//! ReplayGain analysis: each track is decoded and measured (see `loudness`), then the track
+//! gain and its album gain are written to the tags. The audio of the files is not modified;
+//! the player's "volume leveling" uses them to play everything at the same level.
 //!
-//! L'analyse tourne en arrière-plan, plusieurs morceaux à la fois, album par album : l'arrêter
-//! garde les albums déjà terminés.
+//! The analysis runs in the background, several tracks at a time, album by album: stopping it
+//! keeps the albums already finished.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -28,7 +28,7 @@ use crate::{theme, widgets};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Scope {
-    /// Les morceaux désignés depuis un menu (un album, une sélection).
+    /// The tracks chosen from a menu (an album, a selection).
     Custom,
     Editor,
     Library,
@@ -37,7 +37,7 @@ enum Scope {
 pub struct RgTool {
     scope: Scope,
     custom: Option<(Vec<PathBuf>, String)>,
-    /// Ne pas refaire les albums dont tous les morceaux ont déjà leurs valeurs.
+    /// Don't redo albums whose tracks all have their values already.
     skip_done: bool,
     job: Option<Job>,
 }
@@ -60,13 +60,13 @@ struct Job {
     total: usize,
     done: usize,
     current: String,
-    /// Morceaux dont les tags ont été écrits, albums terminés, morceaux déjà à jour.
+    /// Tracks whose tags were written, albums finished, tracks already up to date.
     written: usize,
     albums: usize,
     skipped: usize,
     errors: Vec<(PathBuf, String)>,
     started: Instant,
-    /// Durée totale, une fois l'analyse terminée (ou arrêtée).
+    /// Total duration, once the analysis is finished (or stopped).
     finished: Option<Duration>,
     stopped: bool,
 }
@@ -80,7 +80,7 @@ enum Msg {
     Done,
 }
 
-/// Un album à analyser : son nom (pour l'affichage) et ses fichiers.
+/// An album to analyze: its name (for display) and its files.
 type Album = (String, Vec<PathBuf>);
 
 impl RgTool {
@@ -88,7 +88,7 @@ impl RgTool {
         self.job.as_ref().is_some_and(|j| j.finished.is_none())
     }
 
-    /// La fenêtre s'ouvre : sur une analyse en cours ou finie si elle existe, sinon sur le choix.
+    /// The window opens: on a running or finished analysis if there is one, otherwise on the choice.
     pub fn opened(&mut self, custom: Option<(Vec<PathBuf>, String)>) {
         if self.running() {
             return;
@@ -109,7 +109,7 @@ impl RgTool {
         }
     }
 
-    /// À la fermeture de l'application : on attend que l'écriture en cours se termine.
+    /// When the application closes: wait for the write in progress to finish.
     pub fn stop_and_wait(&mut self) {
         self.stop();
         if let Some(t) = self.job.as_mut().and_then(|j| j.thread.take()) {
@@ -118,7 +118,7 @@ impl RgTool {
     }
 }
 
-/// Analyse les albums l'un après l'autre ; les morceaux d'un album sont décodés en parallèle.
+/// Analyzes the albums one after the other; the tracks of an album are decoded in parallel.
 fn run(
     albums: Vec<Album>,
     skip_done: bool,
@@ -128,7 +128,7 @@ fn run(
     tx: Sender<Msg>,
     ctx: egui::Context,
 ) {
-    // Un cœur est laissé à l'interface et à la lecture.
+    // One core is left for the interface and playback.
     let workers = std::thread::available_parallelism()
         .map(|n| n.get().saturating_sub(1))
         .unwrap_or(2)
@@ -161,7 +161,7 @@ fn run(
                 });
             }
         });
-        // Arrêt en cours d'album : rien n'est écrit pour lui (son gain d'album serait faux).
+        // Stopped in the middle of an album: nothing is written for it (its album gain would be wrong).
         if cancel.load(Ordering::Relaxed) {
             break;
         }
@@ -177,7 +177,7 @@ fn run(
         let album_peak = measured.iter().map(|(_, a)| a.peak).fold(0.0, f32::max);
         let mut written = 0;
         for (path, a) in &measured {
-            // Un morceau (ou un album) entièrement silencieux n'a pas de gain : 0 dB.
+            // A completely silent track (or album) has no gain: 0 dB.
             let track_loudness = loudness::integrated(a.blocks.iter());
             let track_gain = track_loudness.map(loudness::gain).unwrap_or(0.0);
             let rg = ReplayGain {
@@ -186,7 +186,7 @@ fn run(
                 album_gain: album_loudness.map(loudness::gain).unwrap_or(track_gain),
                 album_peak,
             };
-            // Le morceau chargé par le lecteur est écrit via une copie.
+            // The track loaded by the player is written through a copy.
             let o = WriteOpts {
                 via_copy: loaded.lock().unwrap().as_ref() == Some(*path),
                 ..opts
@@ -202,14 +202,14 @@ fn run(
 }
 
 impl SterMusic {
-    /// Les albums à analyser d'après le choix de la fenêtre.
+    /// The albums to analyze, according to the choice made in the window.
     fn rg_albums(&self) -> Vec<Album> {
         let lib = &self.lib;
         let lib_album = |a: usize| -> Album {
             let al = &lib.albums[a];
             (
                 format!("{} — {}", al.artist, al.title),
-                // Seuls les vrais fichiers reçoivent un gain (ni morceau CUE, ni morceau distant).
+                // Only real files get a gain (neither CUE tracks nor remote tracks).
                 al.tracks
                     .iter()
                     .filter(|&&t| lib.tracks[t].is_plain_file())
@@ -225,7 +225,7 @@ impl SterMusic {
                 let mut index: HashMap<usize, usize> = HashMap::new();
                 for p in paths.unwrap_or_default() {
                     match lib.find(p) {
-                        // Les morceaux d'un même album de la bibliothèque sont mesurés ensemble.
+                        // Tracks of the same library album are measured together.
                         Some(t) => {
                             let a = lib.track_album[t];
                             let slot = *index.entry(a).or_insert_with(|| {
@@ -252,7 +252,7 @@ impl SterMusic {
                         "" => v[Field::Artist.index()].trim(),
                         a => a,
                     };
-                    // Sans nom d'album, le morceau est mesuré seul.
+                    // Without an album name, the track is measured on its own.
                     if album.is_empty() {
                         albums.push((file_name(&path), vec![path]));
                         continue;
@@ -351,7 +351,7 @@ impl SterMusic {
                 plural(j.written, "morceau mesuré", "morceaux mesurés")
             )
         };
-        // Fenêtre fermée : on prévient que c'est fini.
+        // Window closed: let the user know it's finished.
         if self.lib_tools.open != Some(LibTool::ReplayGain) {
             self.toast(summary);
         }
@@ -362,7 +362,7 @@ impl SterMusic {
         let library_tracks = self.lib.tracks.len();
         let leveling = self.settings.leveling;
         let rg = &mut self.lib_tools.rg;
-        // « Liste de l'éditeur » n'a de sens que si elle contient des fichiers.
+        // "Editor list" only makes sense if it contains files.
         if rg.scope == Scope::Editor && editor_files == 0 {
             rg.scope = Scope::Library;
         }
@@ -471,7 +471,7 @@ impl SterMusic {
         }
         if close || modal.should_close() {
             self.lib_tools.open = None;
-            // Une analyse terminée ne se rouvre pas : la prochaine fois, on repart du choix.
+            // A finished analysis doesn't reopen: next time, start again from the choice.
             if !self.lib_tools.rg.running() {
                 self.lib_tools.rg.job = None;
             }
@@ -479,7 +479,7 @@ impl SterMusic {
     }
 }
 
-/// Avancement, puis bilan, d'une analyse.
+/// Progress, then summary, of an analysis.
 fn progress(ui: &mut egui::Ui, j: &Job, leveling: bool, enable_leveling: &mut bool) {
     let fraction = j.done as f32 / j.total.max(1) as f32;
     match j.finished {
@@ -492,7 +492,7 @@ fn progress(ui: &mut egui::Ui, j: &Job, leveling: bool, enable_leveling: &mut bo
                     trf!("Analyse… {0} / {1}", j.done, j.total)
                 };
                 ui.label(RichText::new(text).color(theme::TEXT));
-                // Estimation une fois le rythme connu.
+                // Estimate once the pace is known.
                 let elapsed = j.started.elapsed().as_secs_f32();
                 if !j.stopped && j.done >= 8 && elapsed > 4.0 {
                     let left = elapsed * (j.total - j.done) as f32 / j.done as f32;

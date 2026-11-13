@@ -388,9 +388,9 @@ impl PointerHandler for State {
     }
 }
 
-// SterMusic : glisser-déposer de fichiers. KWin n'envoie les événements de glisser qu'au premier
-// `wl_data_device` créé par l'application, qui est celui-ci (le presse-papiers d'egui est créé
-// avant la fenêtre de l'application) : c'est donc ici qu'il faut accepter les fichiers.
+// SterMusic: file drag and drop. KWin only sends drag events to the first `wl_data_device`
+// created by the application, which is this one (egui's clipboard is created before the
+// application window): so this is where the files must be accepted.
 impl DataDeviceHandler for State {
     fn enter(
         &mut self,
@@ -431,7 +431,7 @@ impl DataDeviceHandler for State {
         let Ok(mut pipe) = offer.receive(crate::dnd::URI_LIST.to_owned()) else {
             return;
         };
-        // La demande doit partir avant de lire : c'est elle qui fait écrire le programme source.
+        // The request must go out before reading: it is what makes the source program write.
         let _ = conn.flush();
         let mut text = String::new();
         if pipe.read_to_string(&mut text).is_ok() {

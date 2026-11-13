@@ -1,4 +1,4 @@
-//! Éléments d'interface réutilisables et animés, dans l'esprit de SterCode et de Fluent.
+//! Reusable, animated interface elements, in the spirit of SterCode and Fluent.
 
 use std::sync::Arc;
 
@@ -11,12 +11,12 @@ use crate::anim;
 use crate::icons::{self, Icon};
 use crate::theme;
 
-/// Progression (0 → 1) d'une animation de survol.
+/// Progress (0 → 1) of a hover animation.
 pub fn hover_t(ui: &Ui, id: egui::Id, hovered: bool) -> f32 {
     anim::toggle(ui.ctx(), id.with("hover"), hovered, anim::FAST)
 }
 
-/// Fond d'un élément interactif : survol en fondu, léger assombrissement à l'appui.
+/// Background of an interactive element: hover fades in, slight darkening when pressed.
 pub fn paint_interaction(ui: &Ui, rect: Rect, radius: u8, response: &Response) {
     let t = hover_t(ui, response.id, response.hovered());
     if t > 0.0 {
@@ -32,7 +32,7 @@ pub fn paint_interaction(ui: &Ui, rect: Rect, radius: u8, response: &Response) {
     }
 }
 
-/// Texte sur une ligne, coupé par « … » s'il dépasse `max_width`.
+/// Single-line text, cut with "…" if it exceeds `max_width`.
 pub fn galley(ui: &Ui, text: &str, font: FontId, color: Color32, max_width: f32) -> Arc<Galley> {
     let mut job =
         egui::text::LayoutJob::single_section(text.to_owned(), egui::TextFormat::simple(font, color));
@@ -45,7 +45,7 @@ pub fn galley(ui: &Ui, text: &str, font: FontId, color: Color32, max_width: f32)
     ui.fonts(|f| f.layout_job(job))
 }
 
-/// Bouton-icône carré.
+/// Square icon button.
 pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, size: f32, icon_size: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::click());
     if ui.is_rect_visible(rect) {
@@ -56,7 +56,7 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, size: f32, icon_size:
         } else {
             theme::TEXT_3
         };
-        // Petit enfoncement au clic.
+        // Small press-in on click.
         let press = anim::toggle(
             ui.ctx(),
             response.id.with("press"),
@@ -78,14 +78,14 @@ pub fn icon_button(ui: &mut Ui, icon: Icon, tooltip: &str, size: f32, icon_size:
     }
 }
 
-/// Bouton-icône à bascule : icône dans l'accent et petit point dessous quand il est actif
-/// (aléatoire, répétition), comme dans le lecteur de Windows 11.
+/// Toggle icon button: icon in the accent color and a small dot below when it is on (shuffle,
+/// repeat), as in the Windows 11 player.
 pub fn toggle_icon(ui: &mut Ui, on: bool, icon: Icon, tooltip: &str, size: f32, icon_size: f32) -> Response {
     toggle_icon_ex(ui, on, icon, tooltip, size, icon_size, false)
 }
 
-/// Comme [`toggle_icon`], avec un fond teinté quand il est allumé : un mode qu'on voit d'un coup
-/// d'œil (aléatoire, répétition).
+/// Like [`toggle_icon`], with a tinted background when it is on: a mode you see at a glance
+/// (shuffle, repeat).
 pub fn mode_toggle(ui: &mut Ui, on: bool, icon: Icon, tooltip: &str, size: f32, icon_size: f32) -> Response {
     toggle_icon_ex(ui, on, icon, tooltip, size, icon_size, true)
 }
@@ -118,7 +118,7 @@ fn toggle_icon_ex(
         theme::accent_light(),
         a,
     );
-    // Petit rebond quand on l'active (favori, aléatoire, répétition).
+    // Small bounce when it is turned on (favorite, shuffle, repeat).
     let pop = pop(ui.ctx(), response.id, on);
     icons::paint_centered(
         ui.painter(),
@@ -132,7 +132,7 @@ fn toggle_icon_ex(
         ui.painter()
             .circle_filled(dot, 1.8 * a, theme::accent_light().gamma_multiply(a));
     }
-    // Sans texte, pas de bulle (sinon une bulle vide apparaît au survol).
+    // Without text, no tooltip (otherwise an empty tooltip appears on hover).
     if tooltip.is_empty() {
         response
     } else {
@@ -140,7 +140,7 @@ fn toggle_icon_ex(
     }
 }
 
-/// Gros bouton rond Lecture / Pause, dans le dégradé de marque.
+/// Big round Play / Pause button, in the brand gradient.
 pub fn play_button(ui: &mut Ui, playing: bool, size: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(size), Sense::click());
     let t = hover_t(ui, response.id, response.hovered());
@@ -162,7 +162,7 @@ pub fn play_button(ui: &mut Ui, playing: bool, size: f32) -> Response {
     };
     painter.add(shadow.as_shape(r, radius));
     theme::brand_fill(painter, r, radius, 1.0);
-    // Lecture ↔ pause : les deux icônes se croisent en tournant légèrement et en changeant d'échelle.
+    // Play ↔ pause: the two icons cross over, turning slightly and changing scale.
     let p = anim::value(
         ui.ctx(),
         response.id.with("morph"),
@@ -173,7 +173,7 @@ pub fn play_button(ui: &mut Ui, playing: bool, size: f32) -> Response {
     let p = p.clamp(0.0, 1.0);
     let icon_size = r.width() * 0.42;
     if p < 1.0 {
-        // Le triangle « lecture » paraît décentré : on le pousse un peu à droite.
+        // The "play" triangle looks off-center: it is nudged a little to the right.
         let s = icon_size * (1.0 - 0.5 * p);
         icons::paint_centered(
             painter,
@@ -219,12 +219,12 @@ fn paint_button_content(ui: &Ui, rect: Rect, icon: Option<Icon>, galley: Arc<Gal
         .galley(pos2(x, rect.center().y - galley.size().y / 2.0), galley, color);
 }
 
-/// Bouton principal, dans le dégradé de marque.
+/// Primary button, in the brand gradient.
 pub fn primary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     let (galley, w) = button_content(ui, icon, text, Color32::WHITE);
     let (rect, response) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
     let t = hover_t(ui, response.id, response.hovered());
-    // Enfoncement au clic, puis petit rebond au relâchement.
+    // Press-in on click, then a small bounce on release.
     let down = response.is_pointer_button_down_on();
     let press = anim::value(
         ui.ctx(),
@@ -253,7 +253,7 @@ pub fn primary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Petit rebond (0,3 → 1, avec dépassement) quand `on` devient vrai : cœur des favoris…
+/// Small bounce (0.3 → 1, with overshoot) when `on` becomes true: favorites heart…
 pub fn pop(ctx: &egui::Context, id: egui::Id, on: bool) -> f32 {
     let pop_id = id.with("pop");
     let was = ctx.data(|d| d.get_temp::<bool>(pop_id.with("was")));
@@ -272,11 +272,11 @@ pub fn pop(ctx: &egui::Context, id: egui::Id, on: bool) -> f32 {
     )
 }
 
-/// Égaliseur animé (trois barres qui dansent) : le morceau en cours. À l'arrêt, les barres se posent.
+/// Animated equalizer (three dancing bars): the current track. When stopped, the bars settle.
 pub fn equalizer(painter: &egui::Painter, center: Pos2, size: f32, color: Color32, playing: bool) {
     let ctx = painter.ctx();
     let time = ctx.input(|i| i.time) as f32;
-    // Transition douce entre lecture et pause.
+    // Smooth transition between play and pause.
     let id = egui::Id::new(("equalizer", (center.x as i32, center.y as i32)));
     let k = anim::toggle(ctx, id, playing, anim::NORMAL);
     let bar_w = (size * 0.2).max(2.0);
@@ -298,7 +298,7 @@ pub fn equalizer(painter: &egui::Painter, center: Pos2, size: f32, color: Color3
     }
 }
 
-/// Champ de recherche (fond arrondi, loupe, soulignement à l'accent quand il a le focus).
+/// Search field (rounded background, magnifier, accent underline when it has the focus).
 pub fn search_field(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, width: f32) -> Response {
     let (rect, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
     let bg = ui.painter().add(egui::Shape::Noop);
@@ -343,7 +343,7 @@ pub fn search_field(ui: &mut Ui, id: egui::Id, text: &mut String, hint: &str, wi
     response
 }
 
-/// Enfoncement d'un bouton : il se tasse un peu à l'appui et rebondit au relâchement.
+/// Button press: it squashes a little when pressed and bounces back on release.
 fn pressed_rect(ui: &Ui, rect: Rect, response: &Response, depth: f32) -> Rect {
     let press = anim::value(
         ui.ctx(),
@@ -355,7 +355,7 @@ fn pressed_rect(ui: &Ui, rect: Rect, response: &Response, depth: f32) -> Rect {
     Rect::from_center_size(rect.center(), rect.size() * (1.0 - depth * press))
 }
 
-/// Bouton secondaire « verre ».
+/// "Glass" secondary button.
 pub fn secondary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     let (galley, w) = button_content(ui, icon, text, theme::TEXT);
     let (rect, response) = ui.allocate_exact_size(vec2(w, 34.0), Sense::click());
@@ -380,8 +380,8 @@ pub fn secondary_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response
     response
 }
 
-/// Bouton secondaire en deux parties : le bouton lui-même, et une petite flèche à droite qui
-/// ouvre un menu (renvoyés dans cet ordre).
+/// Two-part secondary button: the button itself, and a small arrow on the right that opens a
+/// menu (returned in that order).
 pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, Response) {
     let (galley, w) = button_content(ui, icon, text, theme::TEXT);
     let arrow_w = 28.0;
@@ -391,7 +391,7 @@ pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, R
     let arrow_rect = Rect::from_min_max(pos2(split, rect.top()), rect.max);
     let main = ui.interact(main_rect, whole.id.with("main"), Sense::click());
     let arrow = ui.interact(arrow_rect, whole.id.with("arrow"), Sense::click());
-    // Tout le bouton se tasse, quelle que soit la partie appuyée.
+    // The whole button squashes, whichever part is pressed.
     let down = main.is_pointer_button_down_on() || arrow.is_pointer_button_down_on();
     let press = anim::value(
         ui.ctx(),
@@ -409,7 +409,7 @@ pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, R
     };
     let (rect, main_rect, arrow_rect) = (squeeze(rect), squeeze(main_rect), squeeze(arrow_rect));
     let split = arrow_rect.left();
-    // La flèche descend d'un cran pendant que son menu est ouvert ou survolé.
+    // The arrow moves down a notch while its menu is open or hovered.
     let drop = hover_t(ui, arrow.id.with("chevron"), arrow.hovered());
     let painter = ui.painter();
     let left = CornerRadius { nw: 6, sw: 6, ..Default::default() };
@@ -436,7 +436,7 @@ pub fn split_button(ui: &mut Ui, icon: Option<Icon>, text: &str) -> (Response, R
     (main, arrow)
 }
 
-/// Interrupteur animé.
+/// Animated switch.
 pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     let (rect, mut response) = ui.allocate_exact_size(vec2(40.0, 20.0), Sense::click());
     if response.clicked() {
@@ -466,7 +466,7 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     }
     let x = egui::lerp(rect.left() + 10.0..=rect.right() - 10.0, a);
     let r = 6.0 + 1.0 * h;
-    // À l'appui, le curseur s'allonge vers le côté où il va partir.
+    // When pressed, the knob stretches towards the side it is about to move to.
     let stretch = 4.0 * press;
     let dir = if *on { -1.0 } else { 1.0 };
     let knob = Rect::from_center_size(pos2(x + dir * stretch / 2.0, rect.center().y), vec2(2.0 * r + stretch, 2.0 * r));
@@ -479,21 +479,21 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
 }
 
 pub struct Seek {
-    /// Valeur affichée pendant que l'on glisse (0 → 1).
+    /// Value shown while dragging (0 → 1).
     pub preview: Option<f32>,
-    /// Valeur choisie (clic ou fin du glissement).
+    /// Chosen value (click or end of drag).
     pub commit: Option<f32>,
-    /// Zone occupée par la barre.
+    /// Area taken by the bar.
     pub rect: Rect,
 }
 
-/// Barre de progression / de volume, fine, qui s'épaissit au survol, avec son curseur rond.
+/// Thin progress / volume bar that thickens on hover, with its round knob.
 pub fn seek_bar(ui: &mut Ui, id_salt: &str, value: f32, width: f32, enabled: bool) -> Seek {
     seek_bar_marked(ui, id_salt, value, width, enabled, None)
 }
 
-/// Comme [`seek_bar`], avec un repère à `mark` (0 → 1) : la partie remplie au-delà du repère
-/// passe à l'orange (volume amplifié, au-dessus de 100 %).
+/// Like [`seek_bar`], with a mark at `mark` (0 → 1): the filled part beyond the mark turns
+/// orange (amplified volume, above 100 %).
 pub fn seek_bar_marked(
     ui: &mut Ui,
     id_salt: &str,
@@ -556,7 +556,7 @@ pub fn seek_bar_marked(
             );
             painter.rect_filled(hot, CornerRadius::same(3), theme::BOOST);
         }
-        // Le repère : un petit trait qui dépasse de la barre.
+        // The mark: a small line sticking out of the bar.
         let tick = Rect::from_center_size(pos2(x, track.center().y), vec2(2.0, h + 6.0));
         painter.rect_filled(tick, CornerRadius::same(1), theme::white(if over { 0xD0 } else { 0x70 }));
     }
@@ -573,14 +573,14 @@ pub fn seek_bar_marked(
     Seek { preview, commit, rect }
 }
 
-/// Progression (0 → 1) de l'arrivée d'une image tout juste chargée : elle se pose en fondu
-/// sur son dégradé d'attente au lieu d'apparaître d'un coup.
+/// Progress (0 → 1) of the arrival of a freshly loaded image: it fades in over its placeholder
+/// gradient instead of popping in.
 pub fn texture_in(ctx: &egui::Context, tex: &TextureHandle) -> f32 {
     anim::value_from(ctx, egui::Id::new(("tex_in", tex.id())), 0.0, 1.0, anim::NORMAL, anim::Easing::Out)
 }
 
-/// Pochette dans un rectangle arrondi ; sans image, un dégradé avec une note de musique.
-/// Une image qui vient d'arriver se pose en fondu sur le dégradé.
+/// Album art in a rounded rectangle; without an image, a gradient with a music note. An image
+/// that just arrived fades in over the gradient.
 pub fn cover(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHandle>, radius: u8, seed: &str) {
     let t = texture.map_or(1.0, |tex| texture_in(painter.ctx(), tex));
     if t < 1.0 {
@@ -591,8 +591,8 @@ pub fn cover(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHandle
     cover_now(&p, rect, texture, radius, seed);
 }
 
-/// Comme [`cover`], sans fondu d'arrivée : pour les pochettes qui ont déjà leur propre fondu
-/// (changement de morceau).
+/// Like [`cover`], without the fade-in: for album art that already has its own fade (track
+/// change).
 pub fn cover_now(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHandle>, radius: u8, seed: &str) {
     match texture {
         Some(tex) => {
@@ -605,7 +605,7 @@ pub fn cover_now(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHa
         None => {
             let (a, b) = theme::seeded_colors(seed);
             painter.rect_filled(rect, CornerRadius::same(radius), a);
-            // Lueur douce vers le haut à droite, pour donner du relief.
+            // Soft glow towards the top right, for depth.
             let center = pos2(
                 rect.right() - rect.width() * 0.25,
                 rect.top() + rect.height() * 0.25,
@@ -623,7 +623,7 @@ pub fn cover_now(painter: &egui::Painter, rect: Rect, texture: Option<&TextureHa
     );
 }
 
-/// Halo radial (`color` au centre, transparent au bord), contenu dans `bounds`.
+/// Radial halo (`color` at the center, transparent at the edge), contained in `bounds`.
 pub fn soft_glow(painter: &egui::Painter, bounds: Rect, center: Pos2, radius: f32, color: Color32) {
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(center, color);
@@ -631,7 +631,7 @@ pub fn soft_glow(painter: &egui::Painter, bounds: Rect, center: Pos2, radius: f3
     for i in 0..=steps {
         let a = i as f32 / steps as f32 * std::f32::consts::TAU;
         let p = center + vec2(a.cos(), a.sin()) * radius;
-        // Ramené dans le rectangle : le bord, transparent, ne déborde pas des coins arrondis.
+        // Brought inside the rectangle: the transparent edge doesn't spill over the rounded corners.
         let p = pos2(
             p.x.clamp(bounds.left(), bounds.right()),
             p.y.clamp(bounds.top(), bounds.bottom()),
@@ -644,7 +644,7 @@ pub fn soft_glow(painter: &egui::Painter, bounds: Rect, center: Pos2, radius: f3
     painter.add(mesh);
 }
 
-/// Image ronde (artistes) ; sans image, l'initiale sur un dégradé.
+/// Round image (artists); without an image, the initial on a gradient.
 pub fn circle_cover(ui: &Ui, center: Pos2, radius: f32, texture: Option<&TextureHandle>, name: &str) {
     let t = texture.map_or(1.0, |tex| texture_in(ui.ctx(), tex));
     if t < 1.0 {
@@ -658,8 +658,8 @@ pub fn circle_cover(ui: &Ui, center: Pos2, radius: f32, texture: Option<&Texture
 fn circle_cover_paint(painter: &egui::Painter, center: Pos2, radius: f32, texture: Option<&TextureHandle>, name: &str) {
     match texture {
         Some(tex) => {
-            // Rectangle aux coins entièrement arrondis : egui en lisse le bord (anti-crénelage),
-            // ce qu'il ne fait pas pour un maillage en éventail.
+            // Rectangle with fully rounded corners: egui smooths its edge (anti-aliasing), which it
+            // doesn't do for a fan mesh.
             let rect = Rect::from_center_size(center, egui::Vec2::splat(radius * 2.0));
             let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
             let r = radius.min(255.0) as u8;
@@ -688,7 +688,7 @@ fn circle_cover_paint(painter: &egui::Painter, center: Pos2, radius: f32, textur
     painter.circle_stroke(center, radius, Stroke::new(1.0_f32, theme::white(0x14)));
 }
 
-/// Élément de menu contextuel avec icône (style Fluent).
+/// Context menu item with an icon (Fluent style).
 pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     let width = ui.available_width().max(200.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
@@ -716,7 +716,7 @@ pub fn menu_item(ui: &mut Ui, icon: Option<Icon>, text: &str) -> Response {
     response
 }
 
-/// Lien texte discret (« Tout afficher »).
+/// Discreet text link ("Show all").
 pub fn link(ui: &mut Ui, text: &str) -> Response {
     let galley = ui.fonts(|f| f.layout_no_wrap(text.to_owned(), FontId::proportional(13.0), theme::TEXT_2));
     let (rect, response) = ui.allocate_exact_size(galley.size() + vec2(18.0, 6.0), Sense::click());
@@ -734,7 +734,7 @@ pub fn link(ui: &mut Ui, text: &str) -> Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Grand état vide (bibliothèque vide, file d'attente vide…).
+/// Large empty state (empty library, empty queue…).
 pub fn empty_state(ui: &mut Ui, icon: Icon, title: &str, subtitle: &str) {
     let id = egui::Id::new(("empty_state", title));
     let pop = anim::appear_each(ui.ctx(), id, anim::SLOW * 1.6, anim::Easing::OutBack);
@@ -773,8 +773,8 @@ pub fn empty_state(ui: &mut Ui, icon: Icon, title: &str, subtitle: &str) {
     });
 }
 
-/// Curseur vertical d'égaliseur (−max → +max dB) : remplissage depuis 0, curseur rond,
-/// double-clic pour revenir à 0. Renvoie vrai si la valeur a changé.
+/// Vertical equalizer slider (−max → +max dB): fill from 0, round knob, double click to go back
+/// to 0. Returns true if the value changed.
 pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max: f32, height: f32) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(28.0, height), Sense::click_and_drag());
     let id = ui.id().with(id_salt);
@@ -789,7 +789,7 @@ pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max:
         .filter(|_| response.dragged() || response.clicked())
     {
         let v = egui::remap_clamp(p.y, track.bottom()..=track.top(), -max..=max);
-        // Crans d'un demi-décibel.
+        // Half-decibel steps.
         let v = (v * 2.0).round() / 2.0;
         if (v - *value).abs() > f32::EPSILON {
             *value = v;
@@ -800,7 +800,7 @@ pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max:
     let t = anim::toggle(ui.ctx(), id.with("active"), active, anim::FAST);
     let painter = ui.painter();
     painter.rect_filled(track, CornerRadius::same(2), theme::white(0x22));
-    // Repère du 0 dB.
+    // 0 dB mark.
     painter.hline(
         track.left() - 5.0..=track.right() + 5.0,
         y_of(0.0),
@@ -822,7 +822,7 @@ pub fn vslider(ui: &mut Ui, id_salt: impl std::hash::Hash, value: &mut f32, max:
     changed
 }
 
-/// Champ de saisie au style des autres contrôles (verre, soulignement aux couleurs du thème).
+/// Input field in the style of the other controls (glass, underline in the theme colors).
 pub fn text_field(
     ui: &mut Ui,
     id: egui::Id,
@@ -833,7 +833,7 @@ pub fn text_field(
 ) -> Response {
     const ROW: f32 = 19.0;
     const MAX_ROWS: usize = 7;
-    // Plusieurs lignes : le champ grandit avec son texte (jusqu'à sept lignes), puis défile.
+    // Multiline: the field grows with its text (up to seven lines), then scrolls.
     let height = if rows > 1 {
         let font = egui::TextStyle::Body.resolve(ui.style());
         let wrapped = ui.fonts(|f| {
@@ -908,8 +908,8 @@ pub fn text_field(
     response
 }
 
-/// Place un contrôle dans `rect` sans déplacer le curseur de mise en page du parent (ce que fait
-/// `Ui::put`) : pour les lignes de liste dessinées à la main, dont la hauteur est déjà réservée.
+/// Places a control in `rect` without moving the parent's layout cursor (which `Ui::put` does):
+/// for hand-drawn list rows, whose height is already reserved.
 pub fn place<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
     let mut child = ui.new_child(
         egui::UiBuilder::new()
@@ -919,8 +919,8 @@ pub fn place<R>(ui: &mut Ui, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> R {
     add(&mut child)
 }
 
-/// Fenêtre modale de SterMusic : à chaque ouverture, elle monte de quelques pixels en se posant,
-/// pendant le fondu d'egui.
+/// SterMusic modal window: each time it opens, it rises a few pixels as it settles, during
+/// egui's fade.
 pub fn modal(ctx: &egui::Context, id: egui::Id) -> egui::Modal {
     let t = anim::appear_each(ctx, id.with("modal_in"), anim::SLOW, anim::Easing::OutExpo);
     egui::Modal::new(id).area(

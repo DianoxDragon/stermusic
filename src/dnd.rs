@@ -1,11 +1,11 @@
-//! Glisser-déposer de fichiers sous Wayland.
+//! File drag and drop under Wayland.
 //!
-//! winit (0.30) ne transmet les fichiers déposés que sous X11 : sous Wayland, rien n'arrive
-//! jusqu'à egui. Et KWin n'envoie les événements de glisser qu'au premier `wl_data_device` de
-//! l'application, qui est celui du presse-papiers d'egui (créé avant la fenêtre de SterMusic) :
-//! c'est donc ce presse-papiers, dans une copie modifiée (`vendor/smithay-clipboard`), qui
-//! accepte les fichiers. On vient chercher ici ce qu'il a reçu, et on le glisse dans les entrées
-//! d'egui ([`Dnd::feed`]) : le reste de l'application ne voit pas la différence avec X11.
+//! winit (0.30) only passes dropped files on under X11: under Wayland, nothing reaches egui.
+//! And KWin only sends drag events to the application's first `wl_data_device`, which is the
+//! one of egui's clipboard (created before the SterMusic window): so it is this clipboard, in a
+//! modified copy (`vendor/smithay-clipboard`), that accepts the files. Here we fetch what it
+//! received and slip it into egui's input ([`Dnd::feed`]): the rest of the application cannot
+//! tell the difference from X11.
 
 use std::path::PathBuf;
 
@@ -20,7 +20,7 @@ impl Dnd {
         Self
     }
 
-    /// Ajoute aux entrées d'egui les fichiers survolés ou déposés.
+    /// Adds the hovered or dropped files to egui's input.
     pub fn feed(&self, raw: &mut egui::RawInput) {
         if smithay_clipboard::dnd::hovering() && raw.hovered_files.is_empty() {
             raw.hovered_files.push(egui::HoveredFile::default());
@@ -36,13 +36,13 @@ impl Dnd {
     }
 }
 
-/// « file:///home/moi/Ma%20musique/a.mp3 » → chemin ; les autres adresses sont ignorées.
+/// "file:///home/me/My%20music/a.mp3" → path; other addresses are ignored.
 fn parse_uri_list(text: &str) -> Vec<PathBuf> {
     text.lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .filter_map(|l| l.strip_prefix("file://"))
-        // « file://hôte/chemin » : seul le chemin compte (l'hôte est presque toujours vide).
+        // "file://host/path": only the path matters (the host is almost always empty).
         .filter_map(|rest| rest.find('/').map(|i| &rest[i..]))
         .map(|path| {
             let bytes = path.as_bytes();

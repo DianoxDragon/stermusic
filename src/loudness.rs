@@ -1,9 +1,9 @@
-//! Mesure du volume perçu d'un morceau ou d'un album, pour ReplayGain 2.0 : sonie intégrée de la
-//! norme EBU R 128 (ITU-R BS.1770 : filtre « K », blocs de 400 ms, double seuil), ramenée à la
-//! référence de −18 LUFS.
+//! Measurement of the perceived loudness of a track or an album, for ReplayGain 2.0: integrated
+//! loudness of the EBU R 128 standard (ITU-R BS.1770: "K" filter, 400 ms blocks, double gate),
+//! relative to the −18 LUFS reference.
 //!
-//! Chaque morceau est décodé en entier une fois ; on garde l'énergie de ses blocs, ce qui permet
-//! de calculer le gain de l'album (tous ses blocs réunis) sans rien relire.
+//! Each track is fully decoded once; the energy of its blocks is kept, which allows computing
+//! the album gain (all its blocks together) without reading anything again.
 
 use std::fs::File;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -13,11 +13,11 @@ use std::time::Duration;
 
 use rodio::{Decoder, Source};
 
-/// Niveau de référence de ReplayGain 2.0.
+/// ReplayGain 2.0 reference level.
 const REFERENCE_LUFS: f64 = -18.0;
-/// Seuil absolu : en dessous, un bloc est du silence et ne compte pas.
+/// Absolute gate: below it, a block is silence and doesn't count.
 const ABSOLUTE_GATE_LUFS: f64 = -70.0;
-/// Seuil relatif : les blocs à plus de 10 LU sous la moyenne ne comptent pas non plus.
+/// Relative gate: blocks more than 10 LU below the average don't count either.
 const RELATIVE_GATE_LU: f64 = -10.0;
 
 #[derive(Clone, Copy, Default)]
@@ -36,8 +36,8 @@ impl Biquad {
     }
 }
 
-/// Les deux étages du filtre K (rehaussement des aigus, puis passe-haut), calculés pour la
-/// fréquence d'échantillonnage du fichier.
+/// The two stages of the K filter (high shelf, then high pass), computed for the file's sample
+/// rate.
 fn k_weighting(rate: f64) -> [Biquad; 2] {
     use std::f64::consts::PI;
     let shelf = {
@@ -69,19 +69,19 @@ fn k_weighting(rate: f64) -> [Biquad; 2] {
     [shelf, highpass]
 }
 
-/// Mesure en continu : on lui donne les échantillons entrelacés, il range l'énergie des blocs.
+/// Streaming measurement: it is given interleaved samples, and stores the energy of the blocks.
 pub struct Meter {
     channels: usize,
     filters: Vec<[Biquad; 2]>,
-    /// Longueur d'un pas de 100 ms, en trames ; un bloc de 400 ms en couvre quatre.
+    /// Length of a 100 ms step, in frames; a 400 ms block covers four of them.
     step: usize,
-    /// Énergie (somme des carrés, toutes voies) du pas en cours et des trois précédents.
+    /// Energy (sum of squares, all channels) of the current step and the three previous ones.
     current: f64,
     frames: usize,
     recent: [f64; 3],
     steps: usize,
     channel: usize,
-    /// Un fichier mono est joué sur les deux enceintes : il compte double.
+    /// A mono file is played on both speakers: it counts double.
     weight: f64,
     blocks: Vec<f64>,
     peak: f32,
@@ -119,8 +119,8 @@ impl Meter {
         if self.frames < self.step {
             return;
         }
-        // Un pas de 100 ms se termine : avec les trois précédents, il forme un bloc de 400 ms
-        // (les blocs se recouvrent donc aux trois quarts, comme le veut la norme).
+        // A 100 ms step ends: with the three previous ones, it forms a 400 ms block (blocks thus
+        // overlap by three quarters, as the standard requires).
         self.steps += 1;
         if self.steps >= 4 {
             let energy = self.current + self.recent.iter().sum::<f64>();
@@ -139,7 +139,7 @@ impl Meter {
     }
 }
 
-/// Ce qu'on retient d'un morceau : l'énergie de ses blocs de 400 ms et sa crête.
+/// What is kept from a track: the energy of its 400 ms blocks and its peak.
 pub struct Analysis {
     pub blocks: Vec<f64>,
     pub peak: f32,
@@ -153,7 +153,7 @@ fn mean_square(lufs: f64) -> f64 {
     10f64.powf((lufs + 0.691) / 10.0)
 }
 
-/// Sonie intégrée (LUFS) d'un ensemble de blocs ; `None` s'il n'y a que du silence.
+/// Integrated loudness (LUFS) of a set of blocks; `None` if there is only silence.
 pub fn integrated<'a>(blocks: impl Iterator<Item = &'a f64> + Clone) -> Option<f64> {
     let mean = |threshold: f64| -> Option<f64> {
         let (mut sum, mut n) = (0.0, 0usize);
@@ -168,21 +168,21 @@ pub fn integrated<'a>(blocks: impl Iterator<Item = &'a f64> + Clone) -> Option<f
     mean(absolute.max(relative)).map(lufs)
 }
 
-/// Gain ReplayGain (dB) qui ramène cette sonie à la référence.
+/// ReplayGain gain (dB) that brings this loudness to the reference.
 pub fn gain(loudness: f64) -> f32 {
     (REFERENCE_LUFS - loudness) as f32
 }
 
-/// Décode le fichier en entier et mesure son volume. `stop` interrompt le décodage.
+/// Decodes the whole file and measures its loudness. `stop` interrupts decoding.
 pub fn analyze(path: &Path, stop: &AtomicBool) -> Result<Analysis, String> {
-    // Formats que Symphonia ne lit pas (Opus, WMA, APE…) : décodés par ffmpeg.
+    // Formats Symphonia doesn't read (Opus, WMA, APE…): decoded by ffmpeg.
     if crate::ffdecode::wants(path) {
         let source = crate::ffdecode::FfmpegSource::open(&path.to_string_lossy(), Duration::ZERO, None)?;
         return measure(source, stop);
     }
     let file = File::open(path).map_err(|e| crate::trf!("ouverture impossible : {e}", e))?;
-    // Comme pour la lecture : un décodeur qui panique sur un fichier exotique ne doit pas
-    // emporter l'application.
+    // As for playback: a decoder panicking on an exotic file must not take the application down
+    // with it.
     let source = catch_unwind(AssertUnwindSafe(|| Decoder::try_from(file)))
         .map_err(|_| crate::i18n::tr("format non pris en charge").to_owned())?
         .map_err(|e| crate::trf!("format non lisible : {e}", e))?;
@@ -222,8 +222,8 @@ mod tests {
         meter.finish()
     }
 
-    /// Repère de la norme : une sinusoïde de 997 Hz à pleine échelle sur une voie vaut
-    /// −3,01 LKFS ; sur deux voies, 0. À −20 dBFS en stéréo, on doit donc lire −20 LUFS.
+    /// Reference from the standard: a full-scale 997 Hz sine on one channel is −3.01 LKFS; on two
+    /// channels, 0. At −20 dBFS in stereo, we must therefore read −20 LUFS.
     #[test]
     fn reference_sine() {
         for rate in [44100, 48000, 96000] {
@@ -233,24 +233,24 @@ mod tests {
             assert!((gain(l) - 2.0).abs() < 0.1);
             assert!((a.peak - 0.1).abs() < 0.001);
         }
-        // Mono : joué sur les deux enceintes, donc aussi fort que le même son en stéréo.
+        // Mono: played on both speakers, so as loud as the same sound in stereo.
         let mono = integrated(sine(44100, 1, 0.1, 5.0).blocks.iter()).unwrap();
         assert!((mono + 20.0).abs() < 0.1, "{mono}");
     }
 
     #[test]
     fn gating() {
-        // Le silence ne compte pas : la moitié du morceau muette ne change pas la mesure.
+        // Silence doesn't count: half of the track being silent doesn't change the measurement.
         let mut loud = sine(44100, 2, 0.1, 4.0).blocks;
         let reference = integrated(loud.iter()).unwrap();
         loud.extend(std::iter::repeat_n(0.0, 40));
         assert!((integrated(loud.iter()).unwrap() - reference).abs() < 0.01);
         assert!(integrated([0.0, 0.0].iter()).is_none());
-        // Album : un morceau à −20 LUFS et un autre à −25, de même durée, donnent −21,8.
+        // Album: a track at −20 LUFS and another at −25, of the same duration, give −21.8.
         let quiet = sine(44100, 2, 0.0562, 4.0).blocks;
         let album = integrated(loud.iter().chain(quiet.iter())).unwrap();
         assert!((album - (reference - 1.82)).abs() < 0.05, "{album}");
-        // Un passage très faible (plus de 10 LU sous la moyenne) est écarté.
+        // A very quiet passage (more than 10 LU below the average) is discarded.
         let faint = sine(44100, 2, 0.001, 4.0).blocks;
         let gated = integrated(loud.iter().chain(faint.iter())).unwrap();
         assert!((gated - reference).abs() < 0.01, "{gated}");

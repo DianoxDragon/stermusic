@@ -1,8 +1,8 @@
-//! Charte visuelle, reprise de SterCode : fonds bleu nuit doux, calques translucides,
-//! dégradé de marque, coins arrondis à la Fluent. Les thèmes changent le fond et le dégradé.
+//! Visual identity, taken from SterCode: soft midnight blue backgrounds, translucent layers,
+//! brand gradient, Fluent-style rounded corners. Themes change the background and the gradient.
 //!
-//! Style « Breeze » (Kubuntu) : couleurs et accent de KDE (`kdeglobals`), police Noto Sans,
-//! icônes du thème Breeze, boutons de fenêtre ronds.
+//! "Breeze" style (Kubuntu): KDE colors and accent (`kdeglobals`), Noto Sans font, Breeze theme
+//! icons, round window buttons.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU8, Ordering};
@@ -21,7 +21,7 @@ pub struct Theme {
     pub bg: Color32,
     pub accent: Color32,
     pub accent_2: Color32,
-    /// Accent éclairci, lisible sur fond sombre.
+    /// Lightened accent, readable on a dark background.
     pub accent_light: Color32,
 }
 
@@ -46,7 +46,7 @@ const fn theme(
     }
 }
 
-/// Les mêmes seize thèmes que SterCode.
+/// The same sixteen themes as SterCode.
 pub const THEMES: [Theme; 16] = [
     theme(
         "stercode",
@@ -178,33 +178,33 @@ pub const THEMES: [Theme; 16] = [
     ),
 ];
 
-/// Thème en cours. Tous les thèmes vivent jusqu'à la fin du programme (constantes, thème du
-/// système, favoris), d'où un simple pointeur : `current()` est appelé des centaines de fois par image.
+/// Current theme. Every theme lives until the end of the program (constants, system theme,
+/// favorites), hence a plain pointer: `current()` is called hundreds of times per frame.
 static CURRENT: AtomicPtr<Theme> = AtomicPtr::new(std::ptr::null_mut());
-/// Thème adaptatif : couleurs qui remplacent celles du thème choisi (fond, accent, second
-/// accent, accent clair), tirées de la pochette du morceau en cours.
+/// Adaptive theme: colors replacing those of the chosen theme (background, accent, second
+/// accent, light accent), taken from the album art of the current track.
 static ADAPTIVE_ON: AtomicBool = AtomicBool::new(false);
 static ADAPTIVE: [AtomicU32; 4] = [AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0), AtomicU32::new(0)];
 static RADIUS: AtomicU8 = AtomicU8::new(0);
 
-/// Thème « système » : couleurs de KDE (`~/.config/kdeglobals`) ou accent de GNOME. L'identifiant
-/// est resté « kde » (réglages des versions précédentes).
+/// "System" theme: KDE colors (`~/.config/kdeglobals`) or GNOME accent. The identifier stayed
+/// "kde" (settings from previous versions).
 pub const KDE_ID: &str = "kde";
 const KDE_NAME: &str = "KDE (système)";
 const GNOME_NAME: &str = "GNOME (système)";
 static SYSTEM: OnceLock<Option<Theme>> = OnceLock::new();
 
-/// Le thème du bureau (KDE, sinon GNOME), s'il y en a un.
+/// The desktop theme (KDE, otherwise GNOME), if there is one.
 pub fn system_theme() -> Option<&'static Theme> {
     SYSTEM.get_or_init(|| load_kde().or_else(load_gnome)).as_ref()
 }
 
-/// Le thème de KDE, s'il y a une configuration KDE.
+/// The KDE theme, if there is a KDE configuration.
 pub fn kde_theme() -> Option<&'static Theme> {
     system_theme().filter(|t| t.name == KDE_NAME)
 }
 
-/// Nom court du thème du système, sous sa vignette.
+/// Short name of the system theme, under its thumbnail.
 pub fn system_label() -> &'static str {
     match system_theme() {
         Some(t) if t.name == GNOME_NAME => "GNOME",
@@ -212,8 +212,8 @@ pub fn system_label() -> &'static str {
     }
 }
 
-/// Thème enregistré en favori : une copie figée des couleurs d'un thème (en général celui du
-/// bureau, qui change avec les réglages de KDE ou de GNOME).
+/// Theme saved as a favorite: a frozen copy of a theme's colors (usually the desktop's, which
+/// changes with the KDE or GNOME settings).
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SavedTheme {
     pub id: String,
@@ -225,7 +225,7 @@ pub struct SavedTheme {
 }
 
 impl SavedTheme {
-    /// Copie du thème en cours, sous ce nom.
+    /// Copy of the current theme, under this name.
     pub fn from_current(name: String) -> Self {
         let t = current();
         let rgb = |c: Color32| [c.r(), c.g(), c.b()];
@@ -244,11 +244,11 @@ impl SavedTheme {
     }
 }
 
-/// Favoris chargés (copies `'static`, voir `CURRENT`).
+/// Loaded favorites (`'static` copies, see `CURRENT`).
 static SAVED: Mutex<Vec<&'static Theme>> = Mutex::new(Vec::new());
 
-/// Remplace la liste des favoris. Les anciennes copies restent en mémoire (quelques octets par
-/// modification) : le thème en cours peut encore les désigner.
+/// Replaces the list of favorites. The old copies stay in memory (a few bytes per change): the
+/// current theme may still point to them.
 pub fn set_saved(themes: &[SavedTheme]) {
     let rgb = |c: [u8; 3]| Color32::from_rgb(c[0], c[1], c[2]);
     let leaked = themes
@@ -267,12 +267,12 @@ pub fn set_saved(themes: &[SavedTheme]) {
     *SAVED.lock().unwrap() = leaked;
 }
 
-/// Les favoris, dans l'ordre où ils ont été enregistrés.
+/// The favorites, in the order they were saved.
 pub fn saved() -> Vec<&'static Theme> {
     SAVED.lock().unwrap().clone()
 }
 
-/// Un nom pour enregistrer le thème en cours : « KDE du 9 novembre ».
+/// A name to save the current theme under: "KDE du 9 novembre".
 pub fn suggested_name() -> String {
     let t = current();
     let base = if t.id == KDE_ID {
@@ -320,7 +320,7 @@ pub fn suggested_name() -> String {
     }
 }
 
-/// Date du jour, à l'heure locale (commande `date`), sinon en temps universel.
+/// Today's date, in local time (`date` command), otherwise in universal time.
 fn today() -> (i64, u32, u32) {
     let local = std::process::Command::new("date")
         .arg("+%Y %m %d")
@@ -334,14 +334,14 @@ fn today() -> (i64, u32, u32) {
     local.unwrap_or_else(utc_today)
 }
 
-/// Date du jour en temps universel (année, mois, jour), sans dépendance : calendrier grégorien
-/// depuis l'époque Unix.
+/// Today's date in universal time (year, month, day), without dependencies: Gregorian calendar
+/// since the Unix epoch.
 fn utc_today() -> (i64, u32, u32) {
     let days = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64 / 86_400)
         .unwrap_or(0);
-    // Algorithme de Howard Hinnant (« civil_from_days »).
+    // Howard Hinnant's algorithm ("civil_from_days").
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -354,7 +354,7 @@ fn utc_today() -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// Thème du système sous GNOME : son accent (GNOME 47 et suivants) sur le fond sombre d'Adwaita.
+/// System theme under GNOME: its accent (GNOME 47 and later) on Adwaita's dark background.
 fn load_gnome() -> Option<Theme> {
     let desktop = std::env::var("XDG_CURRENT_DESKTOP")
         .unwrap_or_default()
@@ -392,7 +392,7 @@ fn load_gnome() -> Option<Theme> {
     })
 }
 
-/// Vrai sous KDE Plasma (Kubuntu…).
+/// True under KDE Plasma (Kubuntu…).
 pub fn is_kde_desktop() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.to_uppercase().contains("KDE"))
 }
@@ -417,13 +417,13 @@ fn load_kde() -> Option<Theme> {
         let c: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
         (c.len() >= 3).then(|| Color32::from_rgb(c[0], c[1], c[2]))
     };
-    // Breeze sombre par défaut, si le jeu de couleurs ne précise rien.
+    // Breeze Dark by default, if the color scheme doesn't say anything.
     let bg = color("Colors:Window/BackgroundNormal").unwrap_or(Color32::from_rgb(0x20, 0x23, 0x26));
     let accent = color("General/AccentColor")
         .or_else(|| color("Colors:Window/DecorationFocus"))
         .or_else(|| color("Colors:Selection/BackgroundNormal"))
         .unwrap_or(Color32::from_rgb(0x3D, 0xAE, 0xE9));
-    // Fond clair (jeu de couleurs clair) : SterMusic reste sombre, on assombrit.
+    // Light background (light color scheme): SterMusic stays dark, so it is darkened.
     let bg = if bg.r() as u32 + bg.g() as u32 + bg.b() as u32 > 3 * 110 {
         mix(bg, Color32::BLACK, 0.85)
     } else {
@@ -434,13 +434,13 @@ fn load_kde() -> Option<Theme> {
         name: KDE_NAME,
         bg,
         accent,
-        // Breeze est plat : un « dégradé » à peine marqué.
+        // Breeze is flat: a barely visible "gradient".
         accent_2: mix(accent, Color32::WHITE, 0.16),
         accent_light: mix(accent, Color32::WHITE, 0.45),
     })
 }
 
-/// Rayon des coins de la fenêtre (0 quand elle est agrandie).
+/// Radius of the window corners (0 when it is maximized).
 pub fn window_radius() -> u8 {
     RADIUS.load(Ordering::Relaxed)
 }
@@ -454,12 +454,12 @@ pub fn current() -> &'static Theme {
     if p.is_null() {
         &THEMES[0]
     } else {
-        // SAFETY: `CURRENT` ne reçoit que des références `'static` (voir `set`).
+        // SAFETY: `CURRENT` only receives `'static` references (see `set`).
         unsafe { &*p }
     }
 }
 
-/// Change de thème (identifiant inconnu : le premier) et met à jour les couleurs d'egui.
+/// Changes the theme (unknown identifier: the first one) and updates egui's colors.
 pub fn set(ctx: &egui::Context, id: &str) {
     let theme: &'static Theme = if id == KDE_ID {
         system_theme().unwrap_or(&THEMES[0])
@@ -472,8 +472,8 @@ pub fn set(ctx: &egui::Context, id: &str) {
     ctx.style_mut_of(egui::Theme::Dark, style);
 }
 
-/// Remplace (ou rend, avec `None`) les couleurs du thème choisi par celles-ci : fond, accent,
-/// second accent, accent clair. Les couleurs d'egui ne sont refaites que si quelque chose change.
+/// Replaces (or restores, with `None`) the colors of the chosen theme with these: background,
+/// accent, second accent, light accent. egui's colors are only rebuilt if something changes.
 pub fn set_adaptive(ctx: &egui::Context, colors: Option<[Color32; 4]>) {
     let pack = |c: Color32| u32::from_be_bytes([c.r(), c.g(), c.b(), 255]);
     let was = ADAPTIVE_ON.load(Ordering::Relaxed);
@@ -489,7 +489,7 @@ pub fn set_adaptive(ctx: &egui::Context, colors: Option<[Color32; 4]>) {
     }
 }
 
-/// Couleur `i` du thème adaptatif, s'il est en place.
+/// Color `i` of the adaptive theme, if it is active.
 fn adaptive(i: usize) -> Option<Color32> {
     if !ADAPTIVE_ON.load(Ordering::Relaxed) {
         return None;
@@ -506,12 +506,12 @@ fn lighten(c: Color32, r: u8, g: u8, b: u8) -> Color32 {
     )
 }
 
-/// Fond de la fenêtre.
+/// Window background.
 pub fn bg() -> Color32 {
     adaptive(0).unwrap_or(current().bg)
 }
 
-/// Menus et fenêtres flottantes.
+/// Menus and floating windows.
 pub fn glass() -> Color32 {
     lighten(bg(), 10, 10, 14)
 }
@@ -530,28 +530,28 @@ pub fn accent_light() -> Color32 {
 
 pub const TEXT: Color32 = Color32::from_rgb(0xEB, 0xEE, 0xFA);
 pub const TEXT_2: Color32 = Color32::from_rgb(0xAC, 0xAF, 0xBC);
-/// Icônes au repos : un peu plus soutenu que `TEXT_2` (les icônes fines paraissaient pâles).
+/// Idle icons: a little stronger than `TEXT_2` (thin icons looked pale).
 pub fn icon_idle() -> Color32 {
     mix(TEXT_2, TEXT, 0.35)
 }
 
 pub const TEXT_3: Color32 = Color32::from_rgb(0x75, 0x78, 0x86);
 pub const DANGER: Color32 = Color32::from_rgb(0xE5, 0x48, 0x4D);
-/// Volume amplifié (au-dessus de 100 %).
+/// Amplified volume (above 100 %).
 pub const BOOST: Color32 = Color32::from_rgb(0xFF, 0xA0, 0x3C);
 
-/// Couleur translucide mélangée comme en CSS (dans l'espace sRGB).
+/// Translucent color blended as in CSS (in sRGB space).
 pub fn rgba(r: u8, g: u8, b: u8, alpha: u8) -> Color32 {
     let m = |c: u8| ((c as u16 * alpha as u16 + 127) / 255) as u8;
     Color32::from_rgba_premultiplied(m(r), m(g), m(b), alpha)
 }
 
-/// Blanc translucide (calques, bordures, survols).
+/// Translucent white (layers, borders, hovers).
 pub fn white(alpha: u8) -> Color32 {
     rgba(0xFF, 0xFF, 0xFF, alpha)
 }
 
-/// Couleur avec une opacité (en sRGB).
+/// Color with an opacity (in sRGB).
 pub fn alpha(c: Color32, a: u8) -> Color32 {
     rgba(c.r(), c.g(), c.b(), a)
 }
@@ -564,7 +564,7 @@ pub fn stroke_strong() -> Color32 {
     white(0x24)
 }
 
-/// Survol, teinté de l'accent.
+/// Hover, tinted with the accent.
 pub fn hover() -> Color32 {
     let tint = mix(accent_light(), Color32::WHITE, 0.5);
     rgba(tint.r(), tint.g(), tint.b(), 0x12)
@@ -578,22 +578,22 @@ pub fn selection() -> Color32 {
     alpha(accent(), 0x59)
 }
 
-/// Police « semi-gras » des titres (les grands titres restent en graisse normale avec Breeze).
+/// "Semibold" font for titles (large titles stay at regular weight with Breeze).
 pub fn semibold(size: f32) -> FontId {
     let family = if size >= 19.5 { "heading" } else { "semibold" };
     FontId::new(size, FontFamily::Name(family.into()))
 }
 
-/// Interpolation linéaire entre deux couleurs.
+/// Linear interpolation between two colors.
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgba_premultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
 }
 
-/// Rectangle arrondi rempli du dégradé de marque (135°).
+/// Rounded rectangle filled with the brand gradient (135°).
 pub fn brand_fill(painter: &egui::Painter, rect: Rect, radius: impl Into<CornerRadius>, alpha: f32) {
-    // egui ignore la texture des rectangles très fins : dégradé par sommets.
+    // egui ignores the texture of very thin rectangles: per-vertex gradient.
     if rect.height() < 4.0 || rect.width() < 4.0 {
         let (a, b) = (accent().gamma_multiply(alpha), accent_2().gamma_multiply(alpha));
         let mut mesh = egui::Mesh::default();
@@ -619,7 +619,7 @@ pub fn brand_fill(painter: &egui::Painter, rect: Rect, radius: impl Into<CornerR
 }
 
 fn brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
-    // Une seule texture gardée, refaite quand les couleurs changent (thème adaptatif compris).
+    // A single texture kept, rebuilt when the colors change (adaptive theme included).
     let id = egui::Id::new("brand_gradient_texture");
     let key = (accent(), accent_2());
     if let Some((k, texture)) = ctx.data(|d| d.get_temp::<((Color32, Color32), egui::TextureHandle)>(id)) {
@@ -644,7 +644,7 @@ fn brand_texture(ctx: &egui::Context) -> egui::TextureHandle {
     texture
 }
 
-/// Deux couleurs stables tirées d'un texte (pochettes de remplacement, avatars d'artistes).
+/// Two stable colors derived from a text (placeholder album art, artist avatars).
 pub fn seeded_colors(seed: &str) -> (Color32, Color32) {
     let mut h: u32 = 2166136261;
     for b in seed.bytes() {
@@ -690,7 +690,7 @@ fn style(style: &mut egui::Style) {
 
     let v = &mut style.visuals;
     v.dark_mode = true;
-    // Les panneaux sont transparents : le fond (Mica) est peint par l'application.
+    // Panels are transparent: the background (Mica) is painted by the application.
     v.panel_fill = Color32::TRANSPARENT;
     v.window_fill = glass();
     v.extreme_bg_color = white(0x0F);
@@ -753,8 +753,10 @@ fn style(style: &mut egui::Style) {
     w.open.corner_radius = radius;
 }
 
-/// Polices habituelles des distributions (Ubuntu, Noto, DejaVu, Liberation), dans les dossiers
-/// du système puis de l'utilisateur : interface, semi-gras, code.
+/// Fonts commonly shipped by distributions (Ubuntu, Noto, DejaVu, Liberation), in the system
+/// folders then the user's: interface, semibold, code. Each font is looked up at the Debian /
+/// Ubuntu location (`truetype/…`) then at the Arch Linux and Fedora ones (`noto/`, `TTF/`,
+/// `liberation/`…).
 fn system_fonts() -> [Vec<PathBuf>; 4] {
     let mut dirs: Vec<PathBuf> = ["/usr/share/fonts", "/usr/local/share/fonts"]
         .iter()
@@ -770,15 +772,17 @@ fn system_fonts() -> [Vec<PathBuf>; 4] {
             .flat_map(|name| dirs.iter().map(move |d| d.join(name)))
             .collect()
     };
-    // Style Breeze (Kubuntu) : Noto Sans partout ; les grands titres en graisse normale, comme
-    // Kirigami. Ailleurs, les polices habituelles des autres distributions prennent le relais.
+    // Breeze style (Kubuntu): Noto Sans everywhere; large titles at regular weight, like Kirigami.
+    // Elsewhere, the usual fonts of the other distributions take over.
     let regular = files(&[
         "truetype/noto/NotoSans-Regular.ttf",
         "noto/NotoSans-Regular.ttf",
         "truetype/ubuntu/Ubuntu-R.ttf",
         "truetype/dejavu/DejaVuSans.ttf",
         "TTF/DejaVuSans.ttf",
+        "dejavu-sans-fonts/DejaVuSans.ttf",
         "truetype/liberation/LiberationSans-Regular.ttf",
+        "liberation/LiberationSans-Regular.ttf",
     ]);
     [
         regular.clone(),
@@ -786,25 +790,31 @@ fn system_fonts() -> [Vec<PathBuf>; 4] {
             "truetype/noto/NotoSans-SemiBold.ttf",
             "noto/NotoSans-SemiBold.ttf",
             "truetype/noto/NotoSans-Medium.ttf",
+            "noto/NotoSans-Medium.ttf",
             "truetype/noto/NotoSans-Bold.ttf",
             "noto/NotoSans-Bold.ttf",
             "truetype/ubuntu/Ubuntu-M.ttf",
             "truetype/dejavu/DejaVuSans-Bold.ttf",
             "TTF/DejaVuSans-Bold.ttf",
+            "dejavu-sans-fonts/DejaVuSans-Bold.ttf",
+            "liberation/LiberationSans-Bold.ttf",
         ]),
         regular,
         files(&[
             "truetype/noto/NotoSansMono-Regular.ttf",
+            "noto/NotoSansMono-Regular.ttf",
             "truetype/hack/Hack-Regular.ttf",
+            "TTF/Hack-Regular.ttf",
             "truetype/ubuntu/UbuntuMono-R.ttf",
             "truetype/dejavu/DejaVuSansMono.ttf",
             "TTF/DejaVuSansMono.ttf",
+            "dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
         ]),
     ]
 }
 
-/// Charge les polices (texte, semi-gras, grands titres, code), en gardant celles d'egui en
-/// secours (symboles, émojis).
+/// Loads the fonts (text, semibold, large titles, code), keeping egui's as fallbacks (symbols,
+/// emojis).
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let mut load = |key: &str, files: &[PathBuf]| -> bool {
@@ -846,8 +856,8 @@ fn install_fonts(ctx: &egui::Context) {
             .unwrap()
             .insert(0, "mono".into());
     }
-    // Secours pour le japonais, le chinois et le coréen (titres d'animes, de jeux…) : Noto Sans
-    // CJK comme Kubuntu, sinon Droid Sans Fallback.
+    // Fallback for Japanese, Chinese and Korean (anime and game titles…): Noto Sans CJK as on
+    // Kubuntu (or Arch Linux, noto-fonts-cjk package), otherwise Droid Sans Fallback.
     let cjk = [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",

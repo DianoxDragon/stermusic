@@ -1,7 +1,7 @@
-//! Albums sans pochette : on les repère dans la bibliothèque (ni image intégrée, ni image dans le
-//! dossier), on cherche leurs pochettes sur MusicBrainz et le Cover Art Archive, on vérifie le
-//! résultat d'un coup d'œil, puis les images retenues sont intégrées à tous les morceaux des
-//! albums cochés, en une fois.
+//! Albums without art: we find them in the library (neither embedded image nor image in the
+//! folder), look up their art on MusicBrainz and the Cover Art Archive, check the result at a
+//! glance, then the chosen images are embedded into every track of the checked albums, in one
+//! go.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,11 +24,11 @@ use crate::{theme, widgets};
 const WARN: Color32 = Color32::from_rgb(0xFF, 0xC0, 0x70);
 
 enum State {
-    /// Pas encore cherché.
+    /// Not looked up yet.
     Idle,
     Queued,
     Searching,
-    /// Pochette trouvée (ou choisie sur le disque), et d'où elle vient.
+    /// Art found (or picked on disk), and where it comes from.
     Found(Cover, String),
     NotFound,
     Failed(String),
@@ -44,7 +44,7 @@ struct Missing {
 }
 
 impl Missing {
-    /// Un album sans nom ne peut pas être cherché en ligne.
+    /// An album without a name cannot be looked up online.
     fn searchable(&self) -> bool {
         self.title != unknown_album()
     }
@@ -104,7 +104,7 @@ impl CoverTool {
                 match s.rx.try_recv() {
                     Ok((i, state)) => {
                         if let Some(a) = self.albums.get_mut(i) {
-                            // Rien trouvé : l'album n'est plus à intégrer.
+                            // Nothing found: the album no longer needs embedding.
                             a.checked = !matches!(state, State::NotFound | State::Failed(_));
                             a.state = state;
                             a.tex = None;
@@ -165,10 +165,10 @@ impl CoverTool {
     }
 }
 
-/// Cherche l'album sur MusicBrainz et prend la pochette de la première sortie qui en a une, en
-/// commençant par celles qui ont le même nombre de pistes.
+/// Looks up the album on MusicBrainz and takes the art of the first release that has some,
+/// starting with those that have the same number of tracks.
 fn find_cover(artist: &str, title: &str, tracks: u32) -> State {
-    // « Artiste inconnu » ou une compilation : le titre seul donne de meilleurs résultats.
+    // "Unknown artist" or a compilation: the title alone gives better results.
     let various = ["various artists", "various", "artistes divers", "va"];
     let artist = if artist == unknown_artist() || various.contains(&artist.to_lowercase().as_str()) {
         ""
@@ -203,8 +203,8 @@ fn find_cover(artist: &str, title: &str, tracks: u32) -> State {
 }
 
 impl SterMusic {
-    /// Repère les albums dont le premier morceau n'a ni pochette intégrée ni image de dossier
-    /// (c'est aussi ce morceau qui donne sa pochette à l'album dans la bibliothèque).
+    /// Finds the albums whose first track has neither embedded art nor a folder image (this is
+    /// also the track that gives its art to the album in the library).
     pub(super) fn start_cover_scan(&mut self, ctx: &egui::Context) {
         let tool = &mut self.lib_tools.covers;
         if tool.busy() {
@@ -417,7 +417,7 @@ impl SterMusic {
                 })
                 .collect();
             if self.start_tag_jobs(ctx, jobs) {
-                // Les albums complétés quittent la liste ; l'avancement est dans l'éditeur.
+                // Completed albums leave the list; progress is shown in the editor.
                 self.lib_tools
                     .covers
                     .albums
@@ -431,7 +431,7 @@ impl SterMusic {
     }
 }
 
-/// Liste des albums sans pochette ; renvoie celui pour lequel on veut choisir une image.
+/// List of albums without art; returns the one for which an image should be picked.
 fn album_list(ui: &mut egui::Ui, tool: &mut CoverTool, width: f32, height: f32) -> Option<usize> {
     const ROW: f32 = 68.0;
     let mut pick = None;
@@ -457,7 +457,7 @@ fn album_list(ui: &mut egui::Ui, tool: &mut CoverTool, width: f32, height: f32) 
                     ui.painter()
                         .rect_filled(r, CornerRadius::same(6), theme::white(0x03));
                 }
-                // Case à cocher, pochette, textes, puis le bouton « image du disque ».
+                // Checkbox, art, texts, then the "image from disk" button.
                 let check = Rect::from_center_size(pos2(r.left() + 20.0, r.center().y), vec2(22.0, 22.0));
                 widgets::place(ui, check, |ui| {
                     ui.add(egui::Checkbox::without_text(&mut a.checked))

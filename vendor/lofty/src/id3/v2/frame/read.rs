@@ -62,7 +62,7 @@ impl ParsedFrame<'_> {
 			return Ok(Self::Skip);
 		}
 
-		// SterMusic (correctif de lofty 0.25) : en ID3v2.4, le drapeau du tag vaut pour chaque cadre.
+		// SterMusic (fix from lofty 0.25): in ID3v2.4, the tag's flag applies to each frame.
 		if tag_unsynchronisation && version == Id3v2Version::V4 {
 			flags.unsynchronisation = true;
 		}

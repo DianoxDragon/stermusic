@@ -1,10 +1,9 @@
-//! Historique d'écoute : chaque morceau écouté au moins 30 secondes (ou la moitié s'il est plus
-//! court) est noté avec sa date et le temps vraiment écouté, dans
-//! `~/.local/share/stermusic/history.tsv` (une ligne par écoute : « horodatage<TAB>chemin<TAB>
-//! secondes » ; les premières versions n'avaient pas la dernière colonne). Un morceau passé avant
-//! d'avoir compté y est noté aussi, avec une quatrième colonne « s » (sauté). Sert aux
-//! statistiques par période et au récap de l'année ; le compteur d'écoutes de chaque morceau,
-//! lui, existe depuis plus longtemps (réglages).
+//! Listening history: each track listened to for at least 30 seconds (or half of it if it is
+//! shorter) is recorded with its date and the time really listened, in
+//! `~/.local/share/stermusic/history.tsv` (one line per play: "timestamp<TAB>path<TAB>seconds";
+//! the first versions lacked the last column). A track skipped before it counted is recorded
+//! too, with a fourth column "s" (skipped). Used for the per-period statistics and the yearly
+//! recap; each track's play counter has existed for longer (settings).
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,12 +11,12 @@ use std::sync::OnceLock;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Listen {
-    /// Début de l'écoute, en secondes depuis l'époque Unix.
+    /// Start of the play, in seconds since the Unix epoch.
     pub time: u64,
     pub path: PathBuf,
-    /// Secondes réellement écoutées (0 : inconnu, ancienne ligne).
+    /// Seconds really listened (0: unknown, old line).
     pub seconds: u32,
-    /// Morceau passé avant d'avoir compté comme une écoute.
+    /// Track skipped before it counted as a play.
     pub skipped: bool,
 }
 
@@ -25,7 +24,7 @@ fn file() -> PathBuf {
     crate::library::data_dir().join("history.tsv")
 }
 
-/// Relit l'historique (les lignes illisibles sont ignorées) : les écoutes, puis les morceaux sautés.
+/// Reads the history again (unreadable lines are ignored): the plays, then the skipped tracks.
 pub fn load() -> (Vec<Listen>, Vec<Listen>) {
     let Ok(text) = std::fs::read_to_string(file()) else {
         return (Vec::new(), Vec::new());
@@ -36,7 +35,7 @@ pub fn load() -> (Vec<Listen>, Vec<Listen>) {
 fn parse(text: &str) -> Vec<Listen> {
     text.lines()
         .filter_map(|l| {
-            // Un chemin ne contient jamais de tabulation (voir `append`).
+            // A path never contains a tab (see `append`).
             let mut parts = l.split('\t');
             let time = parts.next()?;
             let path = parts.next()?;
@@ -52,10 +51,10 @@ fn parse(text: &str) -> Vec<Listen> {
         .collect()
 }
 
-/// Ajoute une écoute à la fin du fichier.
+/// Appends a play at the end of the file.
 pub fn append(listen: &Listen) {
     let _ = std::fs::create_dir_all(crate::library::data_dir());
-    // Un chemin contenant un retour à la ligne casserait le format : il n'est pas noté.
+    // A path containing a newline would break the format: it is not recorded.
     let path = listen.path.to_string_lossy();
     if path.contains('\n') || path.contains('\t') {
         return;
@@ -70,8 +69,8 @@ fn line(l: &Listen) -> String {
     format!("{}\t{}\t{}{kind}", l.time, l.path.to_string_lossy(), l.seconds)
 }
 
-/// Réécrit tout l'historique (après le renommage de fichiers) : écoutes et morceaux sautés, dans
-/// l'ordre du temps.
+/// Rewrites the whole history (after files were renamed): plays and skipped tracks, in
+/// chronological order.
 pub fn save(listens: &[Listen], skips: &[Listen]) {
     let mut all: Vec<&Listen> = listens.iter().chain(skips).collect();
     all.sort_by_key(|l| l.time);
@@ -87,7 +86,7 @@ pub fn save(listens: &[Listen], skips: &[Listen]) {
     }
 }
 
-/// Fait suivre un fichier renommé.
+/// Follows a renamed file.
 pub fn rename(all: &mut [Listen], old: &Path, new: &Path) -> bool {
     let mut changed = false;
     for l in all.iter_mut().filter(|l| l.path == old) {
@@ -97,7 +96,7 @@ pub fn rename(all: &mut [Listen], old: &Path, new: &Path) -> bool {
     changed
 }
 
-/// Décalage de l'heure locale sur le temps universel, en secondes (commande `date`, lue une fois).
+/// Offset of local time from universal time, in seconds (`date` command, read once).
 pub fn local_offset() -> i64 {
     static OFFSET: OnceLock<i64> = OnceLock::new();
     *OFFSET.get_or_init(|| {
@@ -116,13 +115,13 @@ pub fn local_offset() -> i64 {
     })
 }
 
-/// Jour local (nombre de jours depuis le 1er janvier 1970) d'un horodatage.
+/// Local day (number of days since January 1st, 1970) of a timestamp.
 pub fn local_day(time: u64) -> i64 {
     (time as i64 + local_offset()).div_euclid(86_400)
 }
 
-/// (année, mois, jour) d'un nombre de jours depuis l'époque Unix (calendrier grégorien, algorithme
-/// « civil_from_days » de Howard Hinnant).
+/// (year, month, day) from a number of days since the Unix epoch (Gregorian calendar, Howard
+/// Hinnant's "civil_from_days" algorithm).
 pub fn civil(days: i64) -> (i32, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
@@ -136,12 +135,12 @@ pub fn civil(days: i64) -> (i32, u32, u32) {
     (year as i32, month, day)
 }
 
-/// Année locale d'un horodatage.
+/// Local year of a timestamp.
 pub fn year_of(time: u64) -> i32 {
     civil(local_day(time)).0
 }
 
-/// Jour de la semaine (0 = lundi) d'un nombre de jours depuis l'époque Unix (un jeudi).
+/// Day of the week (0 = Monday) from a number of days since the Unix epoch (a Thursday).
 pub fn weekday(days: i64) -> usize {
     (days + 3).rem_euclid(7) as usize
 }
@@ -155,8 +154,8 @@ mod tests {
         assert_eq!(civil(0), (1970, 1, 1));
         assert_eq!(civil(20_402), (2025, 11, 10));
         assert_eq!(civil(11_016), (2000, 2, 29));
-        assert_eq!(weekday(0), 3); // jeudi
-        assert_eq!(weekday(20_402), 0); // lundi
+        assert_eq!(weekday(0), 3); // Thursday
+        assert_eq!(weekday(20_402), 0); // Monday
     }
 
     #[test]

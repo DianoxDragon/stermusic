@@ -1,5 +1,5 @@
-//! Diffusion vers un appareil du réseau : le bouton de la barre de lecture, la liste des
-//! appareils, et ce que l'appareil affiche (titre, artiste, pochette).
+//! Casting to a network device: the playback bar button, the device list, and what the device
+//! displays (title, artist, album art).
 
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, Receiver};
@@ -23,7 +23,7 @@ pub struct CastState {
 }
 
 impl SterMusic {
-    /// Ce que l'appareil affiche pour un morceau de la bibliothèque.
+    /// What the device displays for a library track.
     pub(super) fn cast_meta(&mut self, idx: usize) -> Meta {
         let t = self.lib.tracks[idx].clone();
         let cover_url = t
@@ -78,7 +78,7 @@ impl SterMusic {
             }
         }
         if self.player.as_ref().is_some_and(|p| p.casting().is_some()) {
-            // L'état de l'appareil change sans que l'interface le sache : relevé régulier.
+            // The device state changes without the interface knowing: poll it regularly.
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
     }
@@ -99,7 +99,7 @@ impl SterMusic {
             Ok(()) => {
                 self.cast.last_error = None;
                 self.toast(trf!("Diffusion sur {0}", name));
-                // Une webradio en cours se relance sur l'appareil.
+                // A web radio that is playing restarts on the device.
                 if let Some(live) = self.radio.live.as_ref().filter(|l| !l.paused) {
                     let station = live.station.clone();
                     self.play_station(ctx, station);
@@ -127,7 +127,7 @@ impl SterMusic {
         self.seeked = true;
     }
 
-    /// Webradio diffusée : on cherche seulement l'adresse du flux ; l'appareil la lit.
+    /// Web radio being cast: only the stream address is looked up; the device plays it.
     pub(super) fn play_station_cast(&mut self, ctx: &egui::Context, station: crate::radio::Station) {
         let (tx, rx) = channel();
         let (s, ctx) = (station.clone(), ctx.clone());
@@ -138,7 +138,7 @@ impl SterMusic {
         self.radio.cast_rx = Some((station, rx));
     }
 
-    /// Adresse du flux trouvée : l'appareil la lit, la station devient la station en cours.
+    /// Stream address found: the device plays it, the station becomes the current station.
     pub(super) fn cast_station_ready(&mut self, station: crate::radio::Station, url: String) {
         self.finish_listen();
         self.leave_episode();
@@ -161,7 +161,7 @@ impl SterMusic {
         self.seeked = true;
     }
 
-    /// Bouton « Diffuser » et sa liste d'appareils.
+    /// "Cast" button and its device list.
     pub(super) fn cast_button(&mut self, ui: &mut egui::Ui) {
         let casting = self.player.as_ref().and_then(|p| p.casting()).cloned();
         let tip = match &casting {
@@ -172,7 +172,7 @@ impl SterMusic {
         let popup_id = ui.make_persistent_id("cast_popup");
         if resp.clicked() {
             ui.memory_mut(|m| m.toggle_popup(popup_id));
-            // La liste est refaite à l'ouverture si elle date de plus de trente secondes.
+            // The list is rebuilt on opening if it is more than thirty seconds old.
             let now = ui.input(|i| i.time);
             if self.cast.scanned_at.is_none_or(|t| now - t > 30.0) {
                 let ctx = ui.ctx().clone();

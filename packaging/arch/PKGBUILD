@@ -1,0 +1,70 @@
+# Maintainer: Dianox
+#
+# Arch Linux package of SterMusic (EndeavourOS, Manjaro, CachyOS…).
+# - From a release published on GitHub: run `makepkg -si` in this folder. The AUR copy of this
+#   file carries the real checksum (`packaging/make-aur.sh` fills it in once the tag is pushed;
+#   it can't be written here, since the tarball contains this very file).
+# - From the code of the checkout as it is: `../make-arch-package.sh -si` (it puts an archive of
+#   the local tree in place of the GitHub one).
+
+pkgname=stermusic
+pkgver=0.2.2
+pkgrel=1
+pkgdesc="Music player for Linux with a Windows 11 look and KDE integration"
+arch=('x86_64')
+url="https://github.com/DianoxDragon/stermusic"
+license=('GPL-3.0-or-later')
+depends=('alsa-lib' 'gcc-libs' 'glibc' 'hicolor-icon-theme')
+makedepends=('cargo' 'python')
+optdepends=(
+    'ffmpeg: Opus, WMA, APE, WavPack and DSD playback, conversion, CD ripping'
+    'libpulse: list and choose audio outputs (pactl)'
+    'pipewire: switch the default audio output (pw-metadata)'
+    'xdg-desktop-portal: file and folder dialogs'
+    'xdg-utils: open links and folders'
+    'kde-cli-tools: sync to phones over MTP, Dolphin integration'
+    'breeze-icons: system icons in the Breeze style'
+    'noto-fonts: Breeze-style interface font'
+    'noto-fonts-cjk: Japanese, Chinese and Korean titles'
+)
+# Cargo's release profile already does LTO and strips the symbols.
+options=('!lto' '!debug')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    # Settings specific to the development machine (another target folder): ignored here.
+    rm -f .cargo/config.toml
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    # No path of the build folder in the binary (internal error messages).
+    export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$srcdir=/usr/src/$pkgname"
+    cargo build --frozen --release
+    # Licenses of the libraries compiled into the program.
+    CARGO_NET_OFFLINE=true python packaging/third_party.py THIRD-PARTY-LICENSES.txt
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    cargo test --frozen --release
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    install -Dm755 target/release/stermusic "$pkgdir/usr/bin/stermusic"
+    install -Dm644 stermusic.desktop "$pkgdir/usr/share/applications/stermusic.desktop"
+    install -Dm644 assets/icon.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/stermusic.png"
+    # Right click in Dolphin: "Edit tags with SterMusic".
+    install -Dm644 stermusic-tags.desktop "$pkgdir/usr/share/kio/servicemenus/stermusic-tags.desktop"
+    install -Dm644 README.md README.fr.md CREDITS.md -t "$pkgdir/usr/share/doc/$pkgname/"
+    install -Dm644 THIRD-PARTY-LICENSES.txt -t "$pkgdir/usr/share/licenses/$pkgname/"
+}

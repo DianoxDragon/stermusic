@@ -1,6 +1,6 @@
-//! Outils d'entretien de la bibliothèque, accessibles depuis l'éditeur de tags et les paramètres :
-//! albums sans pochette, calcul du ReplayGain, doublons. Chacun s'ouvre dans sa fenêtre ; le
-//! travail long se fait en arrière-plan et continue si on la ferme.
+//! Library maintenance tools, available from the tag editor and the settings: albums without
+//! art, ReplayGain analysis, duplicates. Each opens in its own window; the long work runs in
+//! the background and goes on if the window is closed.
 
 use std::path::PathBuf;
 
@@ -53,7 +53,7 @@ impl LibTool {
 
 #[derive(Default)]
 pub struct LibTools {
-    /// Fenêtre ouverte.
+    /// Open window.
     pub(super) open: Option<LibTool>,
     pub(super) covers: CoverTool,
     pub(super) rg: RgTool,
@@ -61,17 +61,17 @@ pub struct LibTools {
 }
 
 impl LibTools {
-    /// Un travail tourne en arrière-plan (indicateur de la barre latérale).
+    /// A job is running in the background (sidebar indicator).
     pub fn busy(&self) -> bool {
         self.rg.running() || self.covers.busy() || self.dups.busy()
     }
 
-    /// Des tags sont en train d'être écrits par un outil : l'éditeur attend son tour.
+    /// A tool is writing tags: the editor waits its turn.
     pub fn writing(&self) -> bool {
         self.rg.running()
     }
 
-    /// Ce qui tourne, pour l'infobulle de la barre latérale.
+    /// What is running, for the sidebar tooltip.
     pub fn status(&self) -> Option<&'static str> {
         if self.rg.running() {
             Some(tr("Analyse ReplayGain en cours…"))
@@ -84,14 +84,14 @@ impl LibTools {
         }
     }
 
-    /// À la fermeture : plus rien ne doit commencer à écrire dans un fichier.
+    /// On exit: nothing must start writing to a file any more.
     pub fn stop(&mut self) {
         self.rg.stop_and_wait();
         self.covers.stop();
     }
 }
 
-/// Les trois outils, en éléments de menu ; renvoie celui qu'on a choisi.
+/// The three tools, as menu items; returns the one that was picked.
 pub(super) fn menu(ui: &mut egui::Ui) -> Option<LibTool> {
     let mut chosen = None;
     ui.set_min_width(250.0);
@@ -112,7 +112,7 @@ pub(super) fn modal_frame(ctx: &egui::Context) -> egui::Frame {
         .corner_radius(12)
 }
 
-/// Titre d'une fenêtre d'outil : icône, nom et précision discrète.
+/// Title of a tool window: icon, name and a discreet detail.
 pub(super) fn title(ui: &mut egui::Ui, icon: Icon, text: &str, detail: &str) {
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
@@ -140,7 +140,7 @@ impl SterMusic {
         self.lib_tools.open = Some(tool);
     }
 
-    /// ReplayGain de quelques morceaux précis (menu d'un album, d'une sélection).
+    /// ReplayGain of a few specific tracks (menu of an album, of a selection).
     pub(super) fn open_replaygain_for(&mut self, paths: Vec<PathBuf>, label: String) {
         let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.is_file()).collect();
         if paths.is_empty() {

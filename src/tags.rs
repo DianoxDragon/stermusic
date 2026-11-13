@@ -1,8 +1,8 @@
-//! Lecture et écriture des tags (ID3v1/v2, MP4, Vorbis, APE…) pour l'éditeur, via lofty.
+//! Reading and writing tags (ID3v1/v2, MP4, Vorbis, APE…) for the editor, through lofty.
 //!
-//! L'éditeur travaille sur une copie des valeurs de chaque fichier ; on n'écrit que les champs
-//! qui ont changé. Chaque champ modifié est appliqué à tous les tags présents dans le fichier
-//! (par exemple ID3v2 et ID3v1 d'un MP3), pour qu'aucun lecteur ne retrouve l'ancienne valeur.
+//! The editor works on a copy of each file's values; only the fields that changed are written.
+//! Each modified field is applied to every tag present in the file (for example ID3v2 and
+//! ID3v1 of an MP3), so that no player finds the old value again.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -69,7 +69,7 @@ impl Field {
         })
     }
 
-    /// Champ numérique : seuls les chiffres sont acceptés.
+    /// Numeric field: only digits are accepted.
     pub fn numeric(self) -> bool {
         matches!(
             self,
@@ -80,7 +80,7 @@ impl Field {
 
 pub type Values = [String; N];
 
-/// Pochette intégrée : octets de l'image, et une empreinte pour comparer vite.
+/// Embedded album art: the image bytes, and a fingerprint for quick comparison.
 #[derive(Clone, PartialEq)]
 pub struct Cover {
     pub data: std::sync::Arc<Vec<u8>>,
@@ -103,13 +103,13 @@ pub struct FileTags {
     pub path: PathBuf,
     pub values: Values,
     pub cover: Option<Cover>,
-    /// Format et tags présents, pour information (« MP3 · ID3v2, ID3v1 »).
+    /// Format and tags present, for information ("MP3 · ID3v2, ID3v1").
     pub kind: String,
-    /// Tags présents seulement (« ID3v2, ID3v1 »), pour la colonne « Tag ».
+    /// Tags present only ("ID3v2, ID3v1"), for the "Tag" column.
     pub tags: String,
     pub duration_ms: u64,
     pub size: u64,
-    /// Le fichier n'a pas pu être lu : on ne l'écrira pas.
+    /// The file could not be read: it won't be written.
     pub error: Option<String>,
 }
 
@@ -219,7 +219,7 @@ fn front_cover(tagged: &TaggedFile) -> Option<Cover> {
     Some(Cover::new(pic.data().to_vec()))
 }
 
-/// Lit les tags d'un fichier (tag principal, sinon le premier trouvé).
+/// Reads the tags of a file (main tag, otherwise the first one found).
 pub fn read(path: &Path) -> FileTags {
     let mut out = FileTags {
         path: path.to_path_buf(),
@@ -261,17 +261,17 @@ pub fn read(path: &Path) -> FileTags {
     out
 }
 
-/// Nouvelle pochette : `None` la retire, `Some` la remplace.
+/// New album art: `None` removes it, `Some` replaces it.
 pub type CoverChange = Option<Cover>;
 
 #[derive(Clone, Copy)]
 pub struct WriteOpts {
-    /// ID3v2.3 plutôt que 2.4 (MP3), pour les vieux lecteurs et l'Explorateur de Windows.
+    /// ID3v2.3 rather than 2.4 (MP3), for old players and Windows Explorer.
     pub id3v23: bool,
-    /// Garde la date de modification (sinon l'album remonte dans « Ajoutés récemment »).
+    /// Keeps the modification date (otherwise the album moves up in "Recently added").
     pub keep_mtime: bool,
-    /// Écrit dans une copie qui remplace l'original : pour le morceau en cours de lecture,
-    /// que le décodeur lit encore (une écriture sur place décalerait le son sous ses pieds).
+    /// Writes into a copy that replaces the original: for the track currently playing, which the
+    /// decoder is still reading (writing in place would shift the audio under its feet).
     pub via_copy: bool,
 }
 
@@ -279,7 +279,7 @@ fn apply(tag: &mut Tag, fields: &[(Field, String)], cover: Option<&CoverChange>)
     for (f, v) in fields {
         set(tag, *f, v);
     }
-    // Pochettes déjà présentes sans description : même souci qu'en bas en ID3v2.3.
+    // Album art already present without a description: same issue as below in ID3v2.3.
     for i in 0..tag.pictures().len() {
         let p = &tag.pictures()[i];
         if p.description().is_none_or(str::is_empty) {
@@ -294,7 +294,7 @@ fn apply(tag: &mut Tag, fields: &[(Field, String)], cover: Option<&CoverChange>)
     }
     if let Some(change) = cover {
         tag.remove_picture_type(PictureType::CoverFront);
-        // MP4 ne connaît pas les types d'image : toutes ses images sont des pochettes.
+        // MP4 doesn't know picture types: all its pictures are album art.
         if tag.tag_type() == TagType::Mp4Ilst {
             while !tag.pictures().is_empty() {
                 tag.remove_picture(0);
@@ -306,8 +306,8 @@ fn apply(tag: &mut Tag, fields: &[(Field, String)], cover: Option<&CoverChange>)
                 Some([0xFF, 0xD8, ..]) => Some(MimeType::Jpeg),
                 _ => None,
             };
-            // Une description vide s'écrit en UTF-16 sans marque d'ordre des octets en ID3v2.3,
-            // et le fichier ne se relit plus : on en donne une.
+            // An empty description is written as UTF-16 without a byte order mark in ID3v2.3, and the
+            // file can no longer be read back: one is provided.
             tag.push_picture(Picture::new_unchecked(
                 PictureType::CoverFront,
                 mime,
@@ -318,7 +318,7 @@ fn apply(tag: &mut Tag, fields: &[(Field, String)], cover: Option<&CoverChange>)
     }
 }
 
-/// Écrit les champs modifiés (et la pochette si `cover` est donné) dans le fichier.
+/// Writes the modified fields (and the album art if `cover` is given) to the file.
 pub fn write(
     path: &Path,
     fields: &[(Field, String)],
@@ -326,7 +326,7 @@ pub fn write(
     opts: WriteOpts,
 ) -> Result<(), String> {
     modify(path, opts, |tag| {
-        // ID3v1 ne connaît pas les pochettes.
+        // ID3v1 doesn't know album art.
         let cover = if tag.tag_type() == TagType::Id3v1 {
             None
         } else {
@@ -336,7 +336,7 @@ pub fn write(
     })
 }
 
-/// Volume mesuré d'un morceau et de son album (ReplayGain 2.0) : gains en dB, crêtes de 0 à 1.
+/// Measured loudness of a track and of its album (ReplayGain 2.0): gains in dB, peaks from 0 to 1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ReplayGain {
     pub track_gain: f32,
@@ -352,7 +352,7 @@ const REPLAYGAIN_KEYS: [ItemKey; 4] = [
     ItemKey::ReplayGainAlbumPeak,
 ];
 
-/// Inscrit les valeurs ReplayGain dans les tags (le son du fichier n'est pas touché).
+/// Writes the ReplayGain values to the tags (the file's audio is not touched).
 pub fn write_replaygain(path: &Path, rg: &ReplayGain, opts: WriteOpts) -> Result<(), String> {
     let values = [
         format!("{:.2} dB", rg.track_gain),
@@ -361,14 +361,14 @@ pub fn write_replaygain(path: &Path, rg: &ReplayGain, opts: WriteOpts) -> Result
         format!("{:.6}", rg.album_peak),
     ];
     modify(path, opts, |tag| {
-        // Les tags qui ne connaissent pas ReplayGain (ID3v1, RIFF) refusent simplement la valeur.
+        // Tags that don't know ReplayGain (ID3v1, RIFF) simply refuse the value.
         for (key, value) in REPLAYGAIN_KEYS.iter().zip(&values) {
             tag.insert_text(key.clone(), value.clone());
         }
     })
 }
 
-/// Valeurs ReplayGain déjà inscrites dans le fichier ; `None` s'il en manque une.
+/// ReplayGain values already written in the file; `None` if one is missing.
 pub fn read_replaygain(path: &Path) -> Option<ReplayGain> {
     let tagged = Probe::open(path).and_then(|p| p.read()).ok()?;
     let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
@@ -384,12 +384,12 @@ pub fn read_replaygain(path: &Path) -> Option<ReplayGain> {
     })
 }
 
-/// Ouvre le fichier, laisse `change` modifier chacun de ses tags, puis le réécrit.
+/// Opens the file, lets `change` modify each of its tags, then writes it back.
 fn modify(path: &Path, opts: WriteOpts, change: impl Fn(&mut Tag)) -> Result<(), String> {
     let err = |e: &dyn std::fmt::Display| e.to_string();
     let mut tagged = Probe::open(path).and_then(|p| p.read()).map_err(|e| err(&e))?;
 
-    // Le tag principal est créé s'il manque ; les autres tags présents reçoivent aussi les changements.
+    // The main tag is created if missing; the other tags present also receive the changes.
     let primary = tagged.primary_tag_type();
     if tagged.tag(primary).is_none() {
         tagged.insert_tag(Tag::new(primary));
@@ -406,8 +406,8 @@ fn modify(path: &Path, opts: WriteOpts, change: impl Fn(&mut Tag)) -> Result<(),
     let options = options.use_id3v23(opts.id3v23);
     save_safely(path, opts, |target| {
         let mut result = tagged.save_to_path(target, options).map_err(|e| err(&e));
-        // Filet de sécurité : lofty écrit parfois en ID3v2.3 une trame qu'il ne sait plus relire
-        // (texte UTF-16 vide). Le fichier est alors réécrit en ID3v2.4, toujours lisible.
+        // Safety net: lofty sometimes writes an ID3v2.3 frame it can no longer read back (empty UTF-16
+        // text). The file is then rewritten as ID3v2.4, which is always readable.
         if opts.id3v23 && result.is_ok() && Probe::open(target).and_then(|p| p.read()).is_err() {
             let mut v24 = WriteOptions::default();
             result = tagged
@@ -424,7 +424,7 @@ fn is_mp3(path: &Path) -> bool {
         .is_some_and(|e| e.eq_ignore_ascii_case("mp3"))
 }
 
-/// Réécrit un MP3 (voir [`save_safely`]).
+/// Rewrites an MP3 (see [`save_safely`]).
 fn save_mp3(path: &Path, mp3: &lofty::mpeg::MpegFile, opts: WriteOpts) -> Result<(), String> {
     let err = |e: &dyn std::fmt::Display| e.to_string();
     save_safely(path, opts, |target| {
@@ -432,7 +432,7 @@ fn save_mp3(path: &Path, mp3: &lofty::mpeg::MpegFile, opts: WriteOpts) -> Result
         let mut result = mp3
             .save_to_path(target, options.use_id3v23(opts.id3v23))
             .map_err(|e| err(&e));
-        // Même filet de sécurité qu'en général : ID3v2.4 si l'ID3v2.3 ne se relit pas.
+        // Same safety net as in general: ID3v2.4 if the ID3v2.3 cannot be read back.
         if opts.id3v23 && result.is_ok() && Probe::open(target).and_then(|p| p.read()).is_err() {
             let mut v24 = WriteOptions::default();
             result = mp3
@@ -443,8 +443,8 @@ fn save_mp3(path: &Path, mp3: &lofty::mpeg::MpegFile, opts: WriteOpts) -> Result
     })
 }
 
-/// Écrit le fichier par `save` : dans une copie qui remplace l'original si `via_copy`, en
-/// gardant sa date de modification si `keep_mtime`.
+/// Writes the file through `save`: into a copy that replaces the original if `via_copy`,
+/// keeping its modification date if `keep_mtime`.
 fn save_safely(
     path: &Path,
     opts: WriteOpts,
@@ -479,17 +479,17 @@ fn save_safely(
     result
 }
 
-// ---------- Notes (étoiles) ----------
+// ---------- Ratings (stars) ----------
 //
-// Les notes sont écrites dans les fichiers, comme le font les autres lecteurs : elles suivent
-// le morceau d'un logiciel à l'autre et survivent à une réinstallation.
-// - MP3 (ID3v2) : trame POPM, sur l'échelle de Windows et de MusicBee (1, 64, 128, 196, 255) ;
-//   les trames POPM d'autres logiciels sont mises à jour, une est ajoutée s'il n'y en a pas.
-// - FLAC, Ogg, Opus, APE, MP4 : FMPS_RATING (0,2 à 1,0, spécification freedesktop « FMPS »,
-//   comme Strawberry, Clementine ou Amarok). Un RATING déjà présent (foobar2000, MusicBee) est
-//   mis à jour dans son échelle (1 à 5, ou 0 à 100) ; en MP4, l'atome « rate » (0 à 100) aussi.
+// Ratings are written to the files, as other players do: they follow the track from one
+// program to another and survive a reinstall.
+// - MP3 (ID3v2): POPM frame, on the Windows and MusicBee scale (1, 64, 128, 196, 255); POPM
+//   frames from other programs are updated, one is added if there is none.
+// - FLAC, Ogg, Opus, APE, MP4: FMPS_RATING (0.2 to 1.0, freedesktop "FMPS" specification, as
+//   in Strawberry, Clementine or Amarok). An existing RATING (foobar2000, MusicBee) is updated
+//   on its own scale (1 to 5, or 0 to 100); in MP4, the "rate" atom (0 to 100) too.
 
-/// Note d'une trame POPM (0 à 255) en étoiles.
+/// Rating of a POPM frame (0 to 255) in stars.
 fn popm_stars(byte: u8) -> Option<u8> {
     match byte {
         0 => None,
@@ -501,12 +501,12 @@ fn popm_stars(byte: u8) -> Option<u8> {
     }
 }
 
-/// Étoiles en note POPM (échelle de Windows Media Player, reprise par MusicBee).
+/// Stars as a POPM rating (Windows Media Player scale, also used by MusicBee).
 fn popm_byte(stars: u8) -> u8 {
     [0, 1, 64, 128, 196, 255][stars.min(5) as usize]
 }
 
-/// Texte d'une note (FMPS 0–1, ou RATING 1–5 / 0–100) en étoiles.
+/// Text of a rating (FMPS 0–1, or RATING 1–5 / 0–100) in stars.
 fn text_stars(text: &str, fmps: bool) -> Option<u8> {
     let v: f32 = text.trim().replace(',', ".").parse().ok()?;
     let stars = if fmps {
@@ -530,7 +530,7 @@ fn is_fmps(key: &ItemKey) -> bool {
     }
 }
 
-/// Note lue dans un tag (sauf POPM, que seul l'ID3v2 concret connaît).
+/// Rating read from a tag (except POPM, which only the concrete ID3v2 knows).
 pub fn tag_rating(tag: &Tag) -> Option<u8> {
     let fmps = tag
         .items()
@@ -543,7 +543,7 @@ pub fn tag_rating(tag: &Tag) -> Option<u8> {
     })
 }
 
-/// Note des trames POPM d'un tag ID3v2 (la première qui en a une).
+/// Rating of the POPM frames of an ID3v2 tag (the first one that has one).
 pub fn id3v2_rating(tag: &lofty::id3::v2::Id3v2Tag) -> Option<u8> {
     tag.into_iter().find_map(|f| match f {
         lofty::id3::v2::Frame::Popularimeter(p) => popm_stars(p.rating),
@@ -551,7 +551,7 @@ pub fn id3v2_rating(tag: &lofty::id3::v2::Id3v2Tag) -> Option<u8> {
     })
 }
 
-/// Note du fichier (`None` : aucune).
+/// Rating of the file (`None`: none).
 #[cfg(test)]
 pub fn read_rating(path: &Path) -> Option<u8> {
     if is_mp3(path) {
@@ -567,7 +567,7 @@ pub fn read_rating(path: &Path) -> Option<u8> {
     tagged.tags().iter().find_map(tag_rating)
 }
 
-/// Inscrit la note `stars` (1 à 5 ; 0 : la retire) dans le fichier.
+/// Writes rating `stars` (1 to 5; 0: removes it) to the file.
 pub fn write_rating(path: &Path, stars: u8, opts: WriteOpts) -> Result<(), String> {
     let stars = stars.min(5);
     if is_mp3(path) {
@@ -576,13 +576,13 @@ pub fn write_rating(path: &Path, stars: u8, opts: WriteOpts) -> Result<(), Strin
     modify(path, opts, |tag| set_text_rating(tag, stars))
 }
 
-/// Note des tags texte (Vorbis, APE, MP4).
+/// Rating of the text tags (Vorbis, APE, MP4).
 fn set_text_rating(tag: &mut Tag, stars: u8) {
     let tag_type = tag.tag_type();
     if !matches!(tag_type, TagType::VorbisComments | TagType::Ape | TagType::Mp4Ilst) {
         return;
     }
-    // RATING (ou « rate » en MP4) déjà là : mis à jour dans l'échelle qu'il utilise.
+    // RATING (or "rate" in MP4) already there: updated on the scale it uses.
     let old_scale_5 = tag
         .get_string(&ItemKey::Popularimeter)
         .and_then(|t| t.trim().replace(',', ".").parse::<f32>().ok())
@@ -633,7 +633,7 @@ fn write_mp3_rating(path: &Path, stars: u8, opts: WriteOpts) -> Result<(), Strin
     }
     for mut p in popm {
         p.rating = popm_byte(stars);
-        // Sans note ni compteur d'écoutes, la trame n'a plus de raison d'être.
+        // Without a rating or a play counter, the frame has no reason to exist any more.
         if p.rating > 0 || p.counter > 0 {
             tag.insert(Frame::Popularimeter(p));
         }
@@ -642,8 +642,8 @@ fn write_mp3_rating(path: &Path, stars: u8, opts: WriteOpts) -> Result<(), Strin
     save_mp3(path, &mp3, opts)
 }
 
-/// Fichiers audio d'une liste de chemins (les dossiers sont parcourus), triés. Le parcours
-/// s'arrête dès que `stop` passe à vrai (import annulé).
+/// Audio files from a list of paths (folders are walked), sorted. The walk stops as soon as
+/// `stop` becomes true (import cancelled).
 pub fn expand_until(paths: impl IntoIterator<Item = PathBuf>, stop: &AtomicBool) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for p in paths {
@@ -667,22 +667,22 @@ pub fn expand_until(paths: impl IntoIterator<Item = PathBuf>, stop: &AtomicBool)
     out
 }
 
-/// Titre déduit du nom de fichier : « 03 - Artiste - Titre.mp3 » → « Titre ».
+/// Title deduced from the file name: "03 - Artist - Title.mp3" → "Title".
 pub fn title_from_filename(path: &Path) -> String {
     let stem = path
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
     let stem = stem.replace('_', " ");
-    // Numéro de piste en tête (« 03 », « 03. », « 1-03 », « 03 - »).
+    // Leading track number ("03", "03.", "1-03", "03 -").
     let rest = stem.trim_start_matches(|c: char| c.is_ascii_digit());
-    // Un nom fait seulement de chiffres (« 1979 ») est un titre, pas un numéro.
+    // A name made only of digits ("1979") is a title, not a number.
     let rest = if rest.len() < stem.len() && !rest.is_empty() {
         rest.trim_start_matches(|c: char| c.is_ascii_digit() || matches!(c, '-' | '.' | ' ' | ')'))
     } else {
         &stem
     };
-    // « Artiste - Titre » : on garde la dernière partie.
+    // "Artist - Title": keep the last part.
     let title = rest.rsplit(" - ").next().unwrap_or(rest);
     let title = title.trim();
     if title.is_empty() {
@@ -696,8 +696,8 @@ pub fn title_from_filename(path: &Path) -> String {
 mod tests {
     use super::*;
 
-    /// Aller-retour sur de vrais fichiers : `STERMUSIC_TAG_SAMPLES=a.mp3:b.flac cargo test -- --ignored`
-    /// (les fichiers sont copiés, jamais modifiés).
+    /// Round trip on real files: `STERMUSIC_TAG_SAMPLES=a.mp3:b.flac cargo test -- --ignored`
+    /// (the files are copied, never modified).
     #[test]
     #[ignore]
     fn write_round_trip() {
@@ -747,13 +747,13 @@ mod tests {
                     dst.display()
                 );
                 assert_eq!(std::fs::metadata(&dst).unwrap().modified().unwrap(), before);
-                // La piste se lit encore jusqu'au bout, et sa durée n'a pas bougé.
+                // The track still plays to the end, and its duration hasn't changed.
                 let t0 = crate::library::read_track(src);
                 let t1 = crate::library::read_track(&dst);
                 assert!((t0.duration_ms as i64 - t1.duration_ms as i64).abs() < 50);
                 write(&dst, &[], Some(&None), opts).unwrap();
                 assert!(read(&dst).cover.is_none());
-                // ReplayGain : écrit, relu, et les autres tags n'ont pas bougé.
+                // ReplayGain: written, read back, and the other tags haven't changed.
                 let rg = ReplayGain {
                     track_gain: -7.25,
                     track_peak: 0.987654,
@@ -770,8 +770,8 @@ mod tests {
         }
     }
 
-    /// Notes écrites puis relues dans chaque format, et gardées quand l'éditeur de tags
-    /// réécrit le fichier (fichiers d'essai fabriqués par ffmpeg ; sauté sans lui).
+    /// Ratings written then read back in each format, and kept when the tag editor rewrites the
+    /// file (test files made by ffmpeg; skipped without it).
     #[test]
     fn ratings_round_trip() {
         if !crate::ffdecode::available() {
@@ -791,7 +791,7 @@ mod tests {
             assert_eq!(read_rating(&path), None, "{ext}");
             write_rating(&path, 4, opts).unwrap();
             assert_eq!(read_rating(&path), Some(4), "{ext}");
-            // Une autre trame inconnue de lofty (MP3) doit survivre, elle aussi.
+            // Another frame unknown to lofty (MP3) must survive too.
             if ext == "mp3" {
                 let mut f = std::fs::File::open(&path).unwrap();
                 let mut mp3 = lofty::mpeg::MpegFile::read_from(&mut f, lofty::config::ParseOptions::new()).unwrap();
@@ -803,7 +803,7 @@ mod tests {
                 mp3.set_id3v2(tag);
                 save_mp3(&path, &mp3, opts).unwrap();
             }
-            // L'éditeur de tags réécrit le fichier : la note reste.
+            // The tag editor rewrites the file: the rating stays.
             write(&path, &[(Field::Title, "Titre".into())], None, opts).unwrap();
             assert_eq!(read_rating(&path), Some(4), "{ext} après l'éditeur");
             assert_eq!(read(&path).values[Field::Title.index()], "Titre", "{ext}");

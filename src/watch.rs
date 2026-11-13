@@ -1,9 +1,9 @@
-//! Bibliothèque mise à jour toute seule : les dossiers de musique sont surveillés (inotify), et
-//! un fichier ajouté, modifié, renommé ou supprimé est pris en compte sans « Rescanner ».
+//! Library updated by itself: the music folders are watched (inotify), and a file that is
+//! added, modified, renamed or deleted is taken into account without "Rescan".
 //!
-//! Les changements sont regroupés : on attend que le disque se calme (une copie d'album produit
-//! des dizaines d'événements), puis seuls les fichiers touchés sont relus. Au-delà d'un certain
-//! nombre, un rescan complet (qui reprend le cache) est plus simple.
+//! Changes are batched: we wait for the disk to settle (copying an album produces dozens of
+//! events), then only the touched files are read again. Beyond a certain number, a full rescan
+//! (which reuses the cache) is simpler.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
-/// Silence à attendre avant de traiter les changements.
+/// Quiet time to wait before handling the changes.
 const QUIET: Duration = Duration::from_millis(1500);
 
 #[derive(Default)]
@@ -22,12 +22,12 @@ pub struct Watcher {
     rx: Option<Receiver<Vec<PathBuf>>>,
     pending: HashSet<PathBuf>,
     last: Option<Instant>,
-    /// Ce qui n'a pas pu être surveillé.
+    /// What could not be watched.
     pub error: Option<String>,
 }
 
-/// Fichiers temporaires et cachés : rien à voir avec la bibliothèque (écriture des tags via une
-/// copie « .nom.stermusic-tmp », fichiers partiels des navigateurs et de KIO…).
+/// Temporary and hidden files: nothing to do with the library (tags written through a
+/// ".name.stermusic-tmp" copy, partial files of browsers and KIO…).
 fn ignored(p: &Path) -> bool {
     p.file_name().map(|n| n.to_string_lossy()).is_some_and(|n| {
         n.starts_with('.') || n.ends_with(".part") || n.ends_with(".tmp") || n.ends_with('~')
@@ -35,7 +35,7 @@ fn ignored(p: &Path) -> bool {
 }
 
 impl Watcher {
-    /// Surveille ces dossiers (et remplace la surveillance précédente).
+    /// Watches these folders (and replaces the previous watch).
     pub fn start(dirs: &[PathBuf], ctx: &egui::Context) -> Self {
         let mut me = Self::default();
         if dirs.is_empty() {
@@ -45,7 +45,7 @@ impl Watcher {
         let ctx = ctx.clone();
         let handler = move |res: notify::Result<notify::Event>| {
             let Ok(event) = res else { return };
-            // Lectures et ouvertures : rien n'a changé.
+            // Reads and opens: nothing changed.
             if matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
                 return;
             }
@@ -63,7 +63,7 @@ impl Watcher {
         };
         for d in dirs {
             if let Err(e) = watcher.watch(d, RecursiveMode::Recursive) {
-                // Le plus souvent : trop de dossiers pour la limite d'inotify du système.
+                // Most often: too many folders for the system's inotify limit.
                 me.error = Some(match e.kind {
                     notify::ErrorKind::MaxFilesWatch => crate::i18n::tr(
                         "trop de dossiers pour la limite du système (fs.inotify.max_user_watches)",
@@ -78,7 +78,7 @@ impl Watcher {
         me
     }
 
-    /// Les chemins changés, une fois le disque calmé depuis `QUIET`.
+    /// The changed paths, once the disk has been quiet for `QUIET`.
     pub fn poll(&mut self) -> Option<Vec<PathBuf>> {
         if let Some(rx) = &self.rx {
             let mut got = false;
@@ -98,33 +98,33 @@ impl Watcher {
         Some(self.pending.drain().collect())
     }
 
-    /// Des changements attendent que le disque se calme.
+    /// Changes are waiting for the disk to settle.
     pub fn waiting(&self) -> bool {
         !self.pending.is_empty()
     }
 }
 
-/// Ce qu'il faut faire des chemins changés.
+/// What to do with the changed paths.
 pub enum Plan {
-    /// Trop de changements : rescan complet.
+    /// Too many changes: full rescan.
     Rescan,
-    /// Fichiers à (re)lire et chemins disparus (fichiers ou dossiers entiers).
+    /// Files to (re)read and paths that disappeared (files or whole folders).
     Update { read: Vec<PathBuf>, gone: Vec<PathBuf> },
 }
 
-/// Trie les chemins changés (à appeler hors du fil de l'interface : il parcourt les dossiers
-/// nouveaux).
+/// Sorts the changed paths (to be called outside the interface thread: it walks the new
+/// folders).
 pub fn plan(paths: Vec<PathBuf>) -> Plan {
     const MAX: usize = 400;
     let mut read = Vec::new();
     let mut gone = Vec::new();
     for p in paths {
         if p.is_dir() {
-            // Dossier copié ou déplacé dans la bibliothèque : ses morceaux.
+            // Folder copied or moved into the library: its tracks.
             let files = crate::tags::expand_until([p], &std::sync::atomic::AtomicBool::new(false));
             read.extend(files);
         } else if p.exists() {
-            // Une feuille CUE (ou un fichier qu'elle découpe) : tout le dossier est à relire.
+            // A CUE sheet (or a file it splits): the whole folder must be read again.
             let near_cue = crate::library::is_cue_file(&p)
                 || p.parent().and_then(|d| std::fs::read_dir(d).ok()).is_some_and(|mut d| {
                     d.any(|e| e.is_ok_and(|e| crate::library::is_cue_file(&e.path())))
@@ -179,8 +179,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Vraie surveillance (inotify) d'un dossier temporaire : un fichier copié est signalé une
-    /// fois le disque calmé.
+    /// Real watch (inotify) of a temporary folder: a copied file is reported once the disk has
+    /// settled.
     #[test]
     fn watches() {
         let dir = std::env::temp_dir().join(format!("stermusic-inotify-{}", std::process::id()));

@@ -1,47 +1,47 @@
 [package]
 name = "stermusic"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "SterMusic — un lecteur de musique pour Linux"
 license = "GPL-3.0-or-later"
 
 [dependencies]
-# Interface graphique (même version que SterCode) ; icônes SVG
+# GUI (same version as SterCode); SVG icons
 eframe = { version = "0.31", features = ["persistence"] }
 egui_extras = { version = "0.31", default-features = false, features = ["svg"] }
-# Lecture audio (décodage via Symphonia : MP3, FLAC, OGG/Vorbis, WAV, AAC/M4A)
+# Audio playback (decoding through Symphonia: MP3, FLAC, OGG/Vorbis, WAV, AAC/M4A)
 rodio = { version = "0.21", default-features = false, features = ["playback", "symphonia-all"] }
-# Lecture des tags et des pochettes intégrées
+# Reading tags and embedded album art
 lofty = "0.22"
-# Pochettes et fond Mica
+# Album art and Mica background
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "gif"] }
-# Contrôle depuis le bureau (MPRIS) : touches multimédia, widget lecteur de KDE / GNOME
+# Desktop control (MPRIS): media keys, KDE / GNOME media player widget
 souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
-# Position de la fenêtre envoyée par un script KWin (Mica qui suit la fenêtre), sur D-Bus
+# Window position sent by a KWin script (Mica following the window), over D-Bus
 zbus = "5"
-# Boîtes de dialogue (portail XDG, sans GTK)
+# Dialogs (XDG portal, without GTK)
 rfd = "0.15"
 walkdir = "2"
 fastrand = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Import des tags depuis MusicBrainz et des pochettes depuis le Cover Art Archive (HTTPS)
+# Tag import from MusicBrainz and album art from the Cover Art Archive (HTTPS)
 ureq = { version = "2", default-features = false, features = ["tls"] }
-# Rechercher-remplacer et motifs de noms de fichiers de l'éditeur de tags
+# Search and replace and file name patterns of the tag editor
 regex = "1"
-# Glisser-déposer de fichiers sous Wayland (winit 0.30 ne le gère que sous X11) : voir `[patch]`.
+# File drag and drop under Wayland (winit 0.30 only handles it under X11): see `[patch]`.
 smithay-clipboard = "0.7"
 notify = { version = "8", default-features = false }
-# Diffusion vers un Chromecast (connexion TLS au protocole Cast) ; déjà utilisé par ureq.
+# Casting to a Chromecast (TLS connection for the Cast protocol); already used by ureq.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
-# Icône dans la zone de notification (StatusNotifierItem de KDE, sur D-Bus).
+# System tray icon (KDE StatusNotifierItem, over D-Bus).
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
 
-# Presse-papiers Wayland d'egui, modifié pour accepter les fichiers glissés sur la fenêtre (voir
+# egui's Wayland clipboard, modified to accept files dragged onto the window (see
 # vendor/smithay-clipboard/README.md).
 [patch.crates-io]
 smithay-clipboard = { path = "vendor/smithay-clipboard" }
-# Lecture des tags, corrigée pour les pochettes des tags ID3v2.4 « désynchronisés » (voir
+# Tag reading, fixed for the album art of "unsynchronised" ID3v2.4 tags (see
 # vendor/lofty/STERMUSIC.md).
 lofty = { path = "vendor/lofty" }
 
@@ -50,6 +50,6 @@ opt-level = 3
 lto = "thin"
 strip = true
 
-# Le décodage audio et des images est lent sans optimisation, même en debug.
+# Audio and image decoding is slow without optimization, even in debug builds.
 [profile.dev.package."*"]
 opt-level = 2

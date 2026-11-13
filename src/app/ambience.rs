@@ -1,11 +1,10 @@
-//! Ambiance : ce qui change en douceur d'un morceau à l'autre.
+//! Ambience: what changes smoothly from one track to the next.
 //!
-//! - les couleurs du visualiseur passent de celles d'une pochette à celles de la suivante ;
-//! - le thème adaptatif (option) fait de même avec les couleurs de toute l'interface ; sans
-//!   pochette, on revient au thème choisi ;
-//! - les pochettes (« En cours de lecture », son fond flouté) se fondent l'une dans l'autre :
-//!   l'ancienne reste à l'écran le temps que la nouvelle soit chargée, sans passer par une case
-//!   vide.
+//! - the visualizer colors move from those of one album art to those of the next;
+//! - the adaptive theme (option) does the same with the colors of the whole interface; without
+//!   album art, it goes back to the chosen theme;
+//! - album art ("Now Playing", its blurred background) cross-fades: the old one stays on screen
+//!   until the new one is loaded, without going through an empty frame.
 
 use std::path::{Path, PathBuf};
 
@@ -14,11 +13,11 @@ use eframe::egui::{self, Color32, TextureHandle};
 use super::SterMusic;
 use crate::theme;
 
-/// Durée d'un changement de couleurs.
+/// Duration of a color change.
 const COLOR_FADE: f64 = 0.9;
-/// Durée d'un fondu de pochette.
+/// Duration of an album art cross-fade.
 pub const COVER_FADE: f64 = 0.45;
-/// Attente maximale de la nouvelle pochette avant de changer quand même.
+/// Maximum wait for the new album art before switching anyway.
 const COVER_WAIT: f64 = 0.35;
 
 fn ease(t: f32) -> f32 {
@@ -26,7 +25,7 @@ fn ease(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// `N` couleurs qui glissent vers une cible.
+/// `N` colors gliding towards a target.
 pub struct ColorFade<const N: usize> {
     from: [Color32; N],
     to: [Color32; N],
@@ -46,7 +45,7 @@ impl<const N: usize> Default for ColorFade<N> {
 }
 
 impl<const N: usize> ColorFade<N> {
-    /// Nouvelle cible : on part de ce qui est à l'écran (la première fois, on y est d'emblée).
+    /// New target: start from what is on screen (the first time, jump straight there).
     pub fn set_target(&mut self, now: f64, target: [Color32; N]) {
         if !self.started {
             self.started = true;
@@ -70,7 +69,7 @@ impl<const N: usize> ColorFade<N> {
     }
 }
 
-/// Une image (pochette, fond flouté) qui se fond dans la suivante.
+/// An image (album art, blurred background) that cross-fades into the next one.
 #[derive(Default)]
 pub struct TexFade {
     cur: Option<(PathBuf, Option<TextureHandle>)>,
@@ -80,12 +79,12 @@ pub struct TexFade {
 }
 
 impl TexFade {
-    /// `wanted` : le morceau à montrer ; `loaded` : son image si elle est chargée (`Some(None)` :
-    /// chargée, il n'en a pas). Renvoie vrai à l'instant où l'on passe à ce morceau.
+    /// `wanted`: the track to show; `loaded`: its image if it is loaded (`Some(None)`: loaded, it
+    /// has none). Returns true at the moment we switch to this track.
     pub fn update(&mut self, now: f64, wanted: &Path, loaded: Option<Option<TextureHandle>>) -> bool {
         match &mut self.cur {
             Some((path, tex)) if path == wanted => {
-                // Image arrivée après l'attente : elle prend sa place.
+                // Image arrived after the wait: it takes its place.
                 if tex.is_none() {
                     if let Some(Some(t)) = loaded {
                         *tex = Some(t);
@@ -113,7 +112,7 @@ impl TexFade {
         }
     }
 
-    /// Avancement du fondu (0 → 1).
+    /// Progress of the cross-fade (0 → 1).
     pub fn t(&self, now: f64) -> f32 {
         ease(((now - self.since) / COVER_FADE) as f32)
     }
@@ -122,12 +121,12 @@ impl TexFade {
         now - self.since < COVER_FADE || self.waiting.is_some()
     }
 
-    /// L'image à l'écran.
+    /// The image on screen.
     pub fn current(&self) -> Option<&TextureHandle> {
         self.cur.as_ref().and_then(|(_, t)| t.as_ref())
     }
 
-    /// L'image qui s'efface, tant que le fondu dure (`Some(None)` : un morceau sans image).
+    /// The image fading out, while the cross-fade lasts (`Some(None)`: a track without an image).
     pub fn previous(&self, now: f64) -> Option<Option<&TextureHandle>> {
         if now - self.since >= COVER_FADE {
             return None;
@@ -136,13 +135,13 @@ impl TexFade {
     }
 }
 
-/// Couleurs d'un thème tirées de la palette d'une pochette : fond, accent, second accent, accent
-/// clair. Le fond garde la profondeur du thème choisi, teinté par la pochette ; les accents sont
-/// ramenés à une clarté où le texte blanc des boutons reste lisible.
+/// Theme colors taken from the palette of an album art: background, accent, second accent,
+/// light accent. The background keeps the depth of the chosen theme, tinted by the album art;
+/// the accents are brought to a lightness where the white text of the buttons stays readable.
 pub fn theme_from_palette(palette: [Color32; 3], base_bg: Color32) -> [Color32; 4] {
     let accent = tone(palette[0], 0.50);
     let mut accent_2 = tone(palette[1], 0.46);
-    // Deux accents presque identiques : le dégradé de marque serait plat.
+    // Two almost identical accents: the brand gradient would be flat.
     if distance(accent, accent_2) < 40.0 {
         accent_2 = tone(theme::mix(palette[1], palette[2], 0.6), 0.40);
     }
@@ -152,14 +151,14 @@ pub fn theme_from_palette(palette: [Color32; 3], base_bg: Color32) -> [Color32; 
     [bg, accent, accent_2, accent_light]
 }
 
-/// Ramène une couleur à la clarté `target` (0 → 1, moyenne pondérée des canaux) en gardant sa teinte.
+/// Brings a color to lightness `target` (0 → 1, weighted average of the channels) while keeping its hue.
 fn tone(c: Color32, target: f32) -> Color32 {
     let (r, g, b) = (c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0);
     let luma = (0.30 * r + 0.59 * g + 0.11 * b).max(1e-3);
     let k = target / luma;
     let scale = |x: f32| x * k;
     let (mut r, mut g, mut b) = (scale(r), scale(g), scale(b));
-    // Ce qui dépasse 1 est rendu en éclaircissant vers le blanc, sans changer de teinte.
+    // What goes beyond 1 is rendered by lightening towards white, without changing the hue.
     let max = r.max(g).max(b);
     if max > 1.0 {
         let l = 0.30 * r + 0.59 * g + 0.11 * b;
@@ -180,24 +179,24 @@ fn distance(a: Color32, b: Color32) -> f32 {
     (d(a.r(), b.r()) + d(a.g(), b.g()) + d(a.b(), b.b())).sqrt()
 }
 
-/// État de l'ambiance (voir le module).
+/// State of the ambience (see the module).
 #[derive(Default)]
 pub struct Ambience {
-    /// Couleurs du visualiseur.
+    /// Visualizer colors.
     palette: ColorFade<3>,
-    /// Couleurs du thème (adaptatif ou non).
+    /// Theme colors (adaptive or not).
     theme: ColorFade<4>,
-    /// Fond flouté de « En cours de lecture ».
+    /// Blurred background of "Now Playing".
     pub backdrop: TexFade,
-    /// Pochette de « En cours de lecture ».
+    /// Album art of "Now Playing".
     pub cover: TexFade,
-    /// Sens du dernier changement de morceau (1 : suivant, −1 : précédent) et place dans la file.
+    /// Direction of the last track change (1: next, −1: previous) and position in the queue.
     pub dir: f32,
     queue_pos: Option<usize>,
 }
 
 impl SterMusic {
-    /// À chaque image : fait glisser les couleurs vers celles du morceau en cours.
+    /// Every frame: glides the colors towards those of the current track.
     pub(super) fn update_ambience(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
         if self.queue_pos != self.ambience.queue_pos {
@@ -208,8 +207,8 @@ impl SterMusic {
         let base = theme::current();
         let base_colors = [base.bg, base.accent, base.accent_2, base.accent_light];
         let base_palette = [base.accent, base.accent_2, base.accent_light];
-        // Pochette du morceau en cours : `None` tant qu'elle charge (on garde alors les couleurs
-        // d'avant), `Some(None)` s'il n'en a pas (retour au thème choisi).
+        // Album art of the current track: `None` while it loads (the previous colors are kept),
+        // `Some(None)` if it has none (back to the chosen theme).
         let cover: Option<Option<[Color32; 3]>> = match self.current() {
             None => Some(None),
             Some(i) => {
@@ -232,8 +231,8 @@ impl SterMusic {
         }
     }
 
-    /// Couleurs du visualiseur : celles de la pochette en cours (en fondu d'un morceau à
-    /// l'autre), sinon celles du thème.
+    /// Visualizer colors: those of the current album art (cross-faded from one track to the
+    /// next), otherwise those of the theme.
     pub(super) fn viz_palette(&self) -> [Color32; 3] {
         let now = self.egui_ctx.input(|i| i.time);
         self.ambience.palette.value(now)
@@ -249,7 +248,7 @@ mod tests {
         let (red, blue) = (Color32::from_rgb(200, 0, 0), Color32::from_rgb(0, 0, 200));
         let mut f = ColorFade::<1>::default();
         f.set_target(10.0, [red]);
-        assert_eq!(f.value(10.0), [red]); // d'emblée, la première fois
+        assert_eq!(f.value(10.0), [red]); // straight away, the first time
         f.set_target(20.0, [blue]);
         assert_eq!(f.value(20.0), [red]);
         let mid = f.value(20.0 + COLOR_FADE / 2.0)[0];
@@ -258,8 +257,8 @@ mod tests {
         assert!(f.fading(20.5) && !f.fading(21.0));
     }
 
-    /// Le thème tiré d'une pochette garde des boutons lisibles (texte blanc sur l'accent) et un
-    /// fond sombre, quelle que soit la couleur de départ.
+    /// The theme taken from an album art keeps readable buttons (white text on the accent) and a
+    /// dark background, whatever the starting color.
     #[test]
     fn adaptive_theme_stays_readable() {
         let luma = |c: Color32| (0.30 * c.r() as f32 + 0.59 * c.g() as f32 + 0.11 * c.b() as f32) / 255.0;
@@ -282,14 +281,14 @@ mod tests {
         let (a, b) = (Path::new("/a.mp3"), Path::new("/b.mp3"));
         let mut f = TexFade::default();
         assert!(f.update(0.0, a, Some(None)));
-        assert_eq!(f.t(0.0), 1.0); // pas de fondu au premier affichage
-        // La nouvelle pochette charge : on reste sur l'ancienne, puis on bascule quand même.
+        assert_eq!(f.t(0.0), 1.0); // no cross-fade on the first display
+        // The new album art is loading: stay on the old one, then switch anyway.
         assert!(!f.update(5.0, b, None));
         assert!(!f.update(5.2, b, None));
         assert!(f.update(5.4, b, None));
         assert!(f.t(5.4) < 0.01 && f.previous(5.5).is_some());
         assert!(f.previous(6.0).is_none());
-        // Chargée tout de suite : bascule immédiate.
+        // Loaded right away: immediate switch.
         assert!(f.update(9.0, a, Some(None)));
     }
 }

@@ -81,30 +81,48 @@ vraie intégration au bureau Linux.
 
 ## Installation
 
-### Installateur tout prêt (à partager)
+### Paquets tout prêts
 
-```bash
-./packaging/make-installer.sh
-```
+À télécharger depuis la page [Releases](../../releases) :
 
-fabrique dans `dist/` :
-
-- `stermusic_<version>_amd64.deb` pour Kubuntu, Ubuntu, Debian, Mint… : double-clic (Discover),
-  ou `sudo apt install ./stermusic_<version>_amd64.deb` ;
-- `stermusic-<version>-x86_64.tar.gz` pour les autres distributions : décompresser, puis
+- **Arch Linux, EndeavourOS, Manjaro, CachyOS…** : `stermusic-<version>-1-x86_64.pkg.tar.zst`,
+  puis `sudo pacman -U ./stermusic-<version>-1-x86_64.pkg.tar.zst` (pacman liste les dépendances
+  facultatives : ffmpeg, noto-fonts-cjk, breeze-icons…) ;
+- **Kubuntu, Ubuntu, Debian, Linux Mint…** : `stermusic_<version>_amd64.deb`, puis double-clic
+  (Discover / Logiciels), ou `sudo apt install ./stermusic_<version>_amd64.deb` ;
+- **autres distributions** : `stermusic-<version>-x86_64.tar.gz`, à décompresser, puis
   `./install.sh` (sans sudo ; `./uninstall.sh` pour retirer).
 
-Il faut glibc 2.35 ou plus (Ubuntu 22.04, Debian 12, Mint 21, Fedora 36 et suivantes) ; ffmpeg
-est conseillé. Le champ « Maintainer » du paquet se règle par `MAINTAINER="Nom <adresse>"`, l'adresse du dépôt par `HOMEPAGE="https://…"`.
+Il faut un processeur x86_64, glibc 2.35 ou plus (Arch Linux, Ubuntu 22.04, Debian 12, Mint 21,
+Fedora 36 et suivantes) et ALSA. **ffmpeg** est conseillé (Opus, WMA, APE, WavPack, DSD,
+conversion, extraction de CD).
 
-### Compiler soi-même
+### Arch Linux : fabriquer le paquet soi-même
+
+Un `PKGBUILD` est fourni dans [`packaging/arch/`](packaging/arch/PKGBUILD). Pour fabriquer et
+installer le paquet à partir du code du dépôt (modifications non validées comprises) :
+
+```bash
+sudo pacman -S --needed base-devel git
+```
+
+```bash
+./packaging/make-arch-package.sh -si
+```
+
+`-s` installe ce qu'il faut pour compiler (Rust, Python), `-i` installe le paquet. Une copie est
+rangée dans `dist/`.
+
+### Compiler soi-même (toutes distributions)
 
 #### 1. Prérequis (une seule fois)
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
-sudo apt install libasound2-dev                                 # en-têtes ALSA
-```
+| Distribution          | Commande                                                           |
+|-----------------------|--------------------------------------------------------------------|
+| Arch Linux et dérivées | `sudo pacman -S --needed rust alsa-lib pkgconf`                   |
+| Debian, Ubuntu, Mint  | `sudo apt install libasound2-dev pkg-config`, puis [rustup](https://rustup.rs) |
+| Fedora                | `sudo dnf install cargo alsa-lib-devel`                            |
+| openSUSE              | `sudo zypper install cargo alsa-devel`                             |
 
 #### 2. Compiler et installer
 
@@ -119,6 +137,19 @@ Pour essayer sans installer :
 ```bash
 cargo run --release -- ~/Musique
 ```
+
+### Publier une version
+
+```bash
+./packaging/make-installer.sh
+```
+
+fabrique tous les paquets de la version en cours dans `dist/` : le paquet pacman (là où
+`makepkg` existe), le `.deb` (là où `dpkg-deb` existe ; sous Arch, `sudo pacman -S dpkg`) et
+l'archive portable. Le champ « Maintainer » du `.deb` se règle par `MAINTAINER="Nom <adresse>"`,
+l'adresse du dépôt par `HOMEPAGE="https://…"`. Une fois le tag `v<version>` poussé sur GitHub,
+`./packaging/make-aur.sh` prépare les fichiers de l'AUR (`PKGBUILD` avec sa somme de contrôle,
+`.SRCINFO`).
 
 ## Raccourcis clavier
 

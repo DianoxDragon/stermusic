@@ -1,9 +1,9 @@
-//! Pour les tests : tous les textes du code passés à `tr`, `trf!`, `n_` ou `plural`, lus
-//! directement dans les fichiers sources (voir le test `everything_translated`).
+//! For the tests: every text of the code passed to `tr`, `trf!`, `n_` or `plural`, read
+//! straight from the source files (see the `everything_translated` test).
 
 use std::path::Path;
 
-/// Contenu d'un littéral Rust ("…" sans les guillemets), échappements interprétés.
+/// Content of a Rust literal ("…" without the quotes), with escapes interpreted.
 fn unescape(raw: &str) -> String {
     let mut out = String::new();
     let mut chars = raw.chars().peekable();
@@ -23,7 +23,7 @@ fn unescape(raw: &str) -> String {
                     out.push(c);
                 }
             }
-            // Fin de ligne échappée : la suite reprend au premier caractère non blanc.
+            // Escaped end of line: the text resumes at the first non-blank character.
             Some('\n') => {
                 while chars.peek().is_some_and(|c| c.is_whitespace()) {
                     chars.next();
@@ -36,7 +36,7 @@ fn unescape(raw: &str) -> String {
     out
 }
 
-/// Le littéral qui commence à `at` (sur le guillemet), et l'indice qui le suit.
+/// The literal starting at `at` (on the quote), and the index that follows it.
 fn literal(src: &str, at: usize) -> Option<(String, usize)> {
     let bytes = src.as_bytes();
     if bytes.get(at) != Some(&b'"') {
@@ -57,7 +57,7 @@ fn skip_space(src: &str, mut i: usize) -> usize {
     i
 }
 
-/// Indice de la virgule qui termine l'argument commençant à `i` (profondeur zéro).
+/// Index of the comma ending the argument that starts at `i` (depth zero).
 fn end_of_arg(src: &str, mut i: usize) -> usize {
     let bytes = src.as_bytes();
     let mut depth = 0i32;
@@ -83,21 +83,21 @@ fn end_of_arg(src: &str, mut i: usize) -> usize {
 }
 
 fn scan(src: &str, keys: &mut Vec<String>) {
-    // Les tests eux-mêmes ne comptent pas.
+    // The tests themselves don't count.
     let src = &src[..src.find("#[cfg(test)]").unwrap_or(src.len())];
     for call in ["tr(", "trf!(", "n_(", "plural("] {
         let mut from = 0;
         while let Some(found) = src[from..].find(call) {
             let at = from + found;
             from = at + call.len();
-            // « tr( » au milieu d'un autre nom (« attr( »…) ou une définition de fonction.
+            // "tr(" in the middle of another name ("attr("…) or a function definition.
             let before = src[..at].chars().next_back();
             if before.is_some_and(|c| c.is_alphanumeric() || c == '_') || src[..at].ends_with("fn ") {
                 continue;
             }
             let mut i = skip_space(src, from);
             if call == "plural(" {
-                // Le premier argument est le nombre ; viennent ensuite le singulier et le pluriel.
+                // The first argument is the number; then come the singular and the plural.
                 i = skip_space(src, end_of_arg(src, i) + 1);
                 for _ in 0..2 {
                     match literal(src, i) {
@@ -138,7 +138,7 @@ pub fn keys() -> Vec<String> {
     keys
 }
 
-/// Liste les textes sans traduction dans un fichier JSON :
+/// Lists the untranslated texts in a JSON file:
 /// `STERMUSIC_KEYS=keys.json cargo test dump_keys -- --ignored`.
 #[test]
 #[ignore]

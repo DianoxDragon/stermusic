@@ -1,7 +1,7 @@
-//! Doublons : les morceaux de la bibliothèque qui ont le même titre, le même artiste et la même
-//! durée (à deux secondes près), donc très probablement le même enregistrement en plusieurs
-//! exemplaires. On compare les exemplaires (format, taille, débit), on peut les écouter, puis
-//! envoyer ceux qu'on coche à la corbeille : rien n'est supprimé définitivement.
+//! Duplicates: library tracks with the same title, the same artist and the same duration
+//! (within two seconds), so very likely the same recording in several copies. The copies are
+//! compared (format, size, bitrate), can be listened to, then the checked ones are sent to the
+//! trash: nothing is deleted for good.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use crate::library::{self, fmt_duration, fold, plural, Track};
 use crate::trf;
 use crate::{theme, widgets};
 
-/// Écart de durée toléré entre deux exemplaires du même enregistrement.
+/// Duration difference tolerated between two copies of the same recording.
 const TOLERANCE_MS: u64 = 2000;
 
 struct Dup {
@@ -27,7 +27,7 @@ struct Dup {
     album: String,
     duration_ms: u64,
     size: u64,
-    /// À envoyer à la corbeille.
+    /// To be sent to the trash.
     marked: bool,
 }
 
@@ -43,12 +43,12 @@ impl Dup {
         matches!(self.extension().as_str(), "FLAC" | "WAV" | "AIFF" | "AIF")
     }
 
-    /// Débit moyen, en kbit/s.
+    /// Average bitrate, in kbit/s.
     fn bitrate(&self) -> u64 {
         (self.size * 8).checked_div(self.duration_ms).unwrap_or(0)
     }
 
-    /// Qualité, pour désigner le meilleur exemplaire : sans perte d'abord, puis le débit.
+    /// Quality, to pick the best copy: lossless first, then the bitrate.
     fn quality(&self) -> (bool, u64, u64) {
         (self.lossless(), self.bitrate(), self.size)
     }
@@ -84,7 +84,7 @@ struct Trashing {
 pub struct DupTool {
     scan: Option<Receiver<Vec<Group>>>,
     groups: Vec<Group>,
-    /// Le bouton de mise à la corbeille attend sa confirmation.
+    /// The move-to-trash button is waiting for confirmation.
     confirm: bool,
     trashing: Option<Trashing>,
 }
@@ -102,12 +102,12 @@ impl DupTool {
     }
 }
 
-/// Clé de comparaison : minuscules, sans accents, lettres et chiffres seulement.
+/// Comparison key: lowercase, without accents, letters and digits only.
 fn key(text: &str) -> String {
     fold(text).chars().filter(|c| c.is_alphanumeric()).collect()
 }
 
-/// Groupes de morceaux (par leurs indices) qui ont même titre, même artiste et même durée.
+/// Groups of tracks (by their indices) with the same title, the same artist and the same duration.
 fn find_groups(tracks: &[Track]) -> Vec<Vec<usize>> {
     let mut by_name: HashMap<(String, String), Vec<usize>> = HashMap::new();
     for (i, t) in tracks.iter().enumerate() {
@@ -118,7 +118,7 @@ fn find_groups(tracks: &[Track]) -> Vec<Vec<usize>> {
     }
     let mut groups = Vec::new();
     for mut same in by_name.into_values().filter(|v| v.len() > 1) {
-        // Triés par durée : deux voisins à moins de deux secondes d'écart vont ensemble.
+        // Sorted by duration: two neighbors less than two seconds apart go together.
         same.sort_by_key(|&i| tracks[i].duration_ms);
         let mut run = vec![same[0]];
         for pair in same.windows(2) {
@@ -141,7 +141,7 @@ fn find_groups(tracks: &[Track]) -> Vec<Vec<usize>> {
     groups
 }
 
-/// Envoie les fichiers à la corbeille du bureau ; renvoie ceux qui y sont, et les erreurs.
+/// Sends the files to the desktop trash; returns those that made it, and the errors.
 fn trash(paths: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<String>) {
     let (mut gone, mut errors) = (Vec::new(), Vec::new());
     for path in paths {
@@ -174,7 +174,7 @@ impl SterMusic {
         }
         tool.groups.clear();
         tool.confirm = false;
-        // Doublons à mettre à la corbeille : de vrais fichiers seulement.
+        // Duplicates to move to the trash: real files only.
         let tracks: Vec<_> = self.lib.tracks.iter().filter(|t| t.is_plain_file()).cloned().collect();
         let (tx, rx) = channel();
         let ctx = ctx.clone();
@@ -222,10 +222,10 @@ impl SterMusic {
         for g in &mut tool.groups {
             g.copies.retain(|c| !gone.contains(&c.path));
         }
-        // Un exemplaire resté seul n'est plus un doublon.
+        // A copy left on its own is no longer a duplicate.
         tool.groups.retain(|g| g.copies.len() > 1);
         if !gone.is_empty() {
-            // La bibliothèque, l'éditeur de tags et le cache oublient les fichiers partis.
+            // The library, the tag editor and the cache forget the files that are gone.
             let tracks: Vec<Track> = self
                 .lib
                 .tracks
@@ -409,14 +409,14 @@ impl SterMusic {
     }
 }
 
-/// Une ligne de la liste : le titre d'un groupe, ou l'un de ses exemplaires.
+/// A row of the list: the title of a group, or one of its copies.
 #[derive(Clone, Copy)]
 enum Row {
     Head(usize),
     Copy(usize, usize),
 }
 
-/// Dossier d'un fichier, raccourci à ses deux derniers niveaux.
+/// Folder of a file, shortened to its last two levels.
 fn short_dir(path: &Path) -> String {
     let dir = path.parent().unwrap_or(path);
     let parts: Vec<String> = dir
@@ -431,7 +431,7 @@ fn short_dir(path: &Path) -> String {
     }
 }
 
-/// Liste des groupes ; renvoie l'exemplaire qu'on demande à écouter.
+/// List of the groups; returns the copy the user asked to listen to.
 fn group_list(ui: &mut egui::Ui, tool: &mut DupTool, width: f32, height: f32) -> Option<PathBuf> {
     const ROW: f32 = 44.0;
     let mut play = None;
@@ -556,7 +556,7 @@ fn group_list(ui: &mut egui::Ui, tool: &mut DupTool, width: f32, height: f32) ->
                                 theme::accent_light(),
                             );
                         }
-                        // Le chemin complet au survol de la ligne.
+                        // The full path when hovering the row.
                         let hover = Rect::from_min_max(pos2(x, r.top()), r.max);
                         ui.interact(hover, ui.id().with(("dup_row", i)), Sense::hover())
                             .on_hover_text(copy.path.display().to_string());
@@ -600,12 +600,12 @@ mod tests {
         let tracks = vec![
             track("/a/1.mp3", "Été indien", "Joe Dassin", 270),
             track("/b/1.flac", "ete indien!", "JOE DASSIN", 271),
-            // Même titre, autre durée : une autre version, pas un doublon.
+            // Same title, other duration: another version, not a duplicate.
             track("/c/live.mp3", "Été indien", "Joe Dassin", 330),
-            // Même titre, autre artiste.
+            // Same title, other artist.
             track("/d/1.mp3", "Été indien", "Reprise", 270),
             track("/e/1.mp3", "Seul", "Quelqu'un", 100),
-            // Trois exemplaires qui se suivent à moins de deux secondes.
+            // Three copies in a row less than two seconds apart.
             track("/f/1.mp3", "Trio", "X", 100),
             track("/f/2.mp3", "Trio", "X", 101),
             track("/f/3.mp3", "Trio", "X", 103),
@@ -632,7 +632,7 @@ mod tests {
                 copy("c.mp3", 3_000_000),
             ],
         };
-        // Le FLAC l'emporte même plus petit ; entre deux MP3, le plus gros débit.
+        // FLAC wins even when smaller; between two MP3s, the higher bitrate.
         assert_eq!(g.best(), 1);
         g.keep_best();
         assert_eq!(

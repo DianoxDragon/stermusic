@@ -1,11 +1,10 @@
-//! Visualiseur : analyse du son (spectre) et lumières qui suivent la musique, volontairement
-//! vagues — lumière diffuse, flou, couleurs de la pochette, dans l'esprit du Mica.
+//! Visualizer: audio analysis (spectrum) and lights following the music, deliberately vague —
+//! diffuse light, blur, album art colors, in the spirit of Mica.
 //!
-//! - « Aurore » (En cours de lecture) : des nappes de lumière peintes dans une petite image,
-//!   floutée puis agrandie (egui ne sait pas flouter ce qu'il dessine) ; elles flamboient sur les
-//!   coups de grosse caisse ;
-//! - halo doux derrière la pochette (la pochette elle-même ne bouge pas) ;
-//! - taches de lumière qui dérivent dans le bandeau de l'accueil.
+//! - "Aurora" (Now Playing): sheets of light painted in a small image, blurred then enlarged
+//!   (egui cannot blur what it draws); they flare up on kick drum hits;
+//! - soft halo behind the album art (the album art itself doesn't move);
+//! - blobs of light drifting in the home page banner.
 
 use eframe::egui::{self, pos2, Color32, Rect};
 
@@ -15,21 +14,21 @@ use crate::widgets;
 const FFT_SIZE: usize = 2048;
 pub const BANDS: usize = 40;
 
-/// Spectre lissé, mis à jour à chaque image quand le visualiseur est à l'écran.
+/// Smoothed spectrum, updated every frame while the visualizer is on screen.
 pub struct Spectrum {
     pub bands: [f32; BANDS],
     pub bass: f32,
     pub mid: f32,
     pub high: f32,
     pub energy: f32,
-    /// Moyennes lentes (halo, lumières de l'accueil) : elles suivent l'ambiance, pas chaque coup.
+    /// Slow averages (halo, home page lights): they follow the mood, not every hit.
     pub bass_slow: f32,
     pub energy_slow: f32,
-    /// Coup de grosse caisse : monte d'un coup sur une attaque des basses, retombe en ~0,3 s.
+    /// Kick drum hit: jumps up on a bass attack, falls back in ~0.3 s.
     pub kick: f32,
-    /// Forme d'onde récente, stabilisée (−1 → 1), pour l'Oscilloscope.
+    /// Recent waveform, stabilized (−1 → 1), for the Oscilloscope.
     pub wave: [f32; crate::shader::WAVE],
-    /// « Temps » des animations : avance plus vite quand la musique est intense.
+    /// Animation "time": moves faster when the music is intense.
     pub flow: f32,
     raw_bass_avg: f32,
     last_written: u64,
@@ -68,8 +67,8 @@ impl Default for Spectrum {
 }
 
 impl Spectrum {
-    /// Analyse les derniers échantillons joués. En pause, tout redescend doucement.
-    /// `speed` règle l'allure des animations (1 : normale).
+    /// Analyzes the last samples played. When paused, everything gently settles back down.
+    /// `speed` sets the pace of the animations (1: normal).
     pub fn update(&mut self, tap: &Tap, dt: f32, playing: bool, speed: f32) {
         let dt = dt.clamp(0.0, 0.1);
         let (rate, written) = tap.latest(FFT_SIZE, &mut self.samples);
@@ -100,19 +99,19 @@ impl Spectrum {
                 for i in i0.max(1)..i1.min(FFT_SIZE / 2) {
                     peak = peak.max((self.re[i] * self.re[i] + self.im[i] * self.im[i]).sqrt());
                 }
-                // Amplitude en dB, ramenée entre 0 et 1 ; les aigus, plus faibles, sont un peu relevés.
+                // Amplitude in dB, brought between 0 and 1; the weaker treble is raised a little.
                 let tilt = 1.0 + 0.6 * b as f32 / BANDS as f32;
                 let level = 20.0 * (peak * tilt / (FFT_SIZE as f32 / 4.0)).max(1e-6).log10();
                 *t = ((level + 58.0) / 48.0).clamp(0.0, 1.0);
             }
         }
-        // Coup de grosse caisse : les basses brutes dépassent nettement leur moyenne récente.
+        // Kick drum hit: the raw bass clearly exceeds its recent average.
         let raw_bass = target[..6].iter().sum::<f32>() / 6.0;
         let flux = (raw_bass - self.raw_bass_avg).max(0.0);
         self.raw_bass_avg += (raw_bass - self.raw_bass_avg) * (dt * 4.0).min(1.0);
         self.kick = (self.kick * (-dt * 4.5).exp()).max((flux * 4.0).min(1.0));
 
-        // Montée assez rapide, descente lente : un mouvement ample et fluide, pas nerveux.
+        // Fairly fast rise, slow fall: a broad, fluid movement, not a nervous one.
         for (v, t) in self.bands.iter_mut().zip(target) {
             let k = if t > *v { 9.0 } else { 2.2 };
             *v += (t - *v) * (k * dt).min(1.0);
@@ -133,8 +132,8 @@ impl Spectrum {
             };
     }
 
-    /// Forme d'onde : départ calé sur un passage à zéro montant (l'onde ne « saute » pas d'une
-    /// image à l'autre), 1024 échantillons ramenés à 128 points, gain automatique, lissage.
+    /// Waveform: start aligned on a rising zero crossing (the wave doesn't "jump" from one frame to
+    /// the next), 1024 samples brought down to 128 points, automatic gain, smoothing.
     fn update_wave(&mut self, fresh: bool) {
         const SPAN: usize = 1024;
         if !fresh || self.samples.len() < FFT_SIZE {
@@ -156,8 +155,8 @@ impl Spectrum {
         }
     }
 
-    /// Niveau du spectre à la position `u` (0 → 1) d'une largeur : graves au centre, aigus aux
-    /// bords ; lissé avec les bandes voisines pour des formes douces.
+    /// Spectrum level at position `u` (0 → 1) across a width: bass in the center, treble at the
+    /// edges; smoothed with the neighboring bands for soft shapes.
     pub fn at(&self, u: f32) -> f32 {
         let d = (u * 2.0 - 1.0).abs().clamp(0.0, 1.0);
         let x = d * (BANDS - 1) as f32;
@@ -172,13 +171,13 @@ impl Spectrum {
             / 9.0
     }
 
-    /// Vrai si quelque chose bouge encore (pour ne redessiner que si nécessaire).
+    /// True if something is still moving (to redraw only when needed).
     pub fn alive(&self) -> bool {
         self.energy > 0.002 || self.kick > 0.01
     }
 }
 
-/// Transformée de Fourier rapide (radix 2, en place).
+/// Fast Fourier transform (radix 2, in place).
 fn fft(re: &mut [f32], im: &mut [f32]) {
     let n = re.len();
     let mut j = 0;
@@ -225,13 +224,13 @@ fn rgb(c: Color32) -> [f32; 3] {
     [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0]
 }
 
-/// Nuances harmonieuses tirées de la couleur dominante : la couleur, une variante plus claire et
-/// chaude, une variante plus profonde (plutôt que trois couleurs de la pochette qui se heurtent).
+/// Harmonious shades derived from the dominant color: the color, a lighter and warmer variant,
+/// a deeper variant (rather than three album art colors that clash).
 pub fn harmonize(palette: [Color32; 3]) -> [Color32; 3] {
     let main = palette[0];
     let light = crate::theme::mix(crate::theme::mix(main, palette[1], 0.25), Color32::WHITE, 0.35);
-    // Assombrie par un bleu nuit presque neutre : la teinte de la pochette reste la sienne
-    // (un violet, ici, tirait toutes les pochettes vers le violet).
+    // Darkened by an almost neutral midnight blue: the album art's hue stays its own (a purple,
+    // here, pulled every album art towards purple).
     let deep = crate::theme::mix(
         crate::theme::mix(main, palette[2], 0.2),
         Color32::from_rgb(18, 20, 34),
@@ -240,7 +239,7 @@ pub fn harmonize(palette: [Color32; 3]) -> [Color32; 3] {
     [main, light, deep]
 }
 
-/// Pseudo-hasard stable (particules).
+/// Stable pseudo-randomness (particles).
 fn hash(i: u32) -> f32 {
     let mut x = i.wrapping_mul(0x9E37_79B9) ^ 0x85EB_CA6B;
     x ^= x >> 15;
@@ -252,7 +251,7 @@ fn hash(i: u32) -> f32 {
 const FIELD_W: usize = 240;
 const FIELD_H: usize = 70;
 
-/// Nappes de lumière de l'Aurore, peintes dans une petite image floutée puis agrandie.
+/// Aurora sheets of light, painted in a small image, blurred then enlarged.
 #[derive(Default)]
 pub struct Aurora {
     glow: Vec<[f32; 3]>,
@@ -262,7 +261,7 @@ pub struct Aurora {
 }
 
 impl Aurora {
-    /// Dessine l'Aurore dans `rect` (bas de « En cours de lecture »).
+    /// Draws the Aurora in `rect` (bottom of "Now Playing").
     pub fn paint(
         &mut self,
         painter: &egui::Painter,
@@ -281,7 +280,7 @@ impl Aurora {
         let kick = s.kick;
         let base = h as f32 * 0.6;
 
-        // Lueur de fond : une grande nappe qui gonfle sur les coups de grosse caisse.
+        // Background glow: a large sheet that swells on kick drum hits.
         let (gx, gy) = (w as f32 * 0.5, h as f32 * 0.72);
         let (sx, sy) = (w as f32 * (0.24 + 0.06 * kick), h as f32 * (0.30 + 0.12 * kick));
         let amp = (0.10 + 0.18 * s.bass_slow + 0.45 * kick) * intensity;
@@ -296,7 +295,7 @@ impl Aurora {
             }
         }
 
-        // Colonnes de lumière douces (le spectre), fondues par le flou.
+        // Soft columns of light (the spectrum), melted by the blur.
         for x in 0..w {
             let u = (x as f32 + 0.5) / w as f32;
             let envelope = (std::f32::consts::PI * u).sin();
@@ -308,7 +307,7 @@ impl Aurora {
             }
         }
 
-        // Trois rubans : une large lueur (floutée) et un cœur plus fin (net).
+        // Three ribbons: a broad glow (blurred) and a finer core (sharp).
         let ribbons = [
             (c_main, 1.3_f32, 0.55_f32, 0.0_f32, 1.0_f32),
             (c_light, 1.9, 0.8, 2.1, 0.7),
@@ -339,7 +338,7 @@ impl Aurora {
             }
         }
 
-        // Flou de la lueur (boîte séparable, deux passes ≈ gaussien), puis le cœur par-dessus.
+        // Blur of the glow (separable box, two passes ≈ Gaussian), then the core on top.
         self.tmp.resize(w * h, [0.0; 3]);
         for _ in 0..2 {
             box_blur(&mut self.glow, &mut self.tmp, w, h, 3);
@@ -349,7 +348,7 @@ impl Aurora {
             .iter()
             .zip(&self.core)
             .map(|(g, c)| {
-                // Saturation douce (1 − e^−x) : les zones intenses « éclatent » sans brûler.
+                // Soft saturation (1 − e^−x): intense areas "burst" without burning out.
                 let out = [0, 1, 2].map(|i| 1.0 - (-(g[i] + c[i]) * 1.6).exp());
                 let a = out[0].max(out[1]).max(out[2]);
                 let b = |v: f32| (v * 255.0) as u8;
@@ -372,7 +371,7 @@ impl Aurora {
             painter.image(tex.id(), rect, uv, Color32::WHITE);
         }
 
-        // Quelques poussières de lumière qui montent doucement (nettes, très discrètes).
+        // A few specks of light rising gently (sharp, very discreet).
         for i in 0..24u32 {
             let x = rect.left() + (0.08 + 0.84 * hash(i)) * rect.width();
             let speed = 0.025 + hash(i + 100) * 0.04;
@@ -396,7 +395,7 @@ fn mix3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
-/// Flou en boîte, horizontal puis vertical, de rayon `r`.
+/// Box blur, horizontal then vertical, of radius `r`.
 fn box_blur(buf: &mut [[f32; 3]], tmp: &mut [[f32; 3]], w: usize, h: usize, r: usize) {
     let norm = 1.0 / (2 * r + 1) as f32;
     for y in 0..h {
@@ -432,7 +431,7 @@ fn box_blur(buf: &mut [[f32; 3]], tmp: &mut [[f32; 3]], w: usize, h: usize, r: u
     }
 }
 
-/// Halo doux derrière la pochette : il suit l'ambiance (moyenne lente), pas chaque coup.
+/// Soft halo behind the album art: it follows the mood (slow average), not every hit.
 pub fn halo(painter: &egui::Painter, cover: Rect, s: &Spectrum, color: Color32, intensity: f32) {
     let bounds = cover.expand(cover.width() * 0.6);
     let radius = cover.width() * (0.75 + 0.08 * s.bass_slow);
@@ -440,7 +439,7 @@ pub fn halo(painter: &egui::Painter, cover: Rect, s: &Spectrum, color: Color32, 
     widgets::soft_glow(painter, bounds, cover.center(), radius, with_alpha(color, a));
 }
 
-/// Taches de lumière qui dérivent dans un bandeau (accueil), leur éclat suit la musique.
+/// Blobs of light drifting in a banner (home page), their brightness follows the music.
 pub fn drifting_lights(painter: &egui::Painter, rect: Rect, s: &Spectrum, palette: [Color32; 3]) {
     let t = s.flow * 0.6;
     let levels = [s.bass_slow.max(s.kick * 0.6), s.energy_slow, s.high];
@@ -461,8 +460,8 @@ pub fn drifting_lights(painter: &egui::Painter, rect: Rect, s: &Spectrum, palett
     }
 }
 
-/// Réglages du shader de vagues pour l'état actuel de la musique (à ajuster par l'appelant :
-/// position de la ligne de base, fondus, coins…).
+/// Wave shader settings for the current state of the music (to be adjusted by the caller:
+/// baseline position, fades, corners…).
 pub fn waves(s: &Spectrum, palette: [Color32; 3], intensity: f32) -> crate::shader::Waves {
     let levels = std::array::from_fn(|i| s.at(0.5 + 0.5 * i as f32 / (crate::shader::LEVELS - 1) as f32));
     crate::shader::Waves {
@@ -490,21 +489,21 @@ pub fn waves(s: &Spectrum, palette: [Color32; 3], intensity: f32) -> crate::shad
     }
 }
 
-/// Réglages propres à un visualiseur (bandeau « Réglages » d'« En cours de lecture »).
+/// Settings specific to a visualizer ("Settings" strip of "Now Playing").
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Tune {
-    /// Luminosité (0,3 → 2).
+    /// Brightness (0.3 → 2).
     pub intensity: f32,
-    /// Vitesse (0,25 → 3).
+    /// Speed (0.25 → 3).
     pub speed: f32,
-    /// Réactivité à la musique (0 : figé → 2).
+    /// Reactivity to the music (0: frozen → 2).
     pub react: f32,
-    /// Zoom (0,5 → 2,5).
+    /// Zoom (0.5 → 2.5).
     pub zoom: f32,
-    /// Décalage de teinte, en tours (−0,5 → 0,5).
+    /// Hue shift, in turns (−0.5 → 0.5).
     pub hue: f32,
-    /// Réglage « détail » propre à l'effet (0 → 1), voir `shader::DETAILS`.
+    /// "Detail" setting specific to the effect (0 → 1), see `shader::DETAILS`.
     pub detail: f32,
 }
 
@@ -522,13 +521,13 @@ impl Default for Tune {
 }
 
 impl Tune {
-    /// Applique ces réglages à une image du visualiseur `style` dessinée dans un rectangle de
-    /// taille `size` (à appeler en dernier : le centre du zoom dépend de la pochette).
+    /// Applies these settings to a frame of visualizer `style` drawn in a rectangle of size `size`
+    /// (to be called last: the zoom center depends on the album art).
     pub fn apply(&self, w: &mut crate::shader::Waves, style: usize, size: egui::Vec2) {
         w.detail = self.detail;
         w.zoom = self.zoom;
-        // Le zoom part de ce qui fait le cœur de l'effet : la pochette, la ligne de base d'une
-        // bande, sinon le milieu de la page.
+        // The zoom starts from the heart of the effect: the album art, the baseline of a band,
+        // otherwise the middle of the page.
         w.zoom_center = if crate::shader::FOCUSED.contains(&style) {
             [w.focus[0], w.focus[1]]
         } else if !crate::shader::STYLES[style].1 {
@@ -559,7 +558,7 @@ impl Tune {
     }
 }
 
-/// Fait tourner la teinte d'une couleur de `turns` tours (rotation autour de l'axe des gris).
+/// Rotates the hue of a color by `turns` turns (rotation around the gray axis).
 fn rotate_hue(c: [f32; 3], turns: f32) -> [f32; 3] {
     let (sin, cos) = (turns * std::f32::consts::TAU).sin_cos();
     let k = (1.0 - cos) / 3.0;
@@ -568,8 +567,8 @@ fn rotate_hue(c: [f32; 3], turns: f32) -> [f32; 3] {
     std::array::from_fn(|i| (m[i][0] * c[0] + m[i][1] * c[1] + m[i][2] * c[2]).clamp(0.0, 1.0))
 }
 
-/// Poussières de lumière qui montent doucement, scintillent et s'illuminent sur les coups de
-/// grosse caisse (nettes, discrètes).
+/// Specks of light rising gently, twinkling and lighting up on kick drum hits (sharp,
+/// discreet).
 pub fn particles(
     painter: &egui::Painter,
     rect: Rect,
@@ -583,7 +582,7 @@ pub fn particles(
     for i in 0..count {
         let x = rect.left() + (0.03 + 0.94 * hash(i)) * rect.width();
         let speed = 0.02 + hash(i + 100) * 0.05;
-        // Légère dérive latérale, comme des poussières en suspension.
+        // Slight sideways drift, like floating dust.
         let sway = (t * (0.3 + hash(i + 500) * 0.4) + i as f32).sin() * 6.0;
         let y_norm = (hash(i + 200) + t * speed).fract();
         let y = rect.bottom() - y_norm * rect.height();
@@ -596,10 +595,10 @@ pub fn particles(
     }
 }
 
-/// Le visualiseur affiché à un endroit (« En cours de lecture », bandeau de l'accueil) : celui
-/// choisi, ou en mode automatique (comme Alchemy dans le lecteur Windows Media) un nouveau au
-/// hasard à chaque morceau et à intervalles réguliers. Chaque changement se fait en fondu
-/// enchaîné : 2 secondes en automatique, une demi-seconde quand on choisit soi-même.
+/// The visualizer shown at a given place ("Now Playing", home page banner): the chosen one, or
+/// in automatic mode (like Alchemy in Windows Media Player) a new random one on each track and
+/// at regular intervals. Each change is a cross-fade: 2 seconds in automatic mode, half a
+/// second when picking one yourself.
 #[derive(Default)]
 pub struct AutoViz {
     current: usize,
@@ -608,15 +607,14 @@ pub struct AutoViz {
     fade: f64,
     track: Option<usize>,
     started: bool,
-    /// Dernier réglage vu (pour repérer un choix manuel).
+    /// Last setting seen (to detect a manual choice).
     setting: Option<usize>,
 }
 
 impl AutoViz {
-    /// Le visualiseur à afficher pour le réglage `setting` (un visualiseur, ou
-    /// [`AUTO`](crate::shader::AUTO) pour tirer parmi `allowed` toutes les `interval` secondes,
-    /// 0 : seulement au changement de morceau), et l'ancien avec la progression du fondu (0 → 1)
-    /// s'il s'efface encore.
+    /// The visualizer to show for setting `setting` (a visualizer, or [`AUTO`](crate::shader::AUTO)
+    /// to draw from `allowed` every `interval` seconds, 0: only when the track changes), and the
+    /// old one with the cross-fade progress (0 → 1) if it is still fading out.
     pub fn pick(
         &mut self,
         now: f64,
@@ -629,7 +627,7 @@ impl AutoViz {
         if !self.started {
             self.started = true;
             self.current = if auto { random(allowed, None) } else { setting };
-            self.since = now - 10.0; // pas de fondu au premier affichage
+            self.since = now - 10.0; // no cross-fade on the first display
             self.track = track;
             self.setting = Some(setting);
         }
@@ -649,17 +647,17 @@ impl AutoViz {
         }
         self.track = track;
         let t = ((now - self.since) / self.fade.max(0.01)).clamp(0.0, 1.0) as f32;
-        // Courbe douce : le nouveau monte lentement au début, l'ancien s'efface sans à-coup.
+        // Smooth curve: the new one rises slowly at first, the old one fades out without a jolt.
         let t = t * t * (3.0 - 2.0 * t);
         (self.current, self.previous.filter(|_| t < 1.0).map(|p| (p, t)))
     }
 
-    /// Passe à `style` en fondu de `fade` secondes.
+    /// Switches to `style` with a cross-fade of `fade` seconds.
     fn switch(&mut self, now: f64, style: usize, fade: f64) {
         if style == self.current {
             return;
         }
-        // Un fondu pas fini : l'ancien part tout de suite, sans saut visible du nouveau.
+        // An unfinished cross-fade: the old one leaves right away, without a visible jump of the new one.
         self.previous = Some(self.current);
         self.current = style;
         self.since = now;
@@ -667,7 +665,7 @@ impl AutoViz {
     }
 }
 
-/// Un visualiseur au hasard parmi `allowed`, jamais `not` s'il y a le choix.
+/// A random visualizer among `allowed`, never `not` if there is a choice.
 fn random(allowed: &[usize], not: Option<usize>) -> usize {
     if allowed.is_empty() {
         return 0;
@@ -682,8 +680,8 @@ mod auto_tests {
     use super::AutoViz;
     use crate::shader::AUTO;
 
-    /// Un choix manuel passe au nouveau en fondu court ; l'automatique change à chaque morceau,
-    /// jamais pour le même, et seulement parmi le tirage.
+    /// A manual choice switches to the new one with a short cross-fade; automatic mode changes on
+    /// each track, never to the same one, and only within the rotation.
     #[test]
     fn picks_and_fades() {
         let mut v = AutoViz::default();
@@ -692,14 +690,14 @@ mod auto_tests {
         assert_eq!(s, 5);
         assert_eq!(fade.map(|(old, _)| old), Some(3));
         assert_eq!(v.pick(2.0, Some(1), 5, &[], 45.0), (5, None));
-        // Automatique : un autre que celui à l'écran, pris dans le tirage.
+        // Automatic: another one than the one on screen, taken from the rotation.
         let pool = [7, 9];
         let (a, _) = v.pick(3.0, Some(1), AUTO, &pool, 0.0);
         assert!(pool.contains(&a));
         let (b, fade) = v.pick(10.0, Some(2), AUTO, &pool, 0.0);
         assert!(pool.contains(&b) && b != a);
         assert_eq!(fade.map(|(old, _)| old), Some(a));
-        // Sans changement de morceau ni minuterie (0), il reste.
+        // Without a track change or a timer (0), it stays.
         assert_eq!(v.pick(100.0, Some(2), AUTO, &pool, 0.0).0, b);
     }
 }
@@ -708,7 +706,7 @@ mod auto_tests {
 mod tune_tests {
     use super::*;
 
-    /// Les réglages d'origine ne changent rien ; les autres agissent chacun sur ce qu'ils disent.
+    /// The original settings change nothing; the others each act on what they say.
     #[test]
     fn tune_applies() {
         let s = Spectrum::default();
@@ -730,10 +728,10 @@ mod tune_tests {
         tune.apply(&mut w, 12, size);
         assert_eq!((w.intensity, w.time, w.zoom, w.detail), (2.0, 5.0, 2.0, 1.0));
         assert!((w.levels[0] - 0.75).abs() < 1e-6);
-        // Centré sur la pochette (Anneau), et le rouge tourné d'un tiers de tour devient vert.
+        // Centered on the album art (Ring), and red turned by a third of a turn becomes green.
         assert_eq!(w.zoom_center, [120.0, 90.0]);
         assert!(w.colors[0][1] > w.colors[0][0] && w.colors[0][1] > w.colors[0][2], "{:?}", w.colors[0]);
-        // Une bande : zoom depuis sa ligne de base.
+        // A band: zoom from its baseline.
         let mut w = base;
         w.base = 0.84;
         Tune::default().apply(&mut w, 3, size);

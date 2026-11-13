@@ -1,4 +1,4 @@
-//! Barre de lecture (en bas, comme le lecteur multimédia de Windows 11) et mini lecteur.
+//! Playback bar (at the bottom, like the Windows 11 Media Player) and mini player.
 
 use std::time::Duration;
 
@@ -15,9 +15,9 @@ pub const NOWBAR_HEIGHT: f32 = 96.0;
 
 struct NowState {
     track: Option<usize>,
-    /// Webradio en cours (ou en connexion) : la station, le titre diffusé, l'état.
+    /// Web radio playing (or connecting): the station, the title on air, the state.
     radio: Option<RadioNow>,
-    /// Épisode de podcast en cours (sa progression s'affiche comme celle d'un morceau).
+    /// Podcast episode playing (its progress is shown like a track's).
     episode: Option<RadioNow>,
     pos: f32,
     total: f32,
@@ -27,7 +27,7 @@ struct NowState {
 
 #[derive(Clone)]
 struct RadioNow {
-    /// Où mène un clic sur la zone (page Webradios, page du podcast).
+    /// Where a click on the area leads (Web radio page, podcast page).
     target: View,
     station: crate::radio::Station,
     title: String,
@@ -105,7 +105,7 @@ impl SterMusic {
     }
 
     pub(super) fn now_bar(&mut self, ctx: &egui::Context) {
-        // En plein écran, la barre se replie quand la souris ne bouge plus.
+        // In full screen, the bar folds away when the mouse stops moving.
         let visible = !self.immersive() || self.fs_controls_visible(ctx);
         egui::TopBottomPanel::bottom("now_bar")
             .exact_height(NOWBAR_HEIGHT)
@@ -114,7 +114,7 @@ impl SterMusic {
             .show_animated(ctx, visible, |ui| {
                 let rect = ui.max_rect();
                 let painter = ui.painter();
-                // Les coins du bas touchent ceux de la fenêtre.
+                // The bottom corners touch those of the window.
                 let r = theme::window_radius();
                 painter.rect_filled(
                     rect,
@@ -129,7 +129,7 @@ impl SterMusic {
 
                 let st = self.now_state();
 
-                // Progression, sur toute la largeur, avec les temps aux deux bouts.
+                // Progress, across the full width, with the times at both ends.
                 let bar_y = rect.top() + 16.0;
                 let time_w = 52.0;
                 let enabled = st.has_track && st.total > 0.0;
@@ -150,7 +150,7 @@ impl SterMusic {
                 let time_font = FontId::proportional(12.0);
                 let painter = ui.painter();
                 if st.radio.is_some() {
-                    // Direct : pastille rouge et « EN DIRECT » à la place du temps écoulé.
+                    // Live: red dot and "LIVE" instead of the elapsed time.
                     let dot = pos2(rect.left() + 24.0, bar_y);
                     let pulse = if st.playing {
                         0.6 + 0.4 * (ui.input(|i| i.time) as f32 * 3.0).sin().abs()
@@ -203,7 +203,7 @@ impl SterMusic {
                 );
                 let cy = row.center().y;
 
-                // Gauche : pochette, titre, artiste.
+                // Left: album art, title, artist.
                 let info_w = (row.width() * 0.30).min(360.0);
                 let cover_rect = Rect::from_center_size(pos2(row.left() + 26.0, cy), vec2(52.0, 52.0));
                 if let Some(info) = st.radio.as_ref().or(st.episode.as_ref()) {
@@ -224,7 +224,7 @@ impl SterMusic {
                             max_w,
                         );
 
-                        // Pochette, titre et artiste : un seul bouton vers « En cours de lecture ».
+                        // Album art, title and artist: a single button to "Now Playing".
                         let text_w = title.size().x.max(artist.size().x);
                         let zone = Rect::from_min_max(
                             pos2(cover_rect.left() - 6.0, cover_rect.top() - 5.0),
@@ -260,7 +260,7 @@ impl SterMusic {
                             });
                         let _ = resp;
 
-                        // Changement de morceau : la pochette et les textes arrivent en fondu, en glissant.
+                        // Track change: the album art and the texts fade in, sliding.
                         let appear = anim::value_from(
                             ui.ctx(),
                             egui::Id::new(("nowbar_track", i)),
@@ -272,8 +272,7 @@ impl SterMusic {
                         let lift = 1.5 * hover;
                         let r = cover_rect.expand(lift);
                         widgets::cover(ui.painter(), r, tex.as_ref(), 6, &t.album);
-                        // L'ancien morceau s'efface par-dessus : sa pochette en fondu, ses textes
-                        // en glissant de l'autre côté.
+                        // The old track fades out on top: its album art fading, its texts sliding the other way.
                         let dir = self.ambience.dir;
                         if self.bar_track.as_ref().map(|(k, _)| *k) != Some(i) {
                             self.bar_prev = self.bar_track.take().map(|(_, texts)| texts);
@@ -306,7 +305,7 @@ impl SterMusic {
                             theme::TEXT.gamma_multiply(appear),
                         );
 
-                        // Le nom de l'artiste reste un lien vers sa page (il passe devant la zone).
+                        // The artist name stays a link to their page (it sits above the area).
                         let artist_rect = Rect::from_min_size(pos2(tx, cy + 3.0) + slide, artist.size());
                         let ar = ui.interact(artist_rect, ui.id().with("nowbar_artist"), Sense::click());
                         let col = if ar.hovered() {
@@ -347,7 +346,7 @@ impl SterMusic {
                     }
                 }
 
-                // Centre : commandes.
+                // Center: controls.
                 let can_play = self.player.is_some()
                     && (!self.lib.is_empty() || st.track.is_some() || st.radio.is_some() || st.episode.is_some());
                 let controls =
@@ -362,11 +361,10 @@ impl SterMusic {
                     },
                 );
 
-                // Droite : favori, volume, égaliseur, plein écran.
+                // Right: favorite, volume, equalizer, full screen.
                 let right = Rect::from_min_max(pos2(row.right() - 380.0, row.top()), row.max);
-                // Fenêtre étroite : la barre de volume raccourcit, puis disparaît (l'icône et la
-                // molette restent), et la diffusion se cache tant qu'elle ne sert pas, pour ne
-                // jamais toucher les commandes du centre.
+                // Narrow window: the volume bar gets shorter, then disappears (the icon and the wheel stay),
+                // and casting hides while it is not in use, so as never to touch the center controls.
                 let budget = row.right() - controls.right() - 12.0;
                 let compact = budget < 300.0;
                 let fixed = if compact { 214.0 } else { 252.0 };
@@ -380,7 +378,7 @@ impl SterMusic {
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
                         ui.add_space(4.0);
-                        // Plein écran, tout à droite (comme dans la plupart des lecteurs).
+                        // Full screen, far right (as in most players).
                         let (fs_icon, fs_tip) = if self.fullscreen {
                             (Icon::Minimize, tr("Quitter le plein écran (Échap)"))
                         } else {
@@ -389,7 +387,7 @@ impl SterMusic {
                         if widgets::icon_button(ui, fs_icon, fs_tip, 36.0, 16.0).clicked() {
                             self.actions.push(Action::ToggleFullscreen);
                         }
-                        // Égaliseur, dans une bulle au-dessus du bouton.
+                        // Equalizer, in a popup above the button.
                         let eq = widgets::toggle_icon(
                             ui,
                             self.settings.eq_on,
@@ -449,10 +447,10 @@ impl SterMusic {
             });
     }
 
-    /// Aléatoire, précédent, lecture, suivant, répétition.
+    /// Shuffle, previous, play, next, repeat.
     fn controls(&mut self, ui: &mut egui::Ui, playing: bool, size: f32, play_size: f32) {
-        // Simple interrupteur : la file selon mes goûts est une autre chose (flèche des boutons
-        // « Aléatoire » de la bibliothèque), qui n'a rien à voir avec ce bouton.
+        // A simple toggle: the queue by my taste is something else (arrow of the library's "Shuffle"
+        // buttons), which has nothing to do with this button.
         let tip = if self.settings.shuffle { tr("Aléatoire : activé") } else { tr("Aléatoire : désactivé") };
         if widgets::mode_toggle(ui, self.settings.shuffle, Icon::Shuffle, tip, size, 17.0).clicked() {
             self.actions.push(Action::ToggleShuffle);
@@ -466,7 +464,7 @@ impl SterMusic {
         if widgets::icon_button(ui, Icon::SkipForward, tr("Suivant (Ctrl+→)"), size, 19.0).clicked() {
             self.actions.push(Action::Next);
         }
-        // Arrêter : plus rien en lecture, la file d'attente reste.
+        // Stop: nothing playing any more, the queue stays.
         let active = self.player.as_ref().is_some_and(|p| p.has_track())
             || self.radio.live.is_some()
             || self.radio.connecting_to().is_some();
@@ -492,7 +490,7 @@ impl SterMusic {
         }
     }
 
-    /// Bouton muet + barre de volume (mise en page de droite à gauche).
+    /// Mute button + volume bar (right-to-left layout).
     fn volume(&mut self, ui: &mut egui::Ui, width: f32) {
         let exact = self.settings.bit_perfect;
         let max = super::VOLUME_MAX;
@@ -503,16 +501,16 @@ impl SterMusic {
         } else {
             self.settings.volume
         };
-        // La barre va jusqu'à 150 % ; un repère marque 100 %, au-delà elle passe à l'orange.
-        // Fenêtre très étroite : pas de barre, l'icône seule (molette pour régler).
+        // The bar goes up to 150 %; a mark shows 100 %, beyond it the bar turns orange.
+        // Very narrow window: no bar, only the icon (wheel to adjust).
         let seek = (width > 0.0)
             .then(|| widgets::seek_bar_marked(ui, "volume", vol / max, width, !exact, (!exact).then_some(1.0 / max)));
         if let Some(v) = seek.as_ref().and_then(|s| s.preview.or(s.commit)).filter(|_| !exact) {
-            // Cran magnétique autour de 100 %.
+            // Magnetic notch around 100 %.
             let v = v * max;
             let v = if (v - 1.0).abs() < 0.04 { 1.0 } else { v };
             if (v - self.settings.volume).abs() > f32::EPSILON || self.settings.muted {
-                self.settings.volume = v; // pas de second cran dans `SetVolume`
+                self.settings.volume = v; // no second notch in `SetVolume`
                 self.actions.push(Action::SetVolume(v));
             }
         }
@@ -539,7 +537,7 @@ impl SterMusic {
         let resp = widgets::icon_button(ui, icon, &tip, 34.0, 17.0);
         let bar = seek.as_ref().map(|s| s.rect).unwrap_or(resp.rect);
         if boosted {
-            // Au-dessus de 100 % : l'icône passe à l'orange, avec le pourcentage en petit.
+            // Above 100 %: the icon turns orange, with the percentage in small print.
             icons::paint_centered(ui.painter(), icon, resp.rect.center(), 17.0, theme::BOOST);
             ui.painter().text(
                 egui::pos2(bar.center().x, bar.top() - 3.0),
@@ -549,12 +547,12 @@ impl SterMusic {
                 theme::BOOST,
             );
         }
-        // Molette sur le volume (barre ou icône) : voir `volume_wheel`.
+        // Wheel over the volume (bar or icon): see `volume_wheel`.
         self.volume_zone = Some(bar.union(resp.rect).expand(4.0));
         if resp.clicked() {
             self.actions.push(Action::ToggleMute);
         }
-        // Clic droit : choisir la sortie audio.
+        // Right click: pick the audio output.
         resp.context_menu(|ui| {
             ui.label(
                 egui::RichText::new(tr("Sortie audio"))
@@ -565,7 +563,7 @@ impl SterMusic {
         });
     }
 
-    /// Bouton de la minuterie de sommeil, avec le temps restant quand elle tourne.
+    /// Sleep timer button, with the time left while it runs.
     fn sleep_button(&mut self, ui: &mut egui::Ui) {
         let remaining = self.sleep_remaining();
         let tip = match remaining {
@@ -598,7 +596,7 @@ impl SterMusic {
         }
     }
 
-    /// Station en cours dans la barre de lecture : logo, titre diffusé, nom de la station.
+    /// Current station in the playback bar: logo, title on air, station name.
     fn radio_info(&mut self, ui: &mut egui::Ui, cover_rect: Rect, info_w: f32, radio: &RadioNow) {
         let tx = cover_rect.right() + 12.0;
         let max_w = info_w - 70.0;
@@ -651,8 +649,8 @@ impl SterMusic {
             .galley_with_override_text_color(pos2(tx, cy + 3.0), sub, theme::TEXT_2);
     }
 
-    /// Mini lecteur compact : pochette, titre, artiste, commandes et progression sur une ligne.
-    /// Il reste au premier plan (script KWin sous Plasma).
+    /// Compact mini player: album art, title, artist, controls and progress on one line. It stays
+    /// on top (KWin script under Plasma).
     pub(super) fn mini_player(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -661,7 +659,7 @@ impl SterMusic {
                 super::chrome::drag_area(ui, rect, "mini_drag");
                 let st = self.now_state();
                 let pad = 10.0;
-                // Pochette carrée, bornée : la mise en page tient même si la fenêtre n'a pas encore rétréci.
+                // Square, bounded album art: the layout holds even if the window hasn't shrunk yet.
                 let side = (rect.height() - 2.0 * pad).clamp(48.0, 110.0);
                 let cover = Rect::from_min_size(rect.min + vec2(pad, pad), vec2(side, side));
                 let tex = st
@@ -698,7 +696,7 @@ impl SterMusic {
                 let g = widgets::galley(ui, &artist, FontId::proportional(12.5), theme::TEXT_2, text_w);
                 ui.painter().galley(pos2(x, cover.top() + 22.0), g, theme::TEXT_2);
 
-                // Revenir à la fenêtre complète.
+                // Back to the full window.
                 let back = Rect::from_min_size(pos2(right - 30.0, cover.top() - 4.0), vec2(30.0, 30.0));
                 if ui
                     .put(back, |ui: &mut egui::Ui| {
@@ -709,7 +707,7 @@ impl SterMusic {
                     self.actions.push(Action::ToggleMini);
                 }
 
-                // Ligne du bas : précédent, lecture, suivant, puis la progression.
+                // Bottom line: previous, play, next, then the progress.
                 let row_h = 38.0;
                 let row =
                     Rect::from_min_max(pos2(x - 4.0, cover.bottom() - row_h), pos2(right, cover.bottom()));

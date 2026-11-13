@@ -1,4 +1,4 @@
-//! Serveurs de musique dans les paramètres : ajout, actualisation, retrait.
+//! Music servers in the settings: add, refresh, remove.
 
 use std::sync::mpsc::{channel, Receiver};
 
@@ -12,7 +12,7 @@ use crate::servers::{self, Kind, Server};
 use crate::trf;
 use crate::{theme, widgets};
 
-/// Formulaire « Ajouter un serveur ».
+/// "Add a server" form.
 #[derive(Default)]
 pub struct ServerForm {
     pub open: bool,
@@ -101,7 +101,7 @@ impl SterMusic {
             .unwrap_or_default()
     }
 
-    /// Section « Serveurs de musique » des paramètres.
+    /// "Music servers" section of the settings.
     pub(super) fn servers_settings(&mut self, ui: &mut egui::Ui) {
         subtitle(ui, tr("Serveurs de musique"));
         card(ui, |ui| {

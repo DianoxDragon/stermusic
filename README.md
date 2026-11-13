@@ -89,36 +89,48 @@ and can be changed in Settings → Language).
 
 ## Installation
 
-### Ready-made installers
+### Ready-made packages
 
 Download them from the [Releases](../../releases) page:
 
-- `stermusic_<version>_amd64.deb` for Kubuntu, Ubuntu, Debian, Linux Mint…: double-click it
+- **Arch Linux, EndeavourOS, Manjaro, CachyOS…**: `stermusic-<version>-1-x86_64.pkg.tar.zst`,
+  then run `sudo pacman -U ./stermusic-<version>-1-x86_64.pkg.tar.zst` (pacman lists the optional
+  dependencies: ffmpeg, noto-fonts-cjk, breeze-icons…);
+- **Kubuntu, Ubuntu, Debian, Linux Mint…**: `stermusic_<version>_amd64.deb`, then double-click it
   (Discover / Software), or run `sudo apt install ./stermusic_<version>_amd64.deb`;
-- `stermusic-<version>-x86_64.tar.gz` for other distributions: extract it, then run
+- **other distributions**: `stermusic-<version>-x86_64.tar.gz`, extract it, then run
   `./install.sh` (no sudo needed; `./uninstall.sh` removes it).
 
-Requirements: glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Linux Mint 21, Fedora 36 and later)
-and ALSA (`libasound2`). **ffmpeg** is recommended (Opus, WMA, APE, WavPack, DSD, conversion,
-CD ripping).
+Requirements: x86_64, glibc 2.35 or newer (Arch Linux, Ubuntu 22.04, Debian 12, Linux Mint 21,
+Fedora 36 and later) and ALSA. **ffmpeg** is recommended (Opus, WMA, APE, WavPack, DSD,
+conversion, CD ripping).
 
-To build these installers yourself:
+### Arch Linux: build the package yourself
+
+A `PKGBUILD` is provided in [`packaging/arch/`](packaging/arch/PKGBUILD). To build and install the
+package from the code of your checkout (uncommitted changes included):
 
 ```bash
-./packaging/make-installer.sh
+sudo pacman -S --needed base-devel git
 ```
 
-They are written to `dist/`. Set the package maintainer with `MAINTAINER="Name <address>"` and
-the repository address with `HOMEPAGE="https://…"`.
+```bash
+./packaging/make-arch-package.sh -si
+```
 
-### Build from source
+`-s` installs the build dependencies (Rust, Python), `-i` installs the package. A copy is
+written to `dist/`.
+
+### Build from source (any distribution)
 
 #### 1. Requirements (once)
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh   # Rust
-sudo apt install libasound2-dev                                 # ALSA headers
-```
+| Distribution         | Command                                                            |
+|----------------------|--------------------------------------------------------------------|
+| Arch Linux and co.   | `sudo pacman -S --needed rust alsa-lib pkgconf`                    |
+| Debian, Ubuntu, Mint | `sudo apt install libasound2-dev pkg-config`, then [rustup](https://rustup.rs) |
+| Fedora               | `sudo dnf install cargo alsa-lib-devel`                            |
+| openSUSE             | `sudo zypper install cargo alsa-devel`                             |
 
 #### 2. Build and install
 
@@ -133,6 +145,18 @@ To try it without installing:
 ```bash
 cargo run --release -- ~/Music
 ```
+
+### Making a release
+
+```bash
+./packaging/make-installer.sh
+```
+
+builds every package of the current version into `dist/`: the pacman package (where `makepkg`
+exists), the `.deb` (where `dpkg-deb` exists; on Arch, `sudo pacman -S dpkg`) and the portable
+archive. Set the `.deb` maintainer with `MAINTAINER="Name <address>"` and the repository address
+with `HOMEPAGE="https://…"`. Once the `v<version>` tag is pushed to GitHub,
+`./packaging/make-aur.sh` prepares the AUR files (`PKGBUILD` with its checksum, `.SRCINFO`).
 
 ## Keyboard shortcuts
 

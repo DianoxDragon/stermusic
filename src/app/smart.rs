@@ -1,6 +1,6 @@
-//! Playlists intelligentes : elles se remplissent toutes seules d'après des règles (« genre
-//! contient Rock », « année inférieure à 2010 », « écoutes égales à 0 »…), et suivent la
-//! bibliothèque et les écoutes. Quatre sont proposées d'office (modifiables, supprimables).
+//! Smart playlists: they fill themselves according to rules ("genre contains Rock", "year less
+//! than 2010", "plays equal to 0"…), and follow the library and the plays. Four are offered by
+//! default (editable, deletable).
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -23,22 +23,22 @@ pub enum Field {
     AlbumArtist,
     Genre,
     Year,
-    /// Nombre d'écoutes.
+    /// Number of plays.
     Plays,
-    /// Jours depuis la dernière écoute (jamais écouté : infini).
+    /// Days since the last play (never played: infinite).
     LastPlayed,
-    /// Jours depuis l'ajout à la bibliothèque (date du fichier).
+    /// Days since being added to the library (file date).
     Added,
-    /// Durée, en minutes.
+    /// Duration, in minutes.
     Duration,
     Favorite,
-    /// Note, de 0 (aucune) à 5 étoiles.
+    /// Rating, from 0 (none) to 5 stars.
     Rating,
-    /// Fois où le morceau a été passé (avant de compter comme une écoute).
+    /// Times the track was skipped (before counting as a play).
     Skips,
-    /// Part des lancements où il a été passé, en %.
+    /// Share of starts where it was skipped, in %.
     SkipRate,
-    /// Engagement (voir `taste::engagement`), en % : la part du morceau vraiment écoutée.
+    /// Engagement (see `taste::engagement`), in %: the share of the track really listened to.
     Engagement,
 }
 
@@ -139,20 +139,20 @@ pub struct Rule {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sort {
-    /// Ordre de la bibliothèque (artiste, album, piste).
+    /// Library order (artist, album, track).
     Library,
     MostPlayed,
     LeastPlayed,
     RecentlyPlayed,
-    /// Écoutés il y a le plus longtemps (jamais écoutés d'abord).
+    /// Played the longest time ago (never played first).
     OldestPlayed,
     RecentlyAdded,
     Title,
-    /// Les plus souvent passés (en part des lancements, puis en nombre).
+    /// Most often skipped (as a share of starts, then in number).
     MostSkipped,
-    /// Les plus écoutés jusqu'au bout (engagement).
+    /// Most often listened to the end (engagement).
     MostEngaged,
-    /// Selon mes goûts : le poids de l'aléatoire « selon mes goûts », du plus lourd au plus léger.
+    /// By my taste: the weight of the "by my taste" shuffle, from heaviest to lightest.
     Taste,
 }
 
@@ -186,7 +186,7 @@ impl Sort {
     }
 }
 
-/// Icône d'une playlist intelligente (barre latérale).
+/// Icon of a smart playlist (sidebar).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SmartIcon {
     #[default]
@@ -244,20 +244,19 @@ pub struct SmartPlaylist {
     #[serde(default)]
     pub icon: SmartIcon,
     pub rules: Vec<Rule>,
-    /// Toutes les règles (sinon : au moins une).
+    /// All rules (otherwise: at least one).
     pub match_all: bool,
     pub sort: Sort,
-    /// Nombre maximal de morceaux (0 : pas de limite).
+    /// Maximum number of tracks (0: no limit).
     pub limit: usize,
-    /// Épinglée dans la barre latérale.
+    /// Pinned in the sidebar.
     #[serde(default)]
     pub pinned: bool,
 }
 
 impl SmartPlaylist {
-    /// Les playlists proposées d'office, dans la langue de l'interface au moment de leur
-    /// création. Les deux dernières (sauts et engagement) sont arrivées après les quatre
-    /// premières : voir [`PRESETS_V2`].
+    /// The playlists offered by default, in the interface language at the time they were created.
+    /// The last two (skips and engagement) came after the first four: see [`PRESETS_V2`].
     pub fn presets() -> Vec<SmartPlaylist> {
         let rule = |field, op, value: &str| Rule {
             field,
@@ -325,8 +324,8 @@ impl SmartPlaylist {
         ]
     }
 
-    /// Playlists enregistrées avant l'arrivée des icônes : celles proposées d'office (mêmes
-    /// règles) reprennent leur icône.
+    /// Playlists saved before icons existed: those offered by default (same rules) get their icon
+    /// back.
     pub fn guess_icon(&mut self) {
         if self.icon != SmartIcon::Sparkles {
             return;
@@ -356,13 +355,13 @@ impl SmartPlaylist {
     }
 }
 
-/// Nombre de playlists d'office avant l'arrivée de celles sur les sauts et l'engagement : celles
-/// d'après sont ajoutées une fois aux réglages existants (`Settings::smart_presets`).
+/// Number of default playlists before the ones about skips and engagement arrived: the later
+/// ones are added once to existing settings (`Settings::smart_presets`).
 pub const PRESETS_V1: usize = 4;
-/// Version des playlists d'office (voir `Settings::smart_presets`).
+/// Version of the default playlists (see `Settings::smart_presets`).
 pub const PRESETS_V2: u32 = 2;
 
-/// Ce dont l'évaluation a besoin, en plus de la bibliothèque.
+/// What the evaluation needs, besides the library.
 pub struct Facts<'a> {
     pub plays: &'a HashMap<PathBuf, PlayStat>,
     pub favorites: &'a HashSet<PathBuf>,
@@ -410,7 +409,7 @@ fn matches(rule: &Rule, lib: &Library, i: usize, f: &Facts) -> bool {
             let x = match rule.field {
                 Field::Year => match t.year {
                     Some(y) => y as f64,
-                    // Sans année, aucune comparaison ne peut être vraie (sauf « n'est pas »).
+                    // Without a year, no comparison can be true (except "is not").
                     None => return rule.op == Op::IsNot,
                 },
                 Field::Plays => stat.count as f64,
@@ -418,7 +417,7 @@ fn matches(rule: &Rule, lib: &Library, i: usize, f: &Facts) -> bool {
                 Field::Added => days(t.mtime),
                 Field::Rating => f.ratings.get(&t.path).copied().unwrap_or(0) as f64,
                 Field::Skips => stat.skips as f64,
-                // Jamais lancé : ni passé ni écouté, aucune comparaison n'est vraie (sauf « n'est pas »).
+                // Never started: neither skipped nor played, no comparison is true (except "is not").
                 Field::SkipRate => match stat.count + stat.skips {
                     0 => return rule.op == Op::IsNot,
                     n => stat.skips as f64 * 100.0 / n as f64,
@@ -433,7 +432,7 @@ fn matches(rule: &Rule, lib: &Library, i: usize, f: &Facts) -> bool {
                 return true;
             };
             match rule.op {
-                // Les jours et les minutes sont comparés à l'unité près.
+                // Days and minutes are compared to the unit.
                 Op::Is => x.floor() == v.floor() || x == v,
                 Op::IsNot => !(x.floor() == v.floor() || x == v),
                 Op::Less => x < v,
@@ -444,7 +443,7 @@ fn matches(rule: &Rule, lib: &Library, i: usize, f: &Facts) -> bool {
     }
 }
 
-/// Les morceaux de la playlist, triés et limités.
+/// The tracks of the playlist, sorted and limited.
 pub fn evaluate(p: &SmartPlaylist, lib: &Library, f: &Facts) -> Vec<usize> {
     let mut out: Vec<usize> = (0..lib.tracks.len())
         .filter(|&i| {
@@ -496,9 +495,9 @@ pub fn evaluate(p: &SmartPlaylist, lib: &Library, f: &Facts) -> Vec<usize> {
     out
 }
 
-/// Playlist intelligente en cours de création ou de modification.
+/// Smart playlist being created or edited.
 pub struct Edit {
-    /// `None` : nouvelle playlist.
+    /// `None`: new playlist.
     pub index: Option<usize>,
     pub draft: SmartPlaylist,
     limit_text: String,
@@ -530,7 +529,7 @@ impl SterMusic {
         }
     }
 
-    /// Fenêtre de création ou de modification d'une playlist intelligente.
+    /// Window to create or edit a smart playlist.
     pub(super) fn smart_dialog(&mut self, ctx: &egui::Context) {
         let Some(mut edit) = self.smart_edit.take() else {
             return;
@@ -603,7 +602,7 @@ impl SterMusic {
                                         && rule.field != f
                                     {
                                         rule.field = f;
-                                        // Une opération qui n'existe pas pour ce champ revient à la première.
+                                        // An operation that doesn't exist for this field falls back to the first one.
                                         if !f.ops().contains(&rule.op) {
                                             rule.op = f.ops()[0];
                                         }
@@ -830,11 +829,11 @@ mod tests {
         assert_eq!(titles(&p), ["Un"]);
         p.match_all = false;
         assert_eq!(titles(&p), ["Trois", "Un"]);
-        // Les quatre playlists d'office.
+        // The four default playlists.
         let presets = SmartPlaylist::presets();
         assert_eq!(titles(&presets[0]), ["Un", "Deux"]);
         assert_eq!(titles(&presets[1]), ["Trois"]);
-        // Favoris pas écoutés depuis plus de 180 jours (jamais écouté compris).
+        // Favorites not played for more than 180 days (never played included).
         let mut rediscover = titles(&presets[2]);
         rediscover.sort();
         assert_eq!(rediscover, ["Trois", "Un"]);
@@ -851,7 +850,7 @@ mod tests {
         ]);
         let mut plays = HashMap::new();
         let stat = |count, seconds, skips| PlayStat { count, last: 1, seconds, skips };
-        // Passé 4 fois sur 5 ; l'autre écouté 4 fois en entier (200 s chacune).
+        // Skipped 4 times out of 5; the other one played 4 times in full (200 s each).
         plays.insert(PathBuf::from("/a"), stat(1, 200.0, 4));
         plays.insert(PathBuf::from("/b"), stat(4, 800.0, 0));
         let (favorites, ratings) = (HashSet::new(), HashMap::new());
@@ -863,7 +862,7 @@ mod tests {
         assert_eq!(presets.len(), PRESETS_V1 + 2);
         assert_eq!(titles(&presets[PRESETS_V1]), ["Passé"]);
         assert_eq!(titles(&presets[PRESETS_V1 + 1]), ["Aimé"]);
-        // Un morceau jamais lancé n'a ni part passée ni engagement.
+        // A track never started has neither a skipped share nor an engagement.
         let mut p = presets[PRESETS_V1].clone();
         p.rules = vec![Rule { field: Field::SkipRate, op: Op::Less, value: "10".into() }];
         assert_eq!(titles(&p), ["Aimé"]);

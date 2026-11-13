@@ -1,20 +1,20 @@
-//! Choix de la sortie audio (haut-parleurs, casque USB, HDMI…).
+//! Audio output selection (speakers, USB headset, HDMI…).
 //!
-//! Le son passe par le greffon ALSA de PipeWire (sortie « default » de rodio). Ce greffon lit la
-//! variable `PIPEWIRE_NODE` à chaque ouverture de la sortie : il suffit de la poser avant
-//! d'ouvrir le flux pour l'envoyer vers la sortie choisie, sans court-circuiter PipeWire (le
-//! mixage, le volume de Plasma et les autres applications continuent de fonctionner). Sans
-//! PipeWire, `PULSE_SINK` fait la même chose pour PulseAudio.
+//! Sound goes through PipeWire's ALSA plugin (rodio's "default" output). This plugin reads the
+//! `PIPEWIRE_NODE` variable each time the output is opened: setting it before opening the
+//! stream is enough to send it to the chosen output, without bypassing PipeWire (mixing,
+//! Plasma's volume and the other applications keep working). Without PipeWire, `PULSE_SINK`
+//! does the same for PulseAudio.
 //!
-//! La liste des sorties vient de `pactl` (pipewire-pulse), qui donne leur nom lisible.
+//! The list of outputs comes from `pactl` (pipewire-pulse), which gives their readable name.
 
 use serde::Deserialize;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Output {
-    /// Nom interne (`alsa_output.usb-…`), celui que PipeWire attend.
+    /// Internal name (`alsa_output.usb-…`), the one PipeWire expects.
     pub name: String,
-    /// Nom lisible (« Casque Yeti Stereo »).
+    /// Readable name ("Yeti Stereo Headset").
     pub description: String,
 }
 
@@ -25,7 +25,7 @@ struct Sink {
     description: String,
 }
 
-/// Les sorties audio du système, dans l'ordre de `pactl` ; vide si `pactl` est absent.
+/// The system's audio outputs, in `pactl` order; empty if `pactl` is missing.
 pub fn list() -> Vec<Output> {
     let Ok(out) = std::process::Command::new("pactl")
         .args(["-f", "json", "list", "sinks"])
@@ -51,10 +51,10 @@ fn parse(json: &[u8]) -> Vec<Output> {
         .collect()
 }
 
-/// Oriente les prochaines ouvertures de la sortie audio vers `name` (vide : sortie par défaut).
+/// Points the next openings of the audio output at `name` (empty: default output).
 ///
-/// Appelé seulement quand le choix change (au lancement, ou depuis les paramètres) : la
-/// variable d'environnement est lue par le greffon ALSA à l'ouverture du flux.
+/// Only called when the choice changes (at startup, or from the settings): the environment
+/// variable is read by the ALSA plugin when the stream is opened.
 pub fn route_to(name: &str) {
     for var in ["PIPEWIRE_NODE", "PULSE_SINK"] {
         if name.is_empty() {
@@ -65,11 +65,11 @@ pub fn route_to(name: &str) {
     }
 }
 
-/// Impose à PipeWire la fréquence `rate` (0 : rend la main à sa fréquence habituelle).
+/// Forces PipeWire to the `rate` sample rate (0: gives it back its usual rate).
 ///
-/// PipeWire fait tourner tout le son à une seule fréquence (48 kHz d'ordinaire) et
-/// rééchantillonne le reste ; la sortie bit-perfect lui demande de suivre celle du morceau.
-/// Le réglage (`clock.force-rate`) ne dure que le temps de la session PipeWire.
+/// PipeWire runs all sound at a single rate (usually 48 kHz) and resamples the rest; bit-perfect
+/// output asks it to follow the track's rate. The setting (`clock.force-rate`) only lasts for
+/// the PipeWire session.
 pub fn force_rate(rate: u32) {
     let _ = std::process::Command::new("pw-metadata")
         .args(["-n", "settings", "0", "clock.force-rate", &rate.to_string()])
@@ -79,8 +79,8 @@ pub fn force_rate(rate: u32) {
         .status();
 }
 
-/// Vrai si `pw-metadata` (PipeWire) est là : sans lui, la sortie bit-perfect ne peut pas
-/// empêcher le rééchantillonnage.
+/// True if `pw-metadata` (PipeWire) is available: without it, bit-perfect output cannot prevent
+/// resampling.
 pub fn can_force_rate() -> bool {
     static OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *OK.get_or_init(|| {

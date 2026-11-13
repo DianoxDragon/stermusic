@@ -1,8 +1,8 @@
-//! Notifications du bureau (Plasma, GNOME…) au changement de morceau, par D-Bus
+//! Desktop notifications (Plasma, GNOME…) when the track changes, over D-Bus
 //! (`org.freedesktop.Notifications`).
 //!
-//! Un thread garde la connexion et remplace la notification précédente au lieu d'en empiler
-//! une par morceau ; elles sont marquées « transitoires » pour ne pas encombrer l'historique.
+//! A thread keeps the connection and replaces the previous notification instead of stacking
+//! one per track; they are marked "transient" so they don't clutter the history.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use zbus::zvariant::Value;
 pub struct Note {
     pub title: String,
     pub body: String,
-    /// Pochette (fichier image), sinon l'icône de SterMusic.
+    /// Album art (image file), otherwise the SterMusic icon.
     pub image: Option<PathBuf>,
 }
 
@@ -32,7 +32,7 @@ impl Notifier {
                 };
                 let mut last_id = 0u32;
                 while let Ok(mut note) = rx.recv() {
-                    // Plusieurs changements d'affilée (morceaux sautés) : seul le dernier compte.
+                    // Several changes in a row (skipped tracks): only the last one counts.
                     while let Ok(newer) = rx.try_recv() {
                         note = newer;
                     }
@@ -86,7 +86,7 @@ fn show(conn: &zbus::blocking::Connection, note: &Note, replaces: u32) -> Option
     reply.body().deserialize::<u32>().ok()
 }
 
-/// Le corps d'une notification accepte un peu de HTML : on neutralise `&`, `<` et `>`.
+/// A notification body accepts a little HTML: `&`, `<` and `>` are escaped.
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }

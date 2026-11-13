@@ -1,8 +1,8 @@
-//! Statistiques d'écoute et récap de l'année, à la Spotify Wrapped.
+//! Listening statistics and yearly recap, Spotify Wrapped style.
 //!
-//! « Depuis toujours » repose sur le compteur d'écoutes de chaque morceau ; les périodes (cette
-//! année, 30 derniers jours) et le récap reposent sur l'historique daté (`history.rs`), qui
-//! commence avec cette version de SterMusic.
+//! "All time" relies on each track's play counter; the periods (this year, last 30 days) and
+//! the recap rely on the dated history (`history.rs`), which starts with this version of
+//! SterMusic.
 
 use std::collections::HashMap;
 
@@ -27,29 +27,29 @@ pub enum Period {
     Month,
 }
 
-/// Chiffres d'une période.
+/// Figures of a period.
 pub struct Stats {
     pub listens: u64,
     pub seconds: f64,
-    /// Morceaux, artistes, albums et genres, du plus écouté au moins écouté.
+    /// Tracks, artists, albums and genres, from most to least played.
     pub tracks: Vec<(usize, u64)>,
     pub artists: Vec<(String, u64)>,
     pub albums: Vec<(usize, u64)>,
     pub genres: Vec<(String, u64)>,
 }
 
-/// Du plus écouté au moins écouté. À égalité, l'ordre alphabétique départage : sans lui,
-/// l'ordre changeait à chaque image (celui d'une table de hachage) et les ex æquo clignotaient.
+/// From most to least played. On a tie, alphabetical order decides: without it, the order
+/// changed every frame (that of a hash table) and tied entries flickered.
 fn ranked<K: std::hash::Hash + Ord>(map: HashMap<K, u64>) -> Vec<(K, u64)> {
     let mut v: Vec<(K, u64)> = map.into_iter().filter(|e| e.1 > 0).collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     v
 }
 
-/// Écoutes d'un morceau : leur nombre et le temps vraiment écouté (secondes).
+/// Plays of a track: their number and the time really listened (seconds).
 pub type Heard = HashMap<usize, (u64, f64)>;
 
-/// Chiffres d'après les écoutes de chaque morceau (indices de la bibliothèque).
+/// Figures from each track's plays (library indices).
 pub fn compute(lib: &Library, counts: &Heard) -> Stats {
     let mut artists: HashMap<String, u64> = HashMap::new();
     let mut albums: HashMap<usize, u64> = HashMap::new();
@@ -81,8 +81,8 @@ pub fn compute(lib: &Library, counts: &Heard) -> Stats {
     }
 }
 
-/// Écoutes de l'historique, par morceau de la bibliothèque. Une écoute notée sans durée (premières
-/// versions de l'historique) compte pour le morceau entier.
+/// History plays, per library track. A play recorded without a duration (first versions of the
+/// history) counts as the whole track.
 fn count_listens<'a>(lib: &Library, listens: impl Iterator<Item = &'a Listen>) -> Heard {
     let mut counts: Heard = HashMap::new();
     for l in listens {
@@ -100,15 +100,15 @@ fn count_listens<'a>(lib: &Library, listens: impl Iterator<Item = &'a Listen>) -
     counts
 }
 
-/// Le récap d'une année.
+/// The recap of a year.
 pub struct Recap {
     pub stats: Stats,
-    /// Jour de la semaine (0 = lundi) et mois (1 → 12) où l'on a le plus écouté.
+    /// Day of the week (0 = Monday) and month (1 → 12) with the most listening.
     pub weekday: Option<usize>,
     pub month: Option<u32>,
-    /// Morceaux écoutés pour la première fois cette année-là.
+    /// Tracks played for the first time that year.
     pub discoveries: usize,
-    /// Date de la première écoute de l'historique (jours depuis l'époque Unix).
+    /// Date of the first play in the history (days since the Unix epoch).
     pub first_day: Option<i64>,
 }
 
@@ -197,7 +197,7 @@ fn month_name(m: u32) -> &'static str {
     }
 }
 
-/// « 10 novembre 2026 » / « November 10, 2026 ».
+/// "10 novembre 2026" / "November 10, 2026".
 pub fn date_text(day: i64) -> String {
     let (y, m, d) = history::civil(day);
     match crate::i18n::lang() {
@@ -206,7 +206,7 @@ pub fn date_text(day: i64) -> String {
     }
 }
 
-/// Nombre lisible : « 12 345 » (espace fine) ou « 12,345 ».
+/// Readable number: "12 345" (thin space) or "12,345".
 fn grouped(n: u64) -> String {
     let digits = n.to_string();
     let sep = match crate::i18n::lang() {
@@ -226,7 +226,8 @@ fn grouped(n: u64) -> String {
 impl SterMusic {
     fn stats_for(&self, period: Period) -> Stats {
         let mut counts: Heard = match period {
-            // Le temps écouté n'est mesuré que depuis peu : sans mesure, le morceau entier par écoute.
+            // Listening time has only been measured recently: without a measurement, the whole track per
+            // play.
             Period::All => self
                 .settings
                 .plays
@@ -253,9 +254,9 @@ impl SterMusic {
                 count_listens(&self.lib, self.listens.iter().filter(|l| l.time >= since))
             }
         };
-        // L'écoute en cours n'entre dans l'historique qu'à la fin du morceau : on l'ajoute ici
-        // pour que les chiffres bougent en direct (pour « Depuis toujours », le nombre d'écoutes
-        // y est déjà, seul le temps manque).
+        // The play in progress only enters the history at the end of the track: it is added here so
+        // the figures move live (for "All time", the play count already includes it, only the time is
+        // missing).
         if let Some((path, heard)) = self.listening_now() {
             if let Some(i) = self.lib.find(&path) {
                 let e = counts.entry(i).or_default();
@@ -268,7 +269,7 @@ impl SterMusic {
         compute(&self.lib, &counts)
     }
 
-    /// Années présentes dans l'historique, la plus récente d'abord.
+    /// Years present in the history, most recent first.
     fn history_years(&self) -> Vec<i32> {
         let mut years: Vec<i32> = self.listens.iter().map(|l| history::year_of(l.time)).collect();
         years.sort_unstable();
@@ -304,7 +305,7 @@ impl SterMusic {
             .show(ui, |ui| {
                 let w = ui.available_width() - 16.0;
                 ui.set_width(w);
-                // Le récap de l'année, en tête.
+                // The yearly recap, at the top.
                 if let Some(&year) = years.first() {
                     self.recap_banner(ui, year, &years[1..], w);
                     ui.add_space(18.0);
@@ -351,7 +352,7 @@ impl SterMusic {
                     }
                 });
                 ui.add_space(22.0);
-                // La manière d'écouter : complètes, partielles, passés ; activité, heures, jours.
+                // The way of listening: complete, partial, skipped; activity, hours, days.
                 self.stats_habits(ui, period, w);
                 ui.add_space(18.0);
                 let col_w = (w - 24.0) / 2.0;
@@ -382,7 +383,7 @@ impl SterMusic {
                         super::lists::album_card(ui, &mut c, albums[k], w)
                     });
                 }
-                // Les goûts ne se lisent que sur l'ensemble des écoutes.
+                // Taste can only be read over all plays.
                 ui.add_space(18.0);
                 self.stats_taste(ui, w);
                 if period != Period::All {
@@ -399,7 +400,7 @@ impl SterMusic {
             });
     }
 
-    /// Bandeau « Ton année en musique » qui ouvre le récap.
+    /// "Your year in music" banner that opens the recap.
     fn recap_banner(&mut self, ui: &mut egui::Ui, year: i32, others: &[i32], w: f32) {
         let (r, resp) = ui.allocate_exact_size(vec2(w, 96.0), Sense::click());
         let h = widgets::hover_t(ui, resp.id, resp.hovered());
@@ -442,7 +443,7 @@ impl SterMusic {
         }
     }
 
-    /// Liste des morceaux les plus écoutés : rang, pochette, titre, nombre d'écoutes.
+    /// List of the most played tracks: rank, album art, title, number of plays.
     fn top_tracks(&mut self, ui: &mut egui::Ui, tracks: &[(usize, u64)], n: usize, w: f32) {
         let max = tracks.first().map(|t| t.1).unwrap_or(1).max(1);
         for (k, &(i, count)) in tracks.iter().take(n).enumerate() {
@@ -476,7 +477,7 @@ impl SterMusic {
             );
             ui.painter()
                 .galley(pos2(cr.right() + 12.0, r.top() + 26.0), g, theme::TEXT_2);
-            // Petite barre proportionnelle aux écoutes, sous le nombre.
+            // Small bar proportional to the plays, under the number.
             let bar = Rect::from_min_size(pos2(r.right() - 82.0, r.center().y + 9.0), vec2(70.0, 3.0));
             ui.painter()
                 .rect_filled(bar, CornerRadius::same(2), theme::white(0x14));
@@ -500,7 +501,7 @@ impl SterMusic {
         }
     }
 
-    // ---------- Récap ----------
+    // ---------- Recap ----------
 
     pub(super) fn recap_page(&mut self, ui: &mut egui::Ui, year: i32) {
         let recap = recap(&self.lib, &self.listens, year);
@@ -532,7 +533,7 @@ impl SterMusic {
                     (r, t)
                 };
 
-                // 1. Le temps passé à écouter.
+                // 1. Time spent listening.
                 let (r, t) = card(ui, 150.0);
                 theme::brand_fill(ui.painter(), r, CornerRadius::same(16), t);
                 let minutes = (s.seconds / 60.0).round() as u64;
@@ -565,7 +566,7 @@ impl SterMusic {
                     theme::white((0xD0 as f32 * t) as u8),
                 );
 
-                // 2. Le morceau de l'année.
+                // 2. The track of the year.
                 if let Some(&(top, count)) = s.tracks.first() {
                     let (r, t) = card(ui, 200.0);
                     self.recap_panel(ui, r, t);
@@ -604,7 +605,7 @@ impl SterMusic {
                     );
                 }
 
-                // 3. Artistes et morceaux préférés, côte à côte.
+                // 3. Favorite artists and tracks, side by side.
                 let (r, t) = card(ui, 300.0);
                 let half = (w - 14.0) / 2.0;
                 let left = Rect::from_min_size(r.min, vec2(half, r.height()));
@@ -672,7 +673,7 @@ impl SterMusic {
                     }
                 }
 
-                // 4. Habitudes : genre, jour, mois, découvertes.
+                // 4. Habits: genre, day, month, discoveries.
                 let (r, t) = card(ui, 130.0);
                 let facts: Vec<(String, &str)> = [
                     s.genres.first().map(|g| (g.0.clone(), tr("ton genre n°1"))),
@@ -709,7 +710,7 @@ impl SterMusic {
                     );
                 }
 
-                // 5. Rejouer l'année.
+                // 5. Replay the year.
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let top: Vec<usize> = s.tracks.iter().take(50).map(|t| t.0).collect();
@@ -734,7 +735,7 @@ impl SterMusic {
             });
     }
 
-    /// Fond d'une carte du récap.
+    /// Background of a recap card.
     fn recap_panel(&self, ui: &egui::Ui, r: Rect, t: f32) {
         ui.painter().rect(
             r,
@@ -746,7 +747,7 @@ impl SterMusic {
     }
 }
 
-/// Flèche « ouvrir » du bandeau du récap.
+/// "Open" arrow of the recap banner.
 fn icons_chevron(ui: &egui::Ui, r: Rect, h: f32) {
     crate::icons::paint_centered(
         ui.painter(),
@@ -757,7 +758,7 @@ fn icons_chevron(ui: &egui::Ui, r: Rect, h: f32) {
     );
 }
 
-/// Barres horizontales : nom, nombre d'écoutes, longueur proportionnelle.
+/// Horizontal bars: name, number of plays, proportional length.
 fn bars(ui: &mut egui::Ui, rows: &[(String, u64)], n: usize, w: f32, id: &str) {
     let max = rows.first().map(|r| r.1).unwrap_or(1).max(1);
     for (k, (name, count)) in rows.iter().take(n).enumerate() {
@@ -786,7 +787,7 @@ fn bars(ui: &mut egui::Ui, rows: &[(String, u64)], n: usize, w: f32, id: &str) {
     }
 }
 
-/// Une cellule de CSV : entre guillemets si besoin (séparateur, guillemet, retour à la ligne).
+/// A CSV cell: quoted if needed (separator, quote, newline).
 fn cell(text: &str, sep: char) -> String {
     if text.contains(sep) || text.contains('"') || text.contains('\n') {
         format!("\"{}\"", text.replace('"', "\"\""))
@@ -795,7 +796,7 @@ fn cell(text: &str, sep: char) -> String {
     }
 }
 
-/// Date et heure locales d'un horodatage : « 2026-11-10 », « 14:05 ».
+/// Local date and time of a timestamp: "2026-11-10", "14:05".
 fn date_time(time: u64) -> (String, String) {
     let (y, m, d) = history::civil(history::local_day(time));
     let secs = (time as i64 + history::local_offset()).rem_euclid(86_400);
@@ -806,8 +807,8 @@ fn date_time(time: u64) -> (String, String) {
 }
 
 impl SterMusic {
-    /// Exporte les statistiques en CSV : une ligne par morceau (`per_track`), ou une ligne par
-    /// écoute de l'historique. Le séparateur suit la langue (« ; » pour un tableur français).
+    /// Exports the statistics as CSV: one row per track (`per_track`), or one row per history play.
+    /// The separator follows the language (";" for a French spreadsheet).
     pub(super) fn export_stats(&mut self, per_track: bool) {
         let sep = match crate::i18n::lang() {
             crate::i18n::Lang::Fr => ';',
@@ -847,7 +848,7 @@ impl SterMusic {
                 ),
             }
         };
-        // Marque d'ordre des octets : LibreOffice et Excel reconnaissent alors l'UTF-8 (accents).
+        // Byte order mark: LibreOffice and Excel then recognize UTF-8 (accents).
         let mut out = String::from("\u{feff}");
         let mut rows = 0;
         if per_track {
@@ -914,7 +915,7 @@ impl SterMusic {
         }
     }
 
-    /// Efface toutes les statistiques : compteurs d'écoutes et historique daté.
+    /// Clears all statistics: play counters and dated history.
     pub(super) fn clear_stats(&mut self) {
         self.settings.plays.clear();
         self.listens.clear();
@@ -960,7 +961,7 @@ mod tests {
             track("/b", "Y", "Pop"),
             track("/c", "X", "Rock"),
         ]);
-        // 2025 puis 2026 (midi, pour ne pas dépendre du fuseau horaire).
+        // 2025 then 2026 (noon, so as not to depend on the time zone).
         let day = |d: i64| (d * 86_400 + 12 * 3600) as u64;
         let l = |d: i64, p: &str| Listen {
             time: day(d),
@@ -980,9 +981,9 @@ mod tests {
         assert_eq!(lib.tracks[r.stats.tracks[0].0].path, PathBuf::from("/a"));
         assert_eq!(r.stats.artists[0], ("X".to_owned(), 3));
         assert_eq!(r.stats.genres[0], ("Rock".to_owned(), 3));
-        // « /a » était déjà écouté en 2025 : seuls /b et /c sont des découvertes.
+        // "/a" was already played in 2025: only /b and /c are discoveries.
         assert_eq!(r.discoveries, 2);
-        // Ex æquo : toujours le même ordre (alphabétique), d'un calcul à l'autre.
+        // Ties: always the same (alphabetical) order, from one computation to the next.
         for _ in 0..20 {
             let again = recap(&lib, &all, 2026);
             assert_eq!(again.stats.artists, r.stats.artists);

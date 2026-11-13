@@ -1,7 +1,7 @@
-//! Traductions anglaises (texte français → texte anglais). Voir `i18n.rs`.
+//! English translations (French text → English text). See `i18n.rs`.
 //!
-//! Un texte ajouté au code sans traduction ici s'affiche en français ; le test
-//! `i18n::tests::everything_translated` le signale.
+//! A text added to the code without a translation here is shown in French; the
+//! `i18n::tests::everything_translated` test reports it.
 
 pub const EN: &[(&str, &str)] = &[
     ("       Ajouter à une playlist", "       Add to a playlist"),

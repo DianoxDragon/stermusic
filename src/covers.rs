@@ -1,5 +1,5 @@
-//! Pochettes d'albums : intégrées au fichier (tags) ou image du dossier (cover.jpg, folder.jpg…).
-//! Chargées dans des threads à part, les plus récemment demandées d'abord (ce qui est à l'écran).
+//! Album art: embedded in the file (tags) or a folder image (cover.jpg, folder.jpg…). Loaded in
+//! separate threads, the most recently requested first (what is on screen).
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -38,14 +38,14 @@ struct Queue {
     cv: Condvar,
 }
 
-/// Grande pochette du morceau en cours, avec sa version floutée (fond de « En cours de lecture »).
+/// Large album art of the current track, with its blurred version ("Now Playing" background).
 pub struct LargeCover {
     pub path: PathBuf,
     pub cover: Option<TextureHandle>,
     pub blurred: Option<TextureHandle>,
-    /// Copie PNG sur le disque, pour MPRIS.
+    /// PNG copy on disk, for MPRIS.
     pub file: Option<PathBuf>,
-    /// Couleurs dominantes de la pochette (visualiseur ; voir `palette`).
+    /// Dominant colors of the album art (visualizer; see `palette`).
     pub palette: Option<[Color32; 3]>,
 }
 
@@ -84,13 +84,13 @@ impl Covers {
         self.queue.cv.notify_one();
     }
 
-    /// Vignette de la pochette de l'album de ce morceau (`None` tant qu'elle charge, ou s'il n'y en a pas).
+    /// Thumbnail of the album art of this track's album (`None` while it loads, or if there is none).
     pub fn thumb(&mut self, track: &Path) -> Option<&TextureHandle> {
         if self.thumbs.contains_key(track) {
             return self.thumbs[track].as_ref();
         }
         if self.pending.insert(track.to_path_buf()) {
-            // Défilement rapide : on oublie les plus anciennes demandes (plus à l'écran).
+            // Fast scrolling: forget the oldest requests (no longer on screen).
             let mut jobs = self.queue.jobs.lock().unwrap();
             if jobs.len() > 300 {
                 for job in jobs.drain(..150) {
@@ -106,7 +106,7 @@ impl Covers {
         None
     }
 
-    /// Grande pochette du morceau en cours.
+    /// Large album art of the current track.
     pub fn large(&mut self, track: &Path) -> Option<&LargeCover> {
         if self.large.as_ref().is_some_and(|l| l.path == track) {
             return self.large.as_ref();
@@ -153,7 +153,7 @@ impl Covers {
         }
     }
 
-    /// Oublie les pochettes de ces morceaux (leurs tags viennent d'être modifiés).
+    /// Forgets the album art of these tracks (their tags were just modified).
     pub fn forget(&mut self, paths: &[PathBuf]) {
         for p in paths {
             self.thumbs.remove(p);
@@ -165,7 +165,7 @@ impl Covers {
         }
     }
 
-    /// Oublie les vignettes (après un rescan, les pochettes ont pu changer).
+    /// Forgets the thumbnails (after a rescan, album art may have changed).
     pub fn clear(&mut self) {
         self.thumbs.clear();
         self.pending.clear();
@@ -182,7 +182,7 @@ fn worker(queue: Arc<Queue>, tx: Sender<Done>, ctx: egui::Context) {
             while jobs.is_empty() {
                 jobs = queue.cv.wait(jobs).unwrap();
             }
-            // Les grandes pochettes passent avant tout le reste.
+            // Large album art comes before everything else.
             match jobs.iter().rposition(|j| matches!(j, Job::Large(_))) {
                 Some(i) => jobs.remove(i),
                 None => jobs.pop().unwrap(),
@@ -213,20 +213,20 @@ fn worker(queue: Arc<Queue>, tx: Sender<Done>, ctx: egui::Context) {
 }
 
 fn load_source(track: &Path) -> Option<DynamicImage> {
-    // Morceau d'un serveur : sa pochette est en ligne ; morceau CUE : celle de son vrai fichier.
+    // Server track: its album art is online; CUE track: that of its real file.
     if let Some(url) = crate::library::cover_url(track) {
         return remote_image(&url);
     }
     let file = crate::library::real_file(track)?;
     embedded(&file).or_else(|| {
-        // Dossier où se mélangent plusieurs albums : son image n'est pas celle de ce morceau.
+        // Folder mixing several albums: its image is not this track's.
         crate::library::folder_art_allowed(track)
             .then(|| folder_image(&file))
             .flatten()
     })
 }
 
-/// Pochette téléchargée (gardée dans le cache : elle ne change pas d'un lancement à l'autre).
+/// Downloaded album art (kept in the cache: it doesn't change from one launch to the next).
 fn remote_image(url: &str) -> Option<DynamicImage> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -261,7 +261,7 @@ fn embedded(track: &Path) -> Option<DynamicImage> {
     image::load_from_memory(pic.data()).ok()
 }
 
-/// Vrai si le morceau a une pochette à montrer : intégrée à ses tags, ou image de son dossier.
+/// True if the track has album art to show: embedded in its tags, or an image in its folder.
 pub fn has_cover(track: &Path) -> bool {
     if crate::library::cover_url(track).is_some() {
         return true;
@@ -278,14 +278,14 @@ pub fn has_cover(track: &Path) -> bool {
     embedded || (folder_ok && !folder_candidates(track).is_empty())
 }
 
-/// cover.jpg, folder.png, front.jpg… dans le dossier du morceau.
+/// cover.jpg, folder.png, front.jpg… in the track's folder.
 fn folder_image(track: &Path) -> Option<DynamicImage> {
     folder_candidates(track)
         .into_iter()
         .find_map(|p| image::open(p).ok())
 }
 
-/// Images du dossier qui peuvent servir de pochette, les noms les plus courants d'abord.
+/// Folder images that can serve as album art, the most common names first.
 fn folder_candidates(track: &Path) -> Vec<PathBuf> {
     const NAMES: &[&str] = &[
         "cover",
@@ -318,7 +318,7 @@ fn folder_candidates(track: &Path) -> Vec<PathBuf> {
     candidates.into_iter().map(|(_, p)| p).collect()
 }
 
-/// Recadrage carré au centre, puis mise à la taille voulue.
+/// Square crop at the center, then resized to the wanted size.
 fn square(img: &DynamicImage, size: u32) -> RgbaImage {
     let (w, h) = (img.width(), img.height());
     let s = w.min(h).max(1);
@@ -333,7 +333,7 @@ fn to_color(img: &RgbaImage) -> ColorImage {
     ColorImage::from_rgba_unmultiplied([img.width() as usize, img.height() as usize], img.as_raw())
 }
 
-/// Copie de la pochette dans `~/.cache/stermusic/covers/` (le bureau l'affiche via MPRIS).
+/// Copy of the album art in `~/.cache/stermusic/covers/` (the desktop shows it through MPRIS).
 fn save_png(track: &Path, img: &DynamicImage) -> Option<PathBuf> {
     let dir = crate::library::cache_dir().join("covers");
     std::fs::create_dir_all(&dir).ok()?;
@@ -346,15 +346,15 @@ fn save_png(track: &Path, img: &DynamicImage) -> Option<PathBuf> {
     Some(file)
 }
 
-/// Couleurs dominantes d'une pochette, pour le visualiseur : la teinte la plus présente, puis
-/// deux autres (ou des voisines). Une pochette aux couleurs éteintes (pastel, sépia, sombre) donne
-/// quand même ses teintes, ravivées ; une pochette en noir et blanc, une lumière argentée. Le
-/// visualiseur ne retombe ainsi jamais sur les couleurs du thème quand il y a une pochette.
+/// Dominant colors of an album art, for the visualizer: the most present hue, then two others
+/// (or neighbors). An album art with muted colors (pastel, sepia, dark) still gives its hues,
+/// revived; a black and white album art, a silvery light. The visualizer thus never falls back
+/// on the theme colors when there is album art.
 fn palette(img: &RgbaImage) -> Option<[Color32; 3]> {
     let pixels = img.pixels().len() as f32;
     let (mut weight, mut sum) = hue_histogram(img, 0.18, 0.12, true);
     let mut total: f32 = weight.iter().sum();
-    // Moins de ~3 % de pixels francs : on écoute les couleurs faibles.
+    // Less than ~3 % of vivid pixels: listen to the faint colors.
     let muted = total < pixels * 0.02;
     if muted {
         (weight, sum) = hue_histogram(img, 0.06, 0.08, false);
@@ -391,15 +391,15 @@ fn palette(img: &RgbaImage) -> Option<[Color32; 3]> {
 
 const BINS: usize = 18;
 
-/// Lumière argentée, pour une pochette en noir et blanc.
+/// Silvery light, for a black and white album art.
 const NEUTRAL: [Color32; 3] = [
     Color32::from_rgb(214, 220, 236),
     Color32::from_rgb(150, 162, 190),
     Color32::from_rgb(96, 106, 132),
 ];
 
-/// Poids et somme des couleurs par teinte, pour les pixels au moins aussi saturés que `min_sat`
-/// et aussi clairs que `min_light`. `strict` favorise nettement les couleurs franches.
+/// Weight and sum of colors per hue, for pixels at least as saturated as `min_sat` and as light
+/// as `min_light`. `strict` clearly favors vivid colors.
 fn hue_histogram(img: &RgbaImage, min_sat: f32, min_light: f32, strict: bool) -> ([f32; BINS], [[f32; 3]; BINS]) {
     let mut weight = [0f32; BINS];
     let mut sum = [[0f32; 3]; BINS];
@@ -428,9 +428,8 @@ fn hue_histogram(img: &RgbaImage, min_sat: f32, min_light: f32, strict: bool) ->
     (weight, sum)
 }
 
-/// Couleur ravivée : saturation et luminosité remontées, pour une lumière sur fond sombre.
-/// Une couleur pâle ou éteinte est d'abord relevée jusqu'à une demi-saturation : sa teinte se
-/// voit, au lieu d'une lumière blanchâtre.
+/// Revived color: saturation and brightness raised, for a light on a dark background. A pale or
+/// muted color is first raised to half saturation: its hue shows, instead of a whitish light.
 fn vivid(r: f32, g: f32, b: f32) -> Color32 {
     let min_sat = 0.5;
     let max = r.max(g).max(b).max(1e-3);
@@ -445,7 +444,7 @@ fn vivid(r: f32, g: f32, b: f32) -> Color32 {
     Color32::from_rgb(boost(r), boost(g), boost(b))
 }
 
-/// Variante voisine d'une couleur (quand la pochette n'a qu'une teinte).
+/// Neighboring variant of a color (when the album art has only one hue).
 fn shift(c: Color32) -> Color32 {
     let mix = |x: u8, y: u8| ((x as u16 + y as u16) / 2) as u8;
     Color32::from_rgb(mix(c.r(), c.b()), mix(c.g(), c.r()), mix(c.b(), c.g()))
@@ -463,21 +462,21 @@ mod palette_tests {
         (c.r() > c.g(), c.g() > c.b(), c.b() > c.r())
     }
 
-    /// Une pochette donne toujours ses propres couleurs : franches, éteintes (ravivées), ou une
-    /// lumière argentée pour du noir et blanc ; jamais « rien » (les couleurs du thème).
+    /// An album art always gives its own colors: vivid, muted (revived), or a silvery light for
+    /// black and white; never "nothing" (the theme colors).
     #[test]
     fn every_cover_has_a_palette() {
-        // Rouge franc.
+        // Vivid red.
         let p = palette(&flat(200, 30, 20)).unwrap();
         assert!(p[0].r() > 200 && p[0].g() < 90);
-        // Sépia éteint : une teinte chaude, nettement plus saturée que l'image.
+        // Muted sepia: a warm hue, clearly more saturated than the image.
         let p = palette(&flat(120, 105, 90)).unwrap();
         assert_eq!(hue_of(p[0]), (true, true, false));
         assert!(p[0].r() as i32 - p[0].b() as i32 > 80, "{:?}", p[0]);
-        // Bleu nuit très sombre mais coloré.
+        // Very dark but colored midnight blue.
         let p = palette(&flat(20, 26, 44)).unwrap();
         assert!(p[0].b() > p[0].r() && p[0].b() > 150, "{:?}", p[0]);
-        // Noir et blanc : argenté, pas de teinte marquée.
+        // Black and white: silvery, no marked hue.
         assert_eq!(palette(&flat(128, 128, 128)), Some(NEUTRAL));
         assert_eq!(palette(&flat(0, 0, 0)), Some(NEUTRAL));
     }

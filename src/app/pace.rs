@@ -1,16 +1,16 @@
-//! Cadence des images. La synchronisation verticale est coupée (voir `main.rs`) : sans elle,
-//! une animation continue (visualiseur) dessinerait des milliers d'images par seconde. Chaque
-//! image attend donc son tour, au rythme de l'écran où se trouve la fenêtre.
+//! Frame pacing. Vertical sync is off (see `main.rs`): without it, a continuous animation
+//! (visualizer) would draw thousands of frames per second. Each frame therefore waits its turn,
+//! at the refresh rate of the screen the window is on.
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-/// Fréquence prise quand celle de l'écran est inconnue.
+/// Refresh rate used when the screen's is unknown.
 const DEFAULT_HZ: f32 = 60.0;
 
-/// Fréquences des écrans (par nom : « DP-1 »…), lues une fois en arrière-plan.
+/// Refresh rates of the screens (by name: "DP-1"…), read once in the background.
 fn rates() -> Option<&'static HashMap<String, f32>> {
     static RATES: OnceLock<HashMap<String, f32>> = OnceLock::new();
     static STARTED: std::sync::Once = std::sync::Once::new();
@@ -24,7 +24,7 @@ fn rates() -> Option<&'static HashMap<String, f32>> {
 
 fn read_rates() -> HashMap<String, f32> {
     let mut out = HashMap::new();
-    // KDE Plasma : kscreen-doctor donne le mode de chaque écran.
+    // KDE Plasma: kscreen-doctor gives the mode of each screen.
     if let Ok(o) = Command::new("kscreen-doctor").arg("-j").stderr(Stdio::null()).output() {
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&o.stdout) {
             for output in v.get("outputs").and_then(|o| o.as_array()).into_iter().flatten() {
@@ -42,7 +42,7 @@ fn read_rates() -> HashMap<String, f32> {
             }
         }
     }
-    // Ailleurs : xrandr (Xwayland), mode courant marqué d'une étoile.
+    // Elsewhere: xrandr (Xwayland), current mode marked with a star.
     if out.is_empty() {
         if let Ok(o) = Command::new("xrandr").arg("--current").stderr(Stdio::null()).output() {
             let text = String::from_utf8_lossy(&o.stdout);
@@ -63,7 +63,7 @@ fn read_rates() -> HashMap<String, f32> {
     out
 }
 
-/// Fréquence de l'écran `output` (sinon la plus haute des écrans connus).
+/// Refresh rate of the `output` screen (otherwise the highest of the known screens).
 fn refresh_rate(output: Option<&str>) -> f32 {
     let Some(rates) = rates() else { return DEFAULT_HZ };
     output
@@ -79,9 +79,9 @@ pub struct Pacer {
 }
 
 impl Pacer {
-    /// Attend, si besoin, que l'intervalle d'une image (à la fréquence de l'écran `output`) soit
-    /// écoulé depuis la précédente. Fenêtre réduite ou cachée (`unseen`) : quatre images par
-    /// seconde au plus, assez pour que la lecture suive (morceau suivant, minuterie…).
+    /// Waits, if needed, until one frame interval (at the refresh rate of the `output` screen) has
+    /// elapsed since the previous frame. Minimized or hidden window (`unseen`): four frames per
+    /// second at most, enough for playback to keep going (next track, sleep timer…).
     pub fn wait(&mut self, output: Option<&str>, unseen: bool) {
         let hz = if unseen { 4.0 } else { refresh_rate(output) };
         let interval = Duration::from_secs_f32(1.0 / hz);

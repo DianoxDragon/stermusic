@@ -1,9 +1,9 @@
-//! Notes (étoiles) : les réglages en gardent une copie pour l'affichage et les tris, et elles
-//! sont inscrites dans les fichiers (voir `tags::write_rating`), par un thread à part.
+//! Ratings (stars): the settings keep a copy for display and sorting, and they are written to
+//! the files (see `tags::write_rating`) by a separate thread.
 //!
-//! Au chargement de la bibliothèque, les deux se recollent : une note trouvée dans un fichier
-//! (posée par un autre lecteur, ou par SterMusic sur un autre ordinateur) l'emporte ; une note
-//! des réglages absente du fichier (donnée avant que SterMusic les y écrive) y est inscrite.
+//! When the library loads, the two are reconciled: a rating found in a file (set by another
+//! player, or by SterMusic on another computer) wins; a rating from the settings that is
+//! missing from the file (given before SterMusic wrote them there) is written to it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -16,7 +16,7 @@ struct Job {
     path: PathBuf,
     stars: u8,
     opts: WriteOpts,
-    /// Note donnée à l'instant (une erreur mérite alors un message).
+    /// Rating given just now (an error then deserves a message).
     asked: bool,
 }
 
@@ -30,12 +30,11 @@ struct Done {
 pub struct RatingWriter {
     tx: Sender<Job>,
     rx: Receiver<Done>,
-    /// Écritures en cours, par fichier (la dernière note demandée).
+    /// Writes in progress, per file (the last rating requested).
     pending: HashMap<PathBuf, u8>,
-    /// Fichiers où l'écriture a échoué pendant cette session : on ne réessaie pas à chaque
-    /// rechargement de la bibliothèque.
+    /// Files where writing failed during this session: no retry on every library reload.
     failed: HashSet<PathBuf>,
-    /// Le cache de la bibliothèque est à réenregistrer quand tout sera écrit.
+    /// The library cache must be saved again once everything is written.
     dirty: bool,
 }
 
@@ -67,7 +66,7 @@ impl RatingWriter {
 }
 
 impl SterMusic {
-    /// Note `stars` (0 : retirée) donnée au morceau `i` de la bibliothèque.
+    /// Rating `stars` (0: removed) given to library track `i`.
     pub(super) fn set_rating(&mut self, i: usize, stars: u8) {
         let Some(t) = self.lib.tracks.get(i) else { return };
         let path = t.path.clone();
@@ -84,8 +83,8 @@ impl SterMusic {
     }
 
     fn write_rating(&mut self, path: PathBuf, stars: u8, asked: bool) {
-        // Le morceau en cours (ou celui déjà ouvert pour lui succéder) est lu par le décodeur :
-        // il est réécrit dans une copie, sans toucher au fichier ouvert.
+        // The current track (or the one already opened to follow it) is being read by the decoder: it
+        // is rewritten into a copy, without touching the open file.
         let open = self.now_loaded.lock().ok().and_then(|p| p.clone()).as_ref() == Some(&path)
             || self
                 .player
@@ -95,7 +94,7 @@ impl SterMusic {
                 == Some(path.as_path());
         let opts = WriteOpts {
             id3v23: self.settings.tag_id3v23,
-            // Une note ne change pas la musique : l'album ne remonte pas dans « Ajoutés récemment ».
+            // A rating doesn't change the music: the album doesn't move up in "Recently added".
             keep_mtime: true,
             via_copy: open,
         };
@@ -103,11 +102,11 @@ impl SterMusic {
         let _ = self.ratings.tx.send(Job { path, stars, opts, asked });
     }
 
-    /// Recolle les notes des réglages et celles des fichiers (au chargement de la bibliothèque).
+    /// Reconciles the ratings of the settings and those of the files (when the library loads).
     pub(super) fn sync_ratings(&mut self) {
         let mut to_write = Vec::new();
-        // Un morceau du cache lu par une version plus ancienne ne connaît pas encore la note de
-        // son fichier : il attend d'être relu.
+        // A cache track read by an older version doesn't know its file's rating yet: it waits to be
+        // read again.
         let fresh = |t: &&crate::library::Track| t.is_plain_file() && t.schema >= crate::library::TRACK_SCHEMA;
         for t in self.lib.tracks.iter().filter(fresh) {
             if self.ratings.pending.contains_key(&t.path) {
@@ -132,7 +131,7 @@ impl SterMusic {
         self.smart_cache.borrow_mut().clear();
     }
 
-    /// Résultats des écritures de notes.
+    /// Results of rating writes.
     pub(super) fn poll_ratings(&mut self) {
         let mut error = None;
         while let Ok(done) = self.ratings.rx.try_recv() {

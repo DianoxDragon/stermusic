@@ -1,7 +1,7 @@
-//! Ajout de SterMusic : fichiers glissés sur la fenêtre (Wayland).
+//! SterMusic addition: files dragged onto the window (Wayland).
 //!
-//! Le fil du presse-papiers accepte les glisser qui proposent une liste de fichiers et range ici
-//! ce qui est déposé ; l'application vient le chercher à chaque image.
+//! The clipboard thread accepts drags offering a list of files and stores here what is
+//! dropped; the application fetches it every frame.
 
 use std::sync::Mutex;
 
@@ -9,7 +9,7 @@ pub(crate) const URI_LIST: &str = "text/uri-list";
 
 struct Shared {
     hovering: bool,
-    /// Listes « text/uri-list » reçues, telles quelles.
+    /// "text/uri-list" lists received, as is.
     dropped: Vec<String>,
     waker: Option<Box<dyn Fn() + Send>>,
 }
@@ -36,17 +36,17 @@ pub(crate) fn push_dropped(uri_list: String) {
     wake(&s);
 }
 
-/// Appelée quand des fichiers survolent la fenêtre, la quittent ou y sont déposés (pour redessiner).
+/// Called when files hover the window, leave it or are dropped on it (to redraw).
 pub fn set_waker(waker: impl Fn() + Send + 'static) {
     SHARED.lock().unwrap().waker = Some(Box::new(waker));
 }
 
-/// Des fichiers survolent la fenêtre.
+/// Files are hovering the window.
 pub fn hovering() -> bool {
     SHARED.lock().unwrap().hovering
 }
 
-/// Listes de fichiers déposées depuis le dernier appel (format « text/uri-list »).
+/// File lists dropped since the last call ("text/uri-list" format).
 pub fn take_dropped() -> Vec<String> {
     std::mem::take(&mut SHARED.lock().unwrap().dropped)
 }

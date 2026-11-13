@@ -1,10 +1,9 @@
-//! Icônes, teintées à l'affichage : celles du thème Breeze de KDE quand le style Breeze est
-//! actif (cohérence avec Kubuntu), sinon les icônes Lucide intégrées (licence ISC), comme dans
-//! SterCode. Une icône absente du système retombe sur Lucide.
+//! Icons, tinted when drawn: those of KDE's Breeze theme when the Breeze style is on
+//! (consistency with Kubuntu), otherwise the built-in Lucide icons (ISC license), as in
+//! SterCode. An icon missing from the system falls back to Lucide.
 //!
-//! Chaque icône est rendue à la taille exacte où elle s'affiche, alignée sur les pixels :
-//! le cache de textures d'egui ne tient pas compte de la taille demandée, d'où la taille
-//! glissée dans l'URI.
+//! Each icon is rendered at the exact size it is shown at, aligned to pixels: egui's texture
+//! cache ignores the requested size, hence the size slipped into the URI.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -119,7 +118,7 @@ icons! {
     Cast => "cast.svg",
 }
 
-/// Rectangle aligné sur la grille des pixels physiques.
+/// Rectangle aligned to the physical pixel grid.
 fn snap(ctx: &egui::Context, rect: Rect) -> (Rect, u32) {
     let ppp = ctx.pixels_per_point();
     let px = (rect.width() * ppp).round().max(1.0);
@@ -127,7 +126,7 @@ fn snap(ctx: &egui::Context, rect: Rect) -> (Rect, u32) {
     (Rect::from_min_size(min, egui::Vec2::splat(px / ppp)), px as u32)
 }
 
-/// Nom de l'icône équivalente dans le thème Breeze (freedesktop).
+/// Name of the equivalent icon in the Breeze (freedesktop) theme.
 fn breeze_name(icon: Icon) -> Option<&'static str> {
     use Icon::*;
     Some(match icon {
@@ -202,7 +201,7 @@ fn breeze_name(icon: Icon) -> Option<&'static str> {
 type Cache = Mutex<HashMap<(&'static str, u32), Option<Arc<[u8]>>>>;
 static SYSTEM: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
 
-/// SVG de l'icône Breeze (sombre), recoloré en blanc pour être teinté ; `None` si absent.
+/// SVG of the (dark) Breeze icon, recolored white so it can be tinted; `None` if missing.
 fn system_svg(name: &'static str, px: u32) -> Option<Arc<[u8]>> {
     let cache = SYSTEM.get_or_init(Default::default);
     let size = if px <= 16 { 16 } else { 22 };
@@ -224,7 +223,7 @@ fn system_svg(name: &'static str, px: u32) -> Option<Arc<[u8]>> {
                     .find(|p| p.is_file())
             })?;
             let text = std::fs::read_to_string(file).ok()?;
-            // Toutes les couleurs du jeu Breeze → blanc : la teinte est appliquée à l'affichage.
+            // Every color of the Breeze set → white: the tint is applied when drawing.
             let text = text
                 .replace("currentColor", "#ffffff")
                 .replace("#fcfcfc", "#ffffff")
@@ -235,8 +234,8 @@ fn system_svg(name: &'static str, px: u32) -> Option<Arc<[u8]>> {
         .clone()
 }
 
-/// Épaissit une icône Breeze : ses formes pleines n'ont que des traits d'un pixel, peu lisibles
-/// sur fond sombre. Un fin contour de la même couleur les grossit uniformément.
+/// Thickens a Breeze icon: its filled shapes only have one-pixel strokes, hard to read on a
+/// dark background. A thin outline of the same color fattens them evenly.
 fn embolden(svg: &str) -> String {
     const STYLE: &str = "<style type=\"text/css\">path, rect, circle, ellipse, polygon { stroke: #ffffff; stroke-width: 0.7; stroke-linejoin: round; }</style>";
     match svg
@@ -268,15 +267,15 @@ fn lucide(icon: Icon, px: u32) -> egui::Image<'static> {
     })
 }
 
-/// Vrai si l'icône sera dessinée depuis le thème Breeze du système.
+/// True if the icon will be drawn from the system's Breeze theme.
 fn uses_breeze(icon: Icon) -> bool {
     breeze_name(icon).is_some_and(|n| system_svg(n, 22).is_some())
 }
 
-/// Dessine l'icône dans `rect`, teintée de `color`.
+/// Draws the icon in `rect`, tinted with `color`.
 pub fn paint(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
-    // Les icônes Breeze sont dessinées au pixel près pour 16 et 22 px : ailleurs, leurs traits
-    // d'un pixel deviennent flous et pâles. On les cale sur la taille d'origine la plus proche.
+    // Breeze icons are pixel-perfect at 16 and 22 px: at other sizes, their one-pixel strokes
+    // become blurry and pale. They are snapped to the closest original size.
     let rect = if uses_breeze(icon) && (12.0..=27.0).contains(&rect.width()) {
         let size = if rect.width() >= 19.0 { 22.0 } else { 16.0 };
         Rect::from_center_size(rect.center(), egui::Vec2::splat(size))
@@ -291,7 +290,7 @@ pub fn paint(painter: &egui::Painter, icon: Icon, rect: Rect, color: Color32) {
     }
 }
 
-/// Dessine l'icône centrée sur `center`, de côté `size`.
+/// Draws the icon centered on `center`, with side `size`.
 pub fn paint_centered(painter: &egui::Painter, icon: Icon, center: egui::Pos2, size: f32, color: Color32) {
     paint(
         painter,

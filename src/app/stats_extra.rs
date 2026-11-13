@@ -1,9 +1,9 @@
-//! Statistiques, suite : la manière d'écouter (écoutes complètes, partielles, morceaux passés),
-//! l'activité au fil du temps, les heures et les jours, les morceaux préférés (meilleur
-//! engagement) et ceux qu'on passe le plus.
+//! Statistics, continued: the way you listen (complete and partial plays, skipped tracks),
+//! activity over time, hours and days, favorite tracks (best engagement) and the most skipped
+//! ones.
 //!
-//! Tout cela vient de l'historique daté ; les morceaux passés n'y sont notés que depuis la
-//! version qui a introduit ces chiffres.
+//! All of this comes from the dated history; skipped tracks are only recorded there since the
+//! version that introduced these figures.
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense};
 
@@ -14,8 +14,8 @@ use crate::i18n::tr;
 use crate::library::plural;
 use crate::{anim, theme, trf, widgets};
 
-/// Une écoute est complète si l'on est allé (presque) au bout : neuf dixièmes du morceau, ou
-/// ses quinze dernières secondes (un fondu enchaîné coupe la fin).
+/// A play is complete if it went (almost) to the end: nine tenths of the track, or its last
+/// fifteen seconds (a crossfade cuts the end).
 pub fn is_complete(heard_secs: f64, duration_secs: f64) -> bool {
     duration_secs > 0.0 && heard_secs >= (0.9 * duration_secs).min(duration_secs - 15.0)
 }
@@ -28,19 +28,19 @@ fn in_period(time: u64, period: Period) -> bool {
     }
 }
 
-/// Manière d'écouter sur une période.
+/// Way of listening over a period.
 #[derive(Default, Debug, PartialEq)]
 pub struct Habits {
     pub complete: u64,
     pub partial: u64,
     pub skipped: u64,
-    /// Écoutes par heure de la journée (heure locale) et par jour de la semaine (lundi d'abord).
+    /// Plays per hour of the day (local time) and per day of the week (Monday first).
     pub hours: [u64; 24],
     pub weekdays: [u64; 7],
 }
 
 impl Habits {
-    /// `duration` donne la durée d'un morceau (secondes), s'il est encore dans la bibliothèque.
+    /// `duration` gives the duration of a track (seconds), if it is still in the library.
     pub fn compute<'a>(
         listens: impl Iterator<Item = &'a Listen>,
         skips: impl Iterator<Item = &'a Listen>,
@@ -51,7 +51,7 @@ impl Habits {
             let local = l.time as i64 + history::local_offset();
             h.hours[(local.rem_euclid(86_400) / 3600) as usize] += 1;
             h.weekdays[history::weekday(history::local_day(l.time))] += 1;
-            // Sans durée mesurée (anciennes lignes) ou sans le morceau, on ne peut pas trancher.
+            // Without a measured duration (old lines) or without the track, we cannot decide.
             if l.seconds > 0 {
                 if let Some(d) = duration(l) {
                     if is_complete(l.seconds as f64, d) {
@@ -67,8 +67,8 @@ impl Habits {
     }
 }
 
-/// Écoutes par tranche de temps : les valeurs, le nom de chaque tranche (bulle), et l'étiquette
-/// affichée sous certaines.
+/// Plays per time slot: the values, the name of each slot (tooltip), and the label shown under
+/// some of them.
 struct Activity {
     values: Vec<u64>,
     names: Vec<String>,
@@ -95,7 +95,7 @@ fn month_short(m: u32) -> &'static str {
 fn activity(listens: &[Listen], period: Period) -> Activity {
     let today = history::local_day(now_secs());
     match period {
-        // Trente jours, un par colonne.
+        // Thirty days, one per column.
         Period::Month => {
             let mut values = vec![0u64; 30];
             for l in listens {
@@ -115,7 +115,7 @@ fn activity(listens: &[Listen], period: Period) -> Activity {
                     .collect(),
             }
         }
-        // Les mois : ceux de l'année, ou les vingt-quatre derniers.
+        // The months: those of the year, or the last twenty-four.
         _ => {
             let (year, month, _) = history::civil(today);
             let index = |y: i32, m: u32| y as i64 * 12 + m as i64 - 1;
@@ -167,7 +167,7 @@ fn activity(listens: &[Listen], period: Period) -> Activity {
     }
 }
 
-/// Une note en petit, qui passe à la ligne dans sa colonne.
+/// A small note, wrapping within its column.
 fn note(ui: &mut egui::Ui, text: &str, small: bool) {
     let mut rich = RichText::new(text).color(theme::TEXT_3);
     if small {
@@ -176,8 +176,8 @@ fn note(ui: &mut egui::Ui, text: &str, small: bool) {
     ui.add(egui::Label::new(rich).wrap());
 }
 
-/// Diagramme en colonnes : une colonne par valeur, son nom et sa valeur en bulle au survol, une
-/// étiquette sous celles qui en ont une.
+/// Column chart: one column per value, its name and value in a tooltip on hover, a label under
+/// those that have one.
 fn columns(ui: &mut egui::Ui, id: &str, values: &[u64], names: &[String], labels: &[String], w: f32, h: f32) {
     let (rect, resp) = ui.allocate_exact_size(vec2(w, h + 20.0), Sense::hover());
     let n = values.len().max(1);
@@ -220,7 +220,7 @@ impl SterMusic {
         )
     }
 
-    /// « Comment tu écoutes », l'activité, les heures et les jours.
+    /// "How you listen", activity, hours and days.
     pub(super) fn stats_habits(&mut self, ui: &mut egui::Ui, period: Period, w: f32) {
         let habits = self.habits(period);
         let dated: Vec<Listen> = self.listens.iter().filter(|l| in_period(l.time, period)).cloned().collect();
@@ -277,7 +277,7 @@ impl SterMusic {
         });
     }
 
-    /// Barre en trois parts : écoutes complètes, partielles, morceaux passés.
+    /// Bar in three parts: complete plays, partial plays, skipped tracks.
     fn completion_bar(&self, ui: &mut egui::Ui, h: &Habits, w: f32) {
         let total = h.complete + h.partial + h.skipped;
         if total == 0 {
@@ -346,7 +346,7 @@ impl SterMusic {
         }
     }
 
-    /// « Tes préférés » (meilleur engagement) et « Tu les passes souvent ».
+    /// "Your favorites" (best engagement) and "You often skip these".
     pub(super) fn stats_taste(&mut self, ui: &mut egui::Ui, w: f32) {
         let favorites: Vec<(usize, String, f32)> = self
             .engagements(3)
@@ -406,7 +406,7 @@ impl SterMusic {
         });
     }
 
-    /// Lignes de morceaux avec une valeur et une petite barre (0 → 1).
+    /// Track rows with a value and a small bar (0 → 1).
     fn taste_rows(&mut self, ui: &mut egui::Ui, rows: &[(usize, String, f32)], w: f32, accent: bool) {
         for (k, (i, label, ratio)) in rows.iter().enumerate() {
             let (r, resp) = ui.allocate_exact_size(vec2(w, 44.0), Sense::click());
@@ -450,9 +450,9 @@ mod tests {
 
     #[test]
     fn complete_or_partial() {
-        // Morceau de 4 minutes : complet à partir de 3 min 36 (neuf dixièmes).
+        // 4-minute track: complete from 3 min 36 (nine tenths).
         assert!(is_complete(216.0, 240.0) && !is_complete(200.0, 240.0));
-        // Morceau d'une minute : ses quinze dernières secondes peuvent manquer (fondu).
+        // One-minute track: its last fifteen seconds may be missing (fade).
         assert!(is_complete(45.0, 60.0) && !is_complete(40.0, 60.0));
         assert!(!is_complete(10.0, 0.0));
     }
@@ -468,7 +468,7 @@ mod tests {
         let listens = [listen(1_762_790_400, 235, false), listen(1_762_794_000, 90, false), listen(1_762_797_600, 0, false)];
         let skips = [listen(1_762_790_000, 6, true)];
         let h = Habits::compute(listens.iter(), skips.iter(), |_| Some(240.0));
-        // La troisième écoute n'a pas de durée mesurée : ni complète ni partielle.
+        // The third play has no measured duration: neither complete nor partial.
         assert_eq!((h.complete, h.partial, h.skipped), (1, 1, 1));
         assert_eq!(h.hours.iter().sum::<u64>(), 3);
         assert_eq!(h.weekdays.iter().sum::<u64>(), 3);

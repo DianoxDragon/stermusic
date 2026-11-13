@@ -1,5 +1,4 @@
-//! Pages : accueil, bibliothèque, album, artiste, file d'attente, playlists, recherche,
-//! en cours de lecture, paramètres.
+//! Pages: home, library, album, artist, queue, playlists, search, now playing, settings.
 
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, Stroke,
@@ -16,7 +15,7 @@ use crate::{anim, theme, widgets};
 
 const PAD_X: f32 = 32.0;
 
-/// Textes de l'en-tête d'une page de détail (album, artiste, playlist).
+/// Header texts of a detail page (album, artist, playlist).
 pub(super) struct Header<'a> {
     pub kind: &'a str,
     pub title: &'a str,
@@ -24,10 +23,10 @@ pub(super) struct Header<'a> {
     pub info: &'a str,
 }
 
-/// Tri de la page Playlists.
+/// Sorting of the Playlists page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
 pub enum PlSort {
-    /// Favoris, intelligentes, puis les miennes dans l'ordre de leur création.
+    /// Favorites, smart playlists, then mine in the order they were created.
     #[default]
     Default,
     Name,
@@ -44,8 +43,8 @@ fn meta(ui: &mut egui::Ui, text: &str) {
 }
 
 impl SterMusic {
-    /// Un visualiseur dans « En cours de lecture » : toute la page (« plein écran »), ou une bande
-    /// sous le contenu avec un long fondu vers le haut.
+    /// A visualizer in "Now Playing": the whole page ("full screen"), or a band under the content
+    /// with a long fade towards the top.
     fn paint_np_style(
         &self,
         ui: &egui::Ui,
@@ -75,8 +74,8 @@ impl SterMusic {
         crate::shader::paint(ui.painter(), rect, w);
     }
 
-    /// Un visualiseur dans le bandeau de l'accueil : discret, zoomé (motifs larges et calmes),
-    /// découpé aux coins arrondis.
+    /// A visualizer in the home page banner: discreet, zoomed in (broad and calm patterns), clipped
+    /// to the rounded corners.
     fn paint_banner_style(
         &self,
         ui: &egui::Ui,
@@ -105,7 +104,7 @@ impl SterMusic {
         crate::shader::paint(ui.painter(), rect, w);
     }
 
-    /// Égaliseur graphique 10 bandes : interrupteur, préréglages, pré-amplification et curseurs.
+    /// 10-band graphic equalizer: switch, presets, preamp and sliders.
     pub(super) fn equalizer_panel(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         ui.horizontal(|ui| {
@@ -132,8 +131,8 @@ impl SterMusic {
             });
         });
         ui.add_space(6.0);
-        // Préréglages en puces (une liste déroulante, dans la bulle de la barre de lecture,
-        // fermerait la bulle au moindre clic).
+        // Presets as chips (a drop-down list, in the playback bar popup, would close the popup at the
+        // slightest click).
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
             for (name, gains) in crate::dsp::PRESETS {
@@ -146,7 +145,7 @@ impl SterMusic {
             }
         });
         ui.add_space(10.0);
-        // Éteint : les curseurs restent réglables, mais estompés.
+        // Off: the sliders stay adjustable, but dimmed.
         let on = self.settings.eq_on;
         ui.scope(|ui| {
             if !on {
@@ -205,8 +204,8 @@ impl SterMusic {
         }
     }
 
-    /// « Tout lire » qui réagit : quand cette liste est en cours de lecture, il devient
-    /// « Pause » / « Reprendre » (avec l'égaliseur animé à côté).
+    /// Responsive "Play all": when this list is playing, it becomes "Pause" / "Resume" (with the
+    /// animated equalizer next to it).
     pub(super) fn play_all_button(&mut self, ui: &mut egui::Ui, tracks: &[usize]) {
         let loaded = self.player.as_ref().is_some_and(|p| p.has_track());
         let here = loaded && self.current().is_some_and(|c| tracks.contains(&c));
@@ -232,7 +231,7 @@ impl SterMusic {
         }
     }
 
-    /// Champ de recherche aligné à droite sur la ligne des boutons de l'en-tête (album, artiste).
+    /// Search field aligned to the right on the row of header buttons (album, artist).
     pub(super) fn detail_search_field(&mut self, ui: &mut egui::Ui, hint: &str) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let w = ui.available_width().clamp(160.0, 280.0);
@@ -246,15 +245,15 @@ impl SterMusic {
         });
     }
 
-    /// En-tête d'une liste dont les colonnes trient (tri gardé par vue, le temps de la session),
-    /// et la liste triée en conséquence.
+    /// Header of a list whose columns sort (sorting kept per view, for the session), and the list
+    /// sorted accordingly.
     pub(super) fn sortable_header(&mut self, ui: &mut egui::Ui, opts: &ListOpts, view: &str, list: &mut [usize]) {
         let spec = self.list_sorts.entry(view.to_owned()).or_default();
         lists::header_sortable(ui, opts, Some(spec));
         spec.sort(&self.lib, list);
     }
 
-    /// Les morceaux de `tracks` qui correspondent à la recherche de la page.
+    /// The tracks of `tracks` that match the page's search.
     pub(super) fn filtered(&self, tracks: &[usize]) -> Vec<usize> {
         tracks
             .iter()
@@ -273,7 +272,7 @@ impl SterMusic {
         q.is_empty() || self.lib.track_matches(t, &q)
     }
 
-    /// Zone de contenu : un calque légèrement plus clair, arrondi en haut à gauche (Fluent).
+    /// Content area: a slightly lighter layer, rounded at the top left (Fluent).
     pub(super) fn content(&mut self, ui: &mut egui::Ui) {
         let rect = ui.max_rect();
         let now_playing = self.view == View::NowPlaying;
@@ -292,9 +291,9 @@ impl SterMusic {
             );
         }
         let view = self.view.clone();
-        // Apparition de la page : fondu et léger glissement vers le haut ; ses éléments suivent en cascade.
+        // Page appearance: fade and slight upward slide; its items follow in a cascade.
         let t = lists::page_progress(ui.ctx(), &format!("{view:?}"));
-        // Le globe des webradios occupe toute la zone, d'un bord à l'autre.
+        // The web radio globe takes the whole area, edge to edge.
         if view == View::Page(Page::Radio) && self.settings.radio_globe {
             ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
                 ui.multiply_opacity(t);
@@ -329,7 +328,7 @@ impl SterMusic {
         });
     }
 
-    /// Bibliothèque vide : invitation à choisir un dossier.
+    /// Empty library: invitation to pick a folder.
     fn welcome(&mut self, ui: &mut egui::Ui) {
         if self.scan_rx.is_some() {
             ui.vertical_centered(|ui| {
@@ -381,7 +380,7 @@ impl SterMusic {
         });
     }
 
-    // ---------- Accueil ----------
+    // ---------- Home ----------
 
     fn home(&mut self, ui: &mut egui::Ui) {
         heading(ui, tr("Accueil"));
@@ -390,7 +389,7 @@ impl SterMusic {
             self.welcome(ui);
             return;
         }
-        // Albums écoutés récemment, puis ajoutés récemment, puis morceaux les plus écoutés.
+        // Recently played albums, then recently added, then most played tracks.
         let mut recent: Vec<(u64, usize)> = self
             .settings
             .plays
@@ -456,7 +455,7 @@ impl SterMusic {
             });
     }
 
-    /// Bandeau d'accueil : reprendre la lecture, ou tout lire en aléatoire.
+    /// Home banner: resume playback, or shuffle everything.
     fn hero(&mut self, ui: &mut egui::Ui) {
         let w = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(vec2(w, 168.0), Sense::hover());
@@ -469,13 +468,13 @@ impl SterMusic {
             Stroke::new(1.0_f32, theme::white(0x14)),
             StrokeKind::Inside,
         );
-        // Fond du bandeau : des lumières qui dérivent aux couleurs de la pochette et suivent la
-        // musique (visualiseur), sinon un halo fixe.
+        // Banner background: lights drifting in the album art colors and following the music
+        // (visualizer), otherwise a still halo.
         if self.settings.visualizer && self.current().is_some() {
             let palette = crate::viz::harmonize(self.viz_palette());
             if crate::shader::available() {
-                // Visualiseur du bandeau (Caustiques par défaut : des reflets d'eau sur toute la
-                // largeur), discret et découpé aux coins arrondis.
+                // Banner visualizer (Caustics by default: water reflections across the whole width),
+                // discreet and clipped to the rounded corners.
                 let setting = self.settings.banner_style.min(crate::shader::AUTO);
                 let now = ui.input(|i| i.time);
                 let allowed = self.auto_allowed();
@@ -613,7 +612,7 @@ impl SterMusic {
         );
     }
 
-    // ---------- Bibliothèque ----------
+    // ---------- Library ----------
 
     fn library_page(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -640,7 +639,7 @@ impl SterMusic {
             return;
         }
 
-        // Onglets, avec un soulignement qui glisse de l'un à l'autre.
+        // Tabs, with an underline gliding from one to the other.
         let tabs = [
             (LibTab::Songs, tr("Morceaux")),
             (LibTab::Albums, tr("Albums")),
@@ -690,7 +689,7 @@ impl SterMusic {
                             .width(130.0)
                             .show_ui(ui, |ui| {
                                 for (s, l) in sorts {
-                                    // Choisir un ordre ici efface le tri par colonnes.
+                                    // Picking an order here clears the column sorting.
                                     if ui.selectable_value(&mut self.settings.song_sort, s, l).clicked() {
                                         self.settings.song_columns.0.clear();
                                     }
@@ -758,7 +757,7 @@ impl SterMusic {
                     album: true,
                     ..Default::default()
                 };
-                // Les titres des colonnes trient la liste, par-dessus l'ordre choisi dans « Trier par ».
+                // The column headers sort the list, on top of the order chosen in "Sort by".
                 lists::header_sortable(ui, &opts, Some(&mut self.settings.song_columns));
                 self.settings.song_columns.sort(&self.lib, &mut songs);
                 if songs.is_empty() {
@@ -800,9 +799,9 @@ impl SterMusic {
         }
     }
 
-    // ---------- Album et artiste ----------
+    // ---------- Album and artist ----------
 
-    /// En-tête de détail : grande image, titres et boutons d'action.
+    /// Detail header: large image, titles and action buttons.
     pub(super) fn detail_header(
         &mut self,
         ui: &mut egui::Ui,
@@ -1011,7 +1010,7 @@ impl SterMusic {
                         s.detail_search_field(ui, tr("Rechercher chez cet artiste"));
                     },
                 );
-                // La recherche garde les albums dont le titre correspond, ou qui contiennent un titre trouvé.
+                // The search keeps the albums whose title matches, or that contain a matching track.
                 let shown = self.filtered(&artist.tracks);
                 let query = crate::library::fold(self.detail_filter.trim());
                 let albums: Vec<usize> = artist
@@ -1051,7 +1050,7 @@ impl SterMusic {
             });
     }
 
-    // ---------- File d'attente ----------
+    // ---------- Queue ----------
 
     fn queue_page(&mut self, ui: &mut egui::Ui) {
         let total: std::time::Duration = self.queue.iter().map(|&t| self.lib.tracks[t].duration()).sum();
@@ -1089,7 +1088,7 @@ impl SterMusic {
             return;
         }
 
-        // Positions affichées : toute la file, ou celles qui correspondent à la recherche.
+        // Positions shown: the whole queue, or those matching the search.
         let query = crate::library::fold(self.queue_filter.trim());
         let positions: Vec<usize> = if query.is_empty() {
             (0..self.queue.len()).collect()
@@ -1151,7 +1150,7 @@ impl SterMusic {
                     }
                 }
                 ui.add_space(16.0);
-                // Défilement automatique près des bords pendant le glissement (longues files).
+                // Automatic scrolling near the edges while dragging (long queues).
                 if let (Some(_), Some(p)) = (drag, pointer) {
                     let clip = ui.clip_rect();
                     let edge = 56.0;
@@ -1169,8 +1168,8 @@ impl SterMusic {
                 }
             });
 
-        // Glisser-déposer : la ligne d'origine s'estompe, un fantôme suit la souris, un trait
-        // montre où elle ira ; le déplacement se fait au relâchement.
+        // Drag and drop: the original row fades, a ghost follows the mouse, a line shows where it will
+        // go; the move happens on release.
         let mut drop_to = None;
         if let (Some(from), Some(pointer), Some(&(first_pos, first_rect))) = (drag, pointer, rows.first()) {
             if let Some((_, r)) = rows.iter().find(|(p, _)| *p == from) {
@@ -1206,7 +1205,7 @@ impl SterMusic {
         self.queue_drag = drag;
     }
 
-    /// Fantôme du morceau déplacé dans la file d'attente, qui suit la souris.
+    /// Ghost of the track being moved in the queue, following the mouse.
     fn paint_drag_ghost(&mut self, ctx: &egui::Context, track: usize, pointer: egui::Pos2, width: f32) {
         let painter = ctx.layer_painter(egui::LayerId::new(
             egui::Order::Tooltip,
@@ -1254,7 +1253,7 @@ impl SterMusic {
 
     // ---------- Playlists ----------
 
-    /// Mosaïque des pochettes d'une playlist (jusqu'à quatre albums différents).
+    /// Mosaic of a playlist's album art (up to four different albums).
     pub(super) fn mosaic(&mut self, ui: &egui::Ui, rect: Rect, tracks: &[usize], favorites: bool, radius: u8) {
         let painter = ui.painter();
         if favorites {
@@ -1356,7 +1355,7 @@ impl SterMusic {
             });
         });
         ui.add_space(12.0);
-        // Barre d'outils, comme dans la bibliothèque : affichage, tri, filtre.
+        // Toolbar, as in the library: view, sorting, filter.
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if segment(ui, tr("Grille"), !self.settings.pl_list).clicked() {
@@ -1405,7 +1404,7 @@ impl SterMusic {
         });
         ui.add_space(14.0);
 
-        // Toutes les playlists, avec ce qu'il faut pour les trier et les filtrer.
+        // All the playlists, with what is needed to sort and filter them.
         let mut ids = vec![PlaylistId::Favorites];
         ids.extend((0..self.settings.smart_playlists.len()).map(PlaylistId::Smart));
         ids.extend((0..self.settings.playlists.len()).map(PlaylistId::User));
@@ -1473,7 +1472,7 @@ impl SterMusic {
             });
     }
 
-    /// Nature d'une playlist, en clair.
+    /// Kind of a playlist, in plain words.
     fn playlist_kind(id: PlaylistId) -> &'static str {
         match id {
             PlaylistId::Favorites => tr("Favoris"),
@@ -1482,7 +1481,7 @@ impl SterMusic {
         }
     }
 
-    /// Menu d'une playlist (clic droit sur sa carte, sa ligne ou son entrée de la barre latérale).
+    /// Menu of a playlist (right click on its card, its row or its sidebar entry).
     pub(super) fn playlist_menu(&mut self, ui: &mut egui::Ui, id: PlaylistId, tracks: &[usize]) {
         if widgets::menu_item(ui, Some(Icon::PlayOutline), tr("Lire")).clicked() {
             self.actions.push(Action::Play {
@@ -1522,7 +1521,7 @@ impl SterMusic {
         }
     }
 
-    /// Une playlist en ligne (affichage « Liste ») : mosaïque, nom, nature, morceaux, durée, épingle.
+    /// A playlist as a row ("List" view): mosaic, name, kind, tracks, duration, pin.
     fn playlist_row(&mut self, ui: &mut egui::Ui, id: PlaylistId, name: &str, tracks: &[usize], duration: std::time::Duration) {
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 60.0), Sense::hover());
         if !ui.is_rect_visible(rect) {
@@ -1534,7 +1533,7 @@ impl SterMusic {
         self.mosaic(ui, cover, tracks, id == PlaylistId::Favorites, 6);
         let x = cover.right() + 14.0;
         let right = rect.right() - 8.0;
-        // Colonnes de droite : épingle, durée, nombre de morceaux, nature.
+        // Right columns: pin, duration, number of tracks, kind.
         let pin_r = Rect::from_center_size(pos2(right - 18.0, rect.center().y), vec2(32.0, 32.0));
         let pinned = self.is_pinned(id);
         let (icon, tip) = if pinned {
@@ -1587,7 +1586,7 @@ impl SterMusic {
             .as_shape(cover, CornerRadius::same(8)),
         );
         self.mosaic(ui, cover, tracks, id == PlaylistId::Favorites, 8);
-        // Épinglée : une petite épingle dans le coin de la carte.
+        // Pinned: a small pin in the corner of the card.
         if self.is_pinned(id) {
             let c = pos2(cover.right() - 18.0, cover.top() + 18.0);
             ui.painter().circle_filled(c, 13.0, Color32::from_black_alpha(150));
@@ -1726,7 +1725,7 @@ impl SterMusic {
         lists::track_list(ui, &mut c, &format!("pl{id:?}"), &shown, &opts);
     }
 
-    // ---------- Recherche ----------
+    // ---------- Search ----------
 
     fn search_page(&mut self, ui: &mut egui::Ui) {
         heading(ui, &trf!("Résultats pour « {0} »", self.search.trim()));
@@ -1779,7 +1778,7 @@ impl SterMusic {
             });
     }
 
-    // ---------- En cours de lecture ----------
+    // ---------- Now Playing ----------
 
     fn now_playing_page(&mut self, ui: &mut egui::Ui) {
         let Some(idx) = self.current() else {
@@ -1791,8 +1790,8 @@ impl SterMusic {
             );
             return;
         };
-        // Le morceau affiché suit sa pochette : l'ancien reste à l'écran le temps que la nouvelle
-        // soit chargée, puis pochette et textes changent ensemble, en fondu.
+        // The track shown follows its album art: the old one stays on screen until the new one is
+        // loaded, then album art and texts change together, with a cross-fade.
         let now = ui.input(|i| i.time);
         let current_path = self.lib.tracks[idx].path.clone();
         let loaded = self.covers.large(&current_path).map(|l| l.cover.clone());
@@ -1813,13 +1812,13 @@ impl SterMusic {
         let album = self.lib.track_album[idx];
         let artist = self.lib.album_artist[album];
         let rect = ui.max_rect();
-        // Sur cette page, la molette règle le volume (voir `volume_wheel`).
+        // On this page, the wheel adjusts the volume (see `volume_wheel`).
         self.np_wheel = (Some(ui.clip_rect()), Vec::new());
         let upcoming: Vec<usize> = self
             .queue_pos
             .map(|p| self.queue.iter().skip(p + 1).take(5).copied().collect())
             .unwrap_or_default();
-        // En plein écran, la pochette et les textes grandissent avec l'écran.
+        // In full screen, the album art and the texts grow with the screen.
         let immersive = self.immersive();
         let max_side = if immersive { (rect.height() * 0.58).max(420.0) } else { 420.0 };
         let side = (rect.height() - 140.0)
@@ -1833,7 +1832,7 @@ impl SterMusic {
             vec2(side, side),
         );
         let appear = anim::appear(ui.ctx(), egui::Id::new("np_cover"), anim::SLOW);
-        // En pause, la pochette se rétracte légèrement ; elle reprend sa taille à la lecture.
+        // When paused, the album art shrinks slightly; it gets its size back when playing.
         let playing = self.is_playing();
         let live = anim::value(
             ui.ctx(),
@@ -1842,8 +1841,8 @@ impl SterMusic {
             0.45,
             anim::Easing::OutBack,
         );
-        // Visualiseur : l'Aurore dans le bas de la page et un halo doux derrière la pochette
-        // (la pochette elle-même ne bouge pas avec la musique).
+        // Visualizer: the Aurora at the bottom of the page and a soft halo behind the album art (the
+        // album art itself doesn't move with the music).
         let viz = self.settings.visualizer;
         let cover = Rect::from_center_size(
             cover.center() + vec2(0.0, 12.0 * (1.0 - appear)),
@@ -1854,9 +1853,9 @@ impl SterMusic {
             let area = ui.clip_rect();
             let intensity = 0.55 + 0.45 * live;
             if crate::shader::available() {
-                // Vagues par la carte graphique : une grande zone qui s'estompe longuement vers le
-                // haut (derrière le contenu), les vagues restant sous la pochette.
-                // Visualiseur choisi, ou automatique (au hasard) ; chaque changement en fondu.
+                // Waves on the graphics card: a large area fading out slowly towards the top (behind the
+                // content), the waves staying under the album art.
+                // Chosen visualizer, or automatic (random); each change with a cross-fade.
                 let setting = self.settings.viz_style.min(crate::shader::AUTO);
                 let now = ui.input(|i| i.time);
                 let allowed = self.auto_allowed();
@@ -1882,7 +1881,7 @@ impl SterMusic {
                 }
                 self.np_viz_controls(ui, area, style);
             } else {
-                // Repli (pilote sans shader) : l'Aurore calculée par le processeur.
+                // Fallback (driver without shader support): the Aurora computed by the processor.
                 let top = (cover.bottom() - cover.height() * 0.08).max(area.bottom() - area.height() * 0.42);
                 let band = Rect::from_min_max(pos2(area.left(), top), area.max);
                 self.aurora
@@ -1899,8 +1898,8 @@ impl SterMusic {
             }
             .as_shape(cover, CornerRadius::same(14)),
         );
-        // Changement de morceau : l'ancienne pochette glisse et s'efface, la nouvelle arrive de
-        // l'autre côté (à droite pour le morceau suivant, à gauche pour le précédent).
+        // Track change: the old album art slides and fades out, the new one comes in from the other
+        // side (from the right for the next track, from the left for the previous one).
         let dir = self.np_dir;
         let slide = cover.width() * 0.10;
         let cover_fade = &self.ambience.cover;
@@ -1918,7 +1917,7 @@ impl SterMusic {
             widgets::cover_now(&p, r, cover_fade.current(), 14, &t.album);
         }
 
-        // Double-clic sur la pochette : plein écran (le bouton est dans la barre de lecture).
+        // Double click on the album art: full screen (the button is in the playback bar).
         let cover_resp = ui.interact(cover, ui.id().with("np_cover_click"), Sense::click());
         if cover_resp.double_clicked() {
             self.actions.push(Action::ToggleFullscreen);
@@ -1926,7 +1925,7 @@ impl SterMusic {
 
         let x0 = cover.right() + 40.0;
         let tw = rect.right() - x0 - 24.0;
-        // Les textes de l'ancien morceau s'effacent en glissant ; ceux du nouveau arrivent.
+        // The texts of the old track slide out; those of the new one come in.
         if let Some(old) = self.np_prev_text.as_ref().filter(|_| fade < 1.0) {
             let mut p = ui.painter().clone();
             p.multiply_opacity(1.0 - fade);
@@ -2022,7 +2021,7 @@ impl SterMusic {
             FontId::proportional(13.0),
             theme::TEXT_3,
         );
-        // Note du morceau, en petit au bout de la ligne : cliquer sur une étoile note.
+        // Rating of the track, in small print at the end of the line: clicking a star rates it.
         let rating = self.settings.ratings.get(&t.path).copied().unwrap_or(0);
         let mut preview = None;
         let mut stars = Vec::new();
@@ -2056,11 +2055,11 @@ impl SterMusic {
         y += 34.0;
         ui.set_opacity(base_opacity);
         let x = x0;
-        // Paroles et « À suivre » sont ceux du morceau réellement en cours.
+        // Lyrics and "Up next" are those of the track really playing.
         let idx = real_idx;
         let _ = idx;
 
-        // Paroles ou « À suivre », au choix quand le morceau a des paroles.
+        // Lyrics or "Up next", to choose from when the track has lyrics.
         self.want_lyrics(ui.ctx());
         let has_lyrics = self.lyrics.lyrics.is_some();
         let show_lyrics = has_lyrics && self.settings.show_lyrics;
@@ -2085,7 +2084,7 @@ impl SterMusic {
         if show_lyrics {
             let panel = Rect::from_min_max(pos2(x, y), pos2(x + tw.min(560.0), rect.bottom() - 8.0));
             if panel.height() > 60.0 {
-                // Les paroles défilent à la molette : elle n'y règle pas le volume.
+                // Lyrics scroll with the wheel: it doesn't adjust the volume there.
                 self.np_wheel.1.push(panel);
                 self.lyrics_panel(ui, panel);
             }
@@ -2139,7 +2138,7 @@ impl SterMusic {
         }
     }
 
-    // ---------- Paramètres ----------
+    // ---------- Settings ----------
 
     fn settings_page(&mut self, ui: &mut egui::Ui) {
         heading(ui, tr("Paramètres"));
@@ -2228,7 +2227,7 @@ impl SterMusic {
                 self.settings.rounded = rounded;
                 separator(ui);
 
-                // Fond de la fenêtre : trois choix, en boutons segmentés.
+                // Window background: three choices, as segmented buttons.
                 card_row(ui, Icon::Palette, tr("Fond de la fenêtre"), tr("Mica : ton fond d'écran flouté et teinté. Transparent : le flou de KWin."), |s, ui| {
                     let options = [(BackdropKind::Transparent, tr("Transparent")), (BackdropKind::Mica, tr("Mica")), (BackdropKind::Solid, tr("Uni"))];
                     for (kind, label) in options {
@@ -2289,7 +2288,7 @@ impl SterMusic {
                     None => tr("Les seize thèmes de SterCode, et tes favoris."),
                 };
                 card_row(ui, Icon::Palette, tr("Thème"), desc, |s, ui| {
-                    // Un favori ou un thème intégré est déjà figé : seul le thème du système vaut d'être copié.
+                    // A favorite or a built-in theme is already frozen: only the system theme is worth copying.
                     if s.settings.theme == theme::KDE_ID
                         && widgets::secondary_button(ui, Some(Icon::Heart), tr("Enregistrer en favori"))
                             .on_hover_text(tr("Garde une copie des couleurs actuelles du bureau"))
@@ -2543,7 +2542,7 @@ pub(super) fn subtitle(ui: &mut egui::Ui, text: &str) {
     ui.add_space(4.0);
 }
 
-/// Carte de réglages (calque translucide arrondi, comme les paramètres de Windows 11).
+/// Settings card (rounded translucent layer, like the Windows 11 settings).
 pub(super) fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
         .fill(theme::white(0x08))
@@ -2565,7 +2564,7 @@ pub(super) fn separator(ui: &mut egui::Ui) {
     ui.add_space(6.0);
 }
 
-/// Ligne de réglage : icône, titre, description à gauche ; contrôles à droite.
+/// Settings row: icon, title, description on the left; controls on the right.
 pub(super) fn card_row(
     ui: &mut egui::Ui,
     icon: Icon,
@@ -2578,8 +2577,8 @@ pub(super) fn card_row(
         let (r, _) = ui.allocate_exact_size(vec2(36.0, 40.0), Sense::hover());
         icons::paint_centered(ui.painter(), icon, r.center(), 20.0, theme::TEXT_2);
         ui.add_space(8.0);
-        // Les contrôles d'abord, à droite : le texte prend la place qui reste et passe à la ligne
-        // au lieu de filer sous les boutons.
+        // Controls first, on the right: the text takes the remaining room and wraps instead of
+        // running under the buttons.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             right(app, ui);
             ui.add_space(12.0);
@@ -2592,7 +2591,7 @@ pub(super) fn card_row(
     });
 }
 
-/// Halo radial discret dans le bandeau d'accueil.
+/// Discreet radial halo in the home banner.
 fn theme_glow(painter: &egui::Painter, rect: Rect) {
     let center = pos2(
         rect.right() - rect.width() * 0.18,
@@ -2608,8 +2607,8 @@ fn theme_glow(painter: &egui::Painter, rect: Rect) {
 }
 
 impl SterMusic {
-    /// Vignette d'un thème : son fond et ses deux couleurs, son nom ; clic droit sur un favori
-    /// pour le renommer ou le supprimer.
+    /// Thumbnail of a theme: its background and its two colors, its name; right click on a favorite
+    /// to rename or delete it.
     fn theme_swatch(&mut self, ui: &mut egui::Ui, t: &'static theme::Theme) {
         let selected = self.settings.theme == t.id;
         let favorite = t.id.starts_with("fav-");
@@ -2666,11 +2665,11 @@ impl SterMusic {
     }
 }
 
-/// Bouton segmenté (choix exclusif), sélection à l'accent.
+/// Segmented button (exclusive choice), selection in the accent color.
 pub(super) fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
     let galley = ui.fonts(|f| f.layout_no_wrap(label.to_owned(), FontId::proportional(13.5), theme::TEXT));
     let (rect, response) = ui.allocate_exact_size(vec2(galley.size().x + 26.0, 30.0), Sense::click());
-    // La sélection passe d'un segment à l'autre en fondu, avec un petit rebond à l'appui.
+    // The selection moves from one segment to the other with a fade, with a small bounce when pressed.
     let s = anim::toggle(ui.ctx(), response.id.with("sel"), selected, anim::NORMAL);
     let press = anim::value(
         ui.ctx(),
@@ -2701,7 +2700,7 @@ pub(super) fn segment(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::R
     response
 }
 
-/// Pochette pour le shader : sa version floutée (Pochette liquide) et sa position (Anneau).
+/// Album art for the shader: its blurred version (Liquid album art) and its position (Ring).
 fn set_cover(w: &mut crate::shader::Waves, rect: Rect, (cover, texture): (Rect, Option<egui::TextureId>)) {
     w.texture = texture;
     w.focus = [

@@ -1,4 +1,4 @@
-//! Listes de morceaux, grilles d'albums et d'artistes, menus contextuels.
+//! Track lists, album and artist grids, context menus.
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Ui};
 
@@ -13,15 +13,15 @@ pub const ROW_H: f32 = 48.0;
 
 #[derive(Default, Clone, Copy)]
 pub struct ListOpts {
-    /// Pochette dans la marge (sinon le numéro).
+    /// Album art in the margin (otherwise the number).
     pub cover: bool,
     pub album: bool,
-    /// Numéro de piste (vue d'un album) plutôt que la position dans la liste.
+    /// Track number (album view) rather than the position in the list.
     pub track_no: bool,
     pub playlist: Option<PlaylistId>,
-    /// Liste de la file d'attente : la ligne en cours se repère par sa position.
+    /// Queue list: the current row is identified by its position.
     pub queue_pos: Option<Option<usize>>,
-    /// Numéro de position avant la pochette (file d'attente).
+    /// Position number before the album art (queue).
     pub numbered: bool,
 }
 
@@ -73,7 +73,7 @@ fn columns(rect: Rect, opts: &ListOpts) -> Cols {
     }
 }
 
-/// Colonne par laquelle on peut trier une liste de morceaux.
+/// Column a track list can be sorted by.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum SortKey {
     Title,
@@ -83,15 +83,15 @@ pub enum SortKey {
     Duration,
 }
 
-/// Tri d'une liste par ses colonnes : jusqu'à trois critères, du plus fort au plus faible, chacun
-/// croissant ou décroissant (`true`). Vide : l'ordre d'origine de la liste.
+/// Sorting a list by its columns: up to three criteria, from strongest to weakest, each
+/// ascending or descending (`true`). Empty: the original order of the list.
 #[derive(Clone, Default, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SortSpec(pub Vec<(SortKey, bool)>);
 
 impl SortSpec {
-    /// Clic sur le titre d'une colonne. Seul : elle devient le critère (croissant, puis
-    /// décroissant, puis retour à l'ordre d'origine). Avec Maj : elle s'ajoute aux critères déjà
-    /// là, ou change de sens.
+    /// Click on a column header. Alone: it becomes the criterion (ascending, then descending, then
+    /// back to the original order). With Shift: it is added to the existing criteria, or changes
+    /// direction.
     pub fn click(&mut self, key: SortKey, add: bool) {
         let pos = self.0.iter().position(|(k, _)| *k == key);
         if add {
@@ -109,12 +109,12 @@ impl SortSpec {
         }
     }
 
-    /// Trie `list` (tri stable : à critères égaux, l'ordre d'origine est gardé).
+    /// Sorts `list` (stable sort: with equal criteria, the original order is kept).
     pub fn sort(&self, lib: &crate::library::Library, list: &mut [usize]) {
         if self.0.is_empty() {
             return;
         }
-        // Clés calculées une fois par morceau.
+        // Keys computed once per track.
         let text = |s: &str| crate::library::fold(s);
         let mut keyed: Vec<(usize, Vec<(String, u64)>)> = list
             .iter()
@@ -149,20 +149,20 @@ impl SortSpec {
     }
 }
 
-/// En-tête des colonnes.
+/// Column header.
 pub fn header(ui: &mut Ui, opts: &ListOpts) {
     header_sortable(ui, opts, None);
 }
 
-/// En-tête des colonnes ; avec `sort`, leurs titres se cliquent pour trier (voir
-/// [`SortSpec::click`]) et « # » rend l'ordre d'origine. Renvoie vrai si le tri a changé.
+/// Column header; with `sort`, the headers can be clicked to sort (see [`SortSpec::click`])
+/// and "#" restores the original order. Returns true if the sorting changed.
 pub fn header_sortable(ui: &mut Ui, opts: &ListOpts, mut sort: Option<&mut SortSpec>) -> bool {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::hover());
     let c = columns(rect, opts);
     let font = FontId::proportional(12.5);
     let y = rect.center().y;
     let mut changed = false;
-    // « # » : l'ordre d'origine.
+    // "#": the original order.
     let sorted = sort.as_ref().is_some_and(|s| !s.0.is_empty());
     let num = Rect::from_center_size(pos2(rect.left() + c.gutter / 2.0, y), vec2(28.0, 24.0));
     let mut num_color = theme::TEXT_3;
@@ -195,7 +195,7 @@ pub fn header_sortable(ui: &mut Ui, opts: &ListOpts, mut sort: Option<&mut SortS
     }
     cols.push((SortKey::Duration, c.duration.0, c.duration.1, None));
     for (key, x, w, label) in cols {
-        // Largeur du titre (ou de l'horloge), plus la place de la flèche.
+        // Width of the title (or the clock), plus room for the arrow.
         let text_w = match label {
             Some(l) => ui.fonts(|f| f.layout_no_wrap(l.to_owned(), font.clone(), theme::TEXT_3).size().x),
             None => 24.0,
@@ -232,7 +232,7 @@ pub fn header_sortable(ui: &mut Ui, opts: &ListOpts, mut sort: Option<&mut SortS
             None => icons::paint_centered(p, Icon::Clock, pos2(x + 12.0, y), 14.0, color),
         }
         if let Some((rank, desc, total)) = state {
-            // Flèche : pointe en haut pour croissant, en bas pour décroissant.
+            // Arrow: points up for ascending, down for descending.
             let ax = x + text_w + 9.0;
             let (top, bottom) = if desc { (y + 3.5, y - 2.5) } else { (y - 3.5, y + 2.5) };
             p.add(egui::Shape::convex_polygon(
@@ -261,12 +261,12 @@ pub fn header_sortable(ui: &mut Ui, opts: &ListOpts, mut sort: Option<&mut SortS
 
 pub struct RowOut {
     pub rect: Rect,
-    /// Un glisser-déposer commence sur cette ligne (file d'attente).
+    /// A drag and drop starts on this row (queue).
     pub drag_started: bool,
 }
 
-/// Une ligne de morceau. `list` est la liste affichée : on la lit à partir de la ligne `i`.
-/// Les premières lignes apparaissent en cascade à l'ouverture de la page.
+/// A track row. `list` is the list shown: it is read from row `i`. The first rows cascade in
+/// when the page opens.
 pub fn track_row(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) -> RowOut {
     let a = stagger(ui.ctx(), i);
     ui.scope(|ui| {
@@ -286,7 +286,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         };
     }
     let row = rect.shrink2(vec2(0.0, 2.0));
-    // File d'attente : la ligne entière se glisse pour réorganiser.
+    // Queue: the whole row can be dragged to reorder.
     let sense = if opts.queue_pos.is_some() {
         Sense::click_and_drag()
     } else {
@@ -302,8 +302,8 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
     let t = &c.lib.tracks[idx];
     let fav = c.settings.favorites.contains(&t.path);
 
-    // Le surlignage du morceau en cours et de la sélection arrive et s'en va en fondu : au
-    // changement de morceau, il glisse d'une ligne à l'autre.
+    // The highlight of the current track and of the selection fades in and out: on a track
+    // change, it glides from one row to the other.
     let cur_t = anim::toggle(ui.ctx(), resp.id.with("cur"), is_current, anim::NORMAL);
     let sel_t = anim::toggle(ui.ctx(), resp.id.with("sel"), selected, anim::FAST);
     let painter = ui.painter();
@@ -319,7 +319,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
             CornerRadius::same(6),
             theme::alpha(theme::accent(), 0x1E).gamma_multiply(cur_t),
         );
-        // Liseré à gauche, qui grandit depuis le centre.
+        // Border on the left, growing from the center.
         let bar = Rect::from_center_size(
             pos2(row.left() + 1.5, row.center().y),
             vec2(3.0, (row.height() - 16.0) * cur_t),
@@ -331,7 +331,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
     widgets::paint_interaction(ui, row, 6, &resp);
     let hovered = resp.hovered();
 
-    // Marge : numéro de position (file d'attente), pochette / numéro, et bouton lecture au survol.
+    // Margin: position number (queue), album art / number, and play button on hover.
     let gutter = Rect::from_min_size(row.min, vec2(cols.gutter, row.height()));
     let gutter = if opts.numbered {
         let slot = Rect::from_min_size(gutter.min, vec2(44.0, gutter.height()));
@@ -381,13 +381,13 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         } else {
             theme::TEXT
         };
-        // Le morceau en cours propose Pause (ou Lecture s'il est en pause), pas « relancer ».
+        // The current track offers Pause (or Play if it is paused), not "restart".
         let icon = if is_current && c.playing {
             Icon::Pause
         } else {
             Icon::Play
         };
-        // Le bouton lecture grossit un peu en arrivant au survol.
+        // The play button grows a little as it appears on hover.
         icons::paint_centered(
             ui.painter(),
             icon,
@@ -410,7 +410,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         );
     }
 
-    // Colonnes de texte.
+    // Text columns.
     let y = row.center().y;
     let title_color = theme::mix(theme::TEXT, theme::accent_light(), cur_t);
     let other = theme::mix(
@@ -422,8 +422,8 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         let g = widgets::galley(ui, s, font, color, col.1);
         ui.painter().galley(pos2(col.0, y - g.size().y / 2.0), g, color);
     };
-    // Note : rien pour un morceau sans note, ses étoiles en petit sinon ; les cinq, cliquables,
-    // au survol de la ligne. Les listes trop étroites n'en montrent pas.
+    // Rating: nothing for a track without a rating, its stars in small print otherwise; all five,
+    // clickable, when hovering the row. Lists that are too narrow don't show it.
     let rating = c.settings.ratings.get(&t.path).copied().unwrap_or(0);
     let row_hovered = ui.rect_contains_pointer(row) && opts.queue_pos.is_none();
     let stars_w = 5.0 * 13.0;
@@ -440,7 +440,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
                     preview = Some(k + 1);
                 }
                 if s.clicked() {
-                    // Recliquer sur la note actuelle la retire.
+                    // Clicking the current rating again removes it.
                     let n = if rating == k + 1 { 0 } else { k + 1 };
                     c.actions.push(Action::SetRating(idx, n));
                 }
@@ -496,7 +496,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
         other,
     );
 
-    // Favori, ou poignée de déplacement dans la file d'attente.
+    // Favorite, or drag handle in the queue.
     let heart = Rect::from_center_size(pos2(cols.heart.0 + 12.0, y), vec2(30.0, 30.0));
     let mut drag_started = resp.drag_started();
     if opts.queue_pos.is_some() {
@@ -545,7 +545,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
     }
 
     let play = || match opts.queue_pos {
-        // Le morceau en cours : pause / reprise plutôt que de le relancer depuis le début.
+        // The current track: pause / resume rather than restarting it from the beginning.
         _ if is_current && c.has_track => Action::TogglePlay,
         Some(_) => Action::QueueJump(i),
         None => Action::Play {
@@ -566,7 +566,7 @@ fn track_row_inner(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &Li
 
 fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpts) {
     let idx = list[i];
-    // Clic droit dans une sélection de plusieurs morceaux : le menu agit sur toute la sélection.
+    // Right click within a selection of several tracks: the menu acts on the whole selection.
     let targets = if opts.queue_pos.is_none() {
         c.selected.targets(idx)
     } else {
@@ -595,7 +595,7 @@ fn track_menu(ui: &mut Ui, c: &mut Ctx, list: &[usize], i: usize, opts: &ListOpt
         }
     }
     add_to_menu(ui, c, vec![idx]);
-    // Note, en une ligne d'étoiles.
+    // Rating, as a row of stars.
     let rating = c.settings.ratings.get(&t.path).copied().unwrap_or(0);
     ui.horizontal(|ui| {
         ui.add_space(6.0);
@@ -677,7 +677,7 @@ fn paths(c: &Ctx, tracks: &[usize]) -> Vec<std::path::PathBuf> {
     tracks.iter().map(|&t| c.lib.tracks[t].path.clone()).collect()
 }
 
-/// Menu d'une sélection de plusieurs morceaux.
+/// Menu of a selection of several tracks.
 fn selection_menu(ui: &mut Ui, c: &mut Ctx, targets: Vec<usize>) {
     let n = targets.len();
     if widgets::menu_item(ui, Some(Icon::PlayOutline), &trf!("Lire les {n} morceaux", n)).clicked() {
@@ -712,7 +712,7 @@ fn selection_menu(ui: &mut Ui, c: &mut Ctx, targets: Vec<usize>) {
     }
 }
 
-/// Sous-menu « Ajouter à » : nouvelle playlist, file d'attente, playlists existantes.
+/// "Add to" submenu: new playlist, queue, existing playlists.
 pub fn add_to_menu(ui: &mut Ui, c: &mut Ctx, tracks: Vec<usize>) {
     ui.menu_button(tr("       Ajouter à une playlist"), |ui| {
         if widgets::menu_item(ui, Some(Icon::Plus), tr("Nouvelle playlist…")).clicked() {
@@ -729,7 +729,7 @@ pub fn add_to_menu(ui: &mut Ui, c: &mut Ctx, tracks: Vec<usize>) {
     });
 }
 
-/// Liste virtuelle (seules les lignes visibles sont dessinées), avec son propre défilement.
+/// Virtual list (only visible rows are drawn), with its own scrolling.
 pub fn track_list(ui: &mut Ui, c: &mut Ctx, id: &str, list: &[usize], opts: &ListOpts) {
     ui.spacing_mut().item_spacing.y = 0.0;
     egui::ScrollArea::vertical()
@@ -743,7 +743,7 @@ pub fn track_list(ui: &mut Ui, c: &mut Ctx, id: &str, list: &[usize], opts: &Lis
         });
 }
 
-/// Liste complète, à placer dans une zone qui défile déjà (album, artiste, recherche).
+/// Full list, to be placed in an area that already scrolls (album, artist, search).
 pub fn track_list_inline(ui: &mut Ui, c: &mut Ctx, list: &[usize], opts: &ListOpts) {
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -753,12 +753,12 @@ pub fn track_list_inline(ui: &mut Ui, c: &mut Ctx, list: &[usize], opts: &ListOp
     ui.spacing_mut().item_spacing.y = spacing;
 }
 
-// ---------- Grilles ----------
+// ---------- Grids ----------
 
 pub const CARD_MIN: f32 = 160.0;
 pub const GAP: f32 = 20.0;
 
-/// Nombre de colonnes et largeur des cartes pour remplir `width`.
+/// Number of columns and card width to fill `width`.
 pub fn grid_layout(width: f32) -> (usize, f32) {
     let cols = ((width + GAP) / (CARD_MIN + GAP)).floor().max(1.0) as usize;
     let w = ((width - GAP * (cols - 1) as f32) / cols as f32).min(240.0);
@@ -769,7 +769,7 @@ pub fn card_height(w: f32) -> f32 {
     w + 58.0
 }
 
-/// Grille d'éléments (dans une zone qui défile déjà), limitée à `max_rows` lignes.
+/// Grid of items (in an area that already scrolls), limited to `max_rows` rows.
 pub fn grid(
     ui: &mut Ui,
     salt: &str,
@@ -779,7 +779,7 @@ pub fn grid(
 ) {
     let (cols, w) = grid_layout(ui.available_width());
     let rows = n.div_ceil(cols).min(max_rows.unwrap_or(usize::MAX));
-    // Un même album peut apparaître dans deux sections : identifiants distincts par section.
+    // The same album can appear in two sections: distinct identifiers per section.
     ui.push_id(salt, |ui| {
         for r in 0..rows {
             ui.horizontal(|ui| {
@@ -797,7 +797,7 @@ pub fn grid(
     });
 }
 
-/// Grille virtuelle, avec son propre défilement.
+/// Virtual grid, with its own scrolling.
 pub fn virtual_grid(ui: &mut Ui, id: &str, n: usize, mut card: impl FnMut(&mut Ui, usize, f32)) {
     let (cols, w) = grid_layout(ui.available_width() - 8.0);
     let rows = n.div_ceil(cols);
@@ -822,7 +822,7 @@ pub fn virtual_grid(ui: &mut Ui, id: &str, n: usize, mut card: impl FnMut(&mut U
         });
 }
 
-/// Carte d'album : pochette qui se soulève au survol, bouton lecture, titre et artiste.
+/// Album card: album art lifting on hover, play button, title and artist.
 pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(w, card_height(w)), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -830,8 +830,8 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
     }
     let album = &c.lib.albums[a];
     let resp = ui.interact(rect, ui.id().with(("album", a)), Sense::click());
-    // Survol de toute la carte, bouton lecture compris : sinon, survoler le bouton « quitte » la
-    // carte, qui redescend, ce qui déplace le bouton… et la carte tremblait.
+    // Hover over the whole card, play button included: otherwise, hovering the button "leaves"
+    // the card, which goes back down, which moves the button… and the card shook.
     let h = widgets::hover_t(ui, resp.id, ui.rect_contains_pointer(rect));
     let cover = Rect::from_min_size(rect.min, vec2(w, w)).translate(vec2(0.0, -3.0 * h));
     let tex = c.covers.thumb(&c.lib.tracks[album.tracks[0]].path).cloned();
@@ -843,7 +843,7 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
     };
     ui.painter().add(shadow.as_shape(cover, CornerRadius::same(8)));
     widgets::cover(ui.painter(), cover, tex.as_ref(), 8, &album.title);
-    // Album en cours de lecture : pastille avec l'égaliseur animé.
+    // Album playing: badge with the animated equalizer.
     if c.current.is_some_and(|t| c.lib.track_album[t] == a) {
         let center = pos2(cover.right() - 22.0, cover.top() + 22.0);
         ui.painter()
@@ -851,7 +851,7 @@ pub fn album_card(ui: &mut Ui, c: &mut Ctx, a: usize, w: f32) {
         widgets::equalizer(ui.painter(), center, 13.0, theme::accent_light(), c.playing);
     }
 
-    // Bouton lecture, en bas à gauche de la pochette.
+    // Play button, at the bottom left of the album art.
     let mut play_clicked = false;
     if h > 0.01 {
         let center = pos2(cover.left() + 30.0, cover.bottom() - 30.0);
@@ -947,7 +947,7 @@ pub fn album_menu(ui: &mut Ui, c: &mut Ctx, a: usize) {
     }
 }
 
-/// Carte d'artiste : avatar rond (pochette de son premier album), nom, nombre d'albums.
+/// Artist card: round avatar (album art of their first album), name, number of albums.
 pub fn artist_card(ui: &mut Ui, c: &mut Ctx, ar: usize, w: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(w, card_height(w)), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -1017,7 +1017,7 @@ pub fn artist_card(ui: &mut Ui, c: &mut Ctx, ar: usize, w: f32) {
     });
 }
 
-/// Titre de section avec un lien « Tout afficher » optionnel ; renvoie vrai si on a cliqué le lien.
+/// Section title with an optional "Show all" link; returns true if the link was clicked.
 pub fn section(ui: &mut Ui, title: &str, link: Option<&str>) -> bool {
     let mut clicked = false;
     ui.horizontal(|ui| {
@@ -1041,7 +1041,7 @@ fn page_ids(key: &str) -> (egui::Id, egui::Id) {
     (id, id.with("stagger"))
 }
 
-/// Apparition d'une page : renvoie sa progression (0 → 1) et prépare la cascade des éléments.
+/// Appearance of a page: returns its progress (0 → 1) and prepares the cascade of items.
 pub fn page_progress(ctx: &egui::Context, key: &str) -> f32 {
     let (fade, cascade) = page_ids(key);
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("page_cascade_id"), cascade));
@@ -1051,22 +1051,22 @@ pub fn page_progress(ctx: &egui::Context, key: &str) -> f32 {
     t
 }
 
-/// Rejoue l'apparition d'une page (navigation).
+/// Replays the appearance of a page (navigation).
 pub fn reset_page(ctx: &egui::Context, key: &str) {
     let (fade, cascade) = page_ids(key);
     anim::reset(ctx, fade);
     anim::reset(ctx, cascade);
 }
 
-/// Rejoue la cascade des éléments de la page affichée (changement d'onglet), sans refaire
-/// apparaître toute la page.
+/// Replays the cascade of items of the displayed page (tab change), without making the whole
+/// page appear again.
 pub fn restart_cascade(ctx: &egui::Context) {
     if let Some(id) = ctx.data(|d| d.get_temp::<egui::Id>(egui::Id::new("page_cascade_id"))) {
         anim::reset(ctx, id);
     }
 }
 
-/// Opacité du `i`-ème élément d'une page qui apparaît (les premiers d'abord).
+/// Opacity of the `i`-th item of an appearing page (the first ones first).
 pub fn stagger(ctx: &egui::Context, i: usize) -> f32 {
     let s = ctx
         .data(|d| d.get_temp::<f32>(egui::Id::new("page_stagger")))
@@ -1086,12 +1086,12 @@ mod sort_tests {
         s.click(SortKey::Title, false);
         assert_eq!(s.0, vec![(SortKey::Title, true)]);
         s.click(SortKey::Title, false);
-        assert!(s.0.is_empty()); // troisième clic : ordre d'origine
+        assert!(s.0.is_empty()); // third click: original order
         s.click(SortKey::Artist, false);
         s.click(SortKey::Year, true);
         s.click(SortKey::Year, true);
         assert_eq!(s.0, vec![(SortKey::Artist, false), (SortKey::Year, true)]);
-        // Un clic simple sur une autre colonne repart d'un seul critère.
+        // A simple click on another column starts again from a single criterion.
         s.click(SortKey::Album, false);
         assert_eq!(s.0, vec![(SortKey::Album, false)]);
     }

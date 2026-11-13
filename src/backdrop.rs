@@ -1,10 +1,11 @@
-//! Fond de la fenêtre, arrondi aux coins :
-//! - « Mica », comme sous Windows 11 : le fond d'écran du bureau, très flouté, assombri et teinté
-//!   vers la couleur du thème, avec un grain discret. Sous KDE, chaque écran a son fond d'écran
-//!   (y compris une image tirée d'un fond d'écran vidéo), et la fenêtre montre la portion qui est
-//!   réellement derrière elle, à mesure qu'on la déplace (position fournie par le script KWin) ;
-//! - « Transparent » : la fenêtre laisse voir le bureau, que KWin floute (effet Flou / Better Blur) ;
-//! - uni.
+//! Window background, with rounded corners:
+//! - "Mica", as on Windows 11: the desktop wallpaper, heavily blurred, darkened and tinted
+//!   towards the theme color, with subtle grain. Under KDE, each screen has its own wallpaper
+//!   (including a frame taken from a video wallpaper), and the window shows the part that is
+//!   really behind it, as it is moved (position provided by the KWin script);
+//! - "Transparent": the window lets the desktop show through, blurred by KWin (Blur / Better
+//!   Blur effect);
+//! - solid.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -19,13 +20,13 @@ use crate::{anim, theme};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
     Solid,
-    /// Intensité de 0 (discret) à 1 (très coloré).
+    /// Strength from 0 (subtle) to 1 (very colorful).
     Mica(f32),
-    /// Opacité du voile de 0 (très transparent) à 1 (presque opaque).
+    /// Opacity of the veil from 0 (very transparent) to 1 (almost opaque).
     Transparent(f32),
 }
 
-/// Fonds d'écran préparés : un par écran (nom de sortie, ex. « DP-1 »), et un par défaut.
+/// Prepared wallpapers: one per screen (output name, e.g. "DP-1"), and a default one.
 #[derive(Default)]
 struct Prepared {
     by_output: HashMap<String, egui::ColorImage>,
@@ -41,18 +42,18 @@ pub struct Backdrop {
     by_output: HashMap<String, egui::TextureHandle>,
     default: Option<egui::TextureHandle>,
     noise: Option<egui::TextureHandle>,
-    /// Surveillance de la configuration du bureau (changement de fond d'écran).
+    /// Watching the desktop configuration (wallpaper change).
     last_check: Option<Instant>,
     config_mtime: Option<SystemTime>,
-    /// Écran où était la fenêtre, et sa dernière position dessus (fondu en changeant d'écran).
+    /// Screen the window was on, and its last position on it (cross-fade when changing screens).
     last: Option<Geometry>,
     previous: Option<Geometry>,
-    /// Numéro du changement d'écran en cours (identifie son animation).
+    /// Number of the screen change in progress (identifies its animation).
     switches: u64,
 }
 
 impl Backdrop {
-    /// Dessine le fond de la fenêtre (à appeler avant les panneaux).
+    /// Draws the window background (to be called before the panels).
     pub fn paint(&mut self, ctx: &egui::Context, mode: Mode, geometry: Option<&Geometry>) {
         let screen = ctx.screen_rect();
         let radius = CornerRadius::same(theme::window_radius());
@@ -95,8 +96,8 @@ impl Backdrop {
             self.job = None;
         }
 
-        // Le fond d'écran de l'écran où est la fenêtre, découpé à sa position ; sinon celui par
-        // défaut, qui couvre la fenêtre.
+        // The wallpaper of the screen the window is on, cut at its position; otherwise the default
+        // one, covering the window.
         let placed = geometry.and_then(|g| self.by_output.get(&g.output).map(|t| (t, g)));
         let available = placed.is_some() || self.default.is_some();
         let t = anim::toggle(ctx, egui::Id::new("mica_fade"), mica && available, anim::SLOW);
@@ -106,7 +107,7 @@ impl Backdrop {
         let tint = Color32::WHITE.gamma_multiply(t);
         match placed {
             Some((texture, g)) => {
-                // Changement d'écran : l'ancien fond s'efface pendant que le nouveau apparaît.
+                // Screen change: the old background fades out while the new one appears.
                 if self.last.as_ref().is_some_and(|l| l.output != g.output) {
                     self.previous = self.last.clone();
                     self.switches += 1;
@@ -123,7 +124,7 @@ impl Backdrop {
                 let old = self.previous.as_ref().filter(|_| k < 1.0);
                 match old.and_then(|p| self.by_output.get(&p.output).map(|t| (t, p))) {
                     Some((old_texture, old_g)) => {
-                        // L'ancien écran, figé à la dernière position, puis le nouveau par-dessus.
+                        // The old screen, frozen at the last position, then the new one on top.
                         paint_window_slice(&painter, old_texture, screen, old_g, tint, radius);
                         paint_window_slice(&painter, texture, screen, g, tint.gamma_multiply(k), radius);
                     }
@@ -143,7 +144,7 @@ impl Backdrop {
         } else {
             0.5
         };
-        // Teinte du thème par-dessus : plus l'intensité est faible, plus elle couvre.
+        // Theme tint on top: the lower the strength, the more it covers.
         let veil = 0.90 - 0.55 * strength;
         painter.rect_filled(
             screen,
@@ -153,7 +154,7 @@ impl Backdrop {
         self.paint_noise(ctx, &painter, screen, radius, (0x06 as f32 * t) as u8);
     }
 
-    /// Relance la préparation si la configuration du bureau a changé (nouveau fond d'écran).
+    /// Starts the preparation again if the desktop configuration changed (new wallpaper).
     fn watch_config(&mut self) {
         if self.last_check.is_some_and(|t| t.elapsed().as_secs() < 4) {
             return;
@@ -168,7 +169,7 @@ impl Backdrop {
         self.config_mtime = mtime;
     }
 
-    /// Grain très léger, comme le bruit des matériaux de Windows 11.
+    /// Very light grain, like the noise of Windows 11 materials.
     fn paint_noise(
         &mut self,
         ctx: &egui::Context,
@@ -202,14 +203,14 @@ impl Backdrop {
             egui::pos2(rect.width() / 128.0, rect.height() / 128.0),
         );
         painter.add(
-            // Opacité en sRGB : `from_white_alpha` (linéaire) rendrait le grain bien trop visible.
+            // Opacity in sRGB: `from_white_alpha` (linear) would make the grain far too visible.
             egui::epaint::RectShape::filled(rect, radius, theme::white(alpha)).with_texture(noise.id(), uv),
         );
     }
 }
 
-/// La portion du fond d'écran qui est derrière la fenêtre. Le fond d'écran couvre l'écran sans
-/// se déformer (« redimensionné et rogné », le réglage par défaut de Plasma).
+/// The part of the wallpaper behind the window. The wallpaper covers the screen without being
+/// distorted ("scaled and cropped", Plasma's default setting).
 fn paint_window_slice(
     painter: &egui::Painter,
     texture: &egui::TextureHandle,
@@ -237,7 +238,7 @@ fn paint_window_slice(
     painter.add(egui::epaint::RectShape::filled(screen, radius, tint).with_texture(texture.id(), uv));
 }
 
-/// Dessine une texture qui couvre tout `rect` sans se déformer (recadrée au centre), aux coins arrondis.
+/// Draws a texture covering the whole `rect` without distortion (cropped at the center), with rounded corners.
 pub fn paint_fill(
     painter: &egui::Painter,
     texture: &egui::TextureHandle,
@@ -257,7 +258,7 @@ pub fn paint_fill(
     painter.add(egui::epaint::RectShape::filled(rect, radius, tint).with_texture(texture.id(), uv));
 }
 
-/// Prépare le fond d'écran de chaque écran (et celui par défaut).
+/// Prepares the wallpaper of each screen (and the default one).
 fn prepare_all() -> Prepared {
     let (by_screen, default_path) = wallpapers();
     let mut prepared = Prepared::default();
@@ -276,11 +277,11 @@ fn prepare_all() -> Prepared {
     prepared
 }
 
-/// Le fond d'écran, réduit, très flouté, un peu plus saturé et assombri (la teinte du thème est
-/// ajoutée à l'affichage, ce qui permet de changer de thème ou d'intensité sans recalcul).
+/// The wallpaper, scaled down, heavily blurred, a little more saturated and darkened (the theme
+/// tint is added when drawing, which allows changing theme or strength without recomputing).
 fn prepare(path: &Path) -> Option<egui::ColorImage> {
     let wall = image::open(path).ok()?;
-    // Une fenêtre ne montre qu'une partie de l'écran : on garde un peu plus de détail.
+    // A window only shows part of the screen: keep a little more detail.
     let small = wall
         .resize(360, 360, image::imageops::FilterType::Triangle)
         .to_rgba8();
@@ -290,7 +291,7 @@ fn prepare(path: &Path) -> Option<egui::ColorImage> {
         .map(|p| {
             let (r, g, b) = (p[0] as f32, p[1] as f32, p[2] as f32);
             let l = 0.299 * r + 0.587 * g + 0.114 * b;
-            // Saturation ×1.3, puis luminosité ramenée dans une plage sombre.
+            // Saturation ×1.3, then brightness brought into a dark range.
             let sat = |c: f32| (l + (c - l) * 1.3).clamp(0.0, 255.0) * 0.62;
             Color32::from_rgb(sat(r) as u8, sat(g) as u8, sat(b) as u8)
         })
@@ -301,7 +302,7 @@ fn prepare(path: &Path) -> Option<egui::ColorImage> {
     })
 }
 
-/// Fonds d'écran par écran (KDE), et celui à utiliser à défaut (écran principal, ou GNOME).
+/// Wallpapers per screen (KDE), and the one to use as a fallback (main screen, or GNOME).
 fn wallpapers() -> (HashMap<String, PathBuf>, Option<PathBuf>) {
     let by_screen = kde_wallpapers();
     let outputs = kde_outputs();
@@ -327,8 +328,8 @@ fn kde_config_path() -> Option<PathBuf> {
     Some(config.join("plasma-org.kde.plasma.desktop-appletsrc"))
 }
 
-/// Numéro d'écran de Plasma → nom de la sortie. Plasma numérote les écrans par priorité
-/// (`kscreen-doctor` : priorité 1 = écran 0).
+/// Plasma screen number → output name. Plasma numbers screens by priority
+/// (`kscreen-doctor`: priority 1 = screen 0).
 fn kde_outputs() -> HashMap<u32, String> {
     let Ok(out) = std::process::Command::new("kscreen-doctor").arg("-j").output() else {
         return HashMap::new();
@@ -358,8 +359,8 @@ struct Containment {
     video_pos_ms: u64,
 }
 
-/// KDE Plasma : fond d'écran de chaque bureau, par numéro d'écran. Greffon « image » (fichier ou
-/// paquet de fond d'écran) ou fond d'écran vidéo (une image en est extraite).
+/// KDE Plasma: wallpaper of each desktop, by screen number. "image" plugin (file or wallpaper
+/// package) or video wallpaper (a frame is extracted from it).
 fn kde_wallpapers() -> HashMap<u32, PathBuf> {
     let Some(text) = kde_config_path().and_then(|p| std::fs::read_to_string(p).ok()) else {
         return HashMap::new();
@@ -426,7 +427,7 @@ fn kde_wallpapers() -> HashMap<u32, PathBuf> {
     out
 }
 
-/// Une image du fond d'écran vidéo (là où la vidéo en était), extraite avec ffmpeg, en cache.
+/// A frame of the video wallpaper (where the video was), extracted with ffmpeg, cached.
 fn video_frame(video: &str, position_ms: u64) -> Option<PathBuf> {
     let video = Path::new(video);
     let modified = std::fs::metadata(video).and_then(|m| m.modified()).ok()?;
@@ -456,7 +457,7 @@ fn video_frame(video: &str, position_ms: u64) -> Option<PathBuf> {
     None
 }
 
-/// GNOME (Ubuntu, Fedora…) : `gsettings`, variante sombre d'abord.
+/// GNOME (Ubuntu, Fedora…): `gsettings`, dark variant first.
 fn gnome_wallpaper() -> Option<PathBuf> {
     ["picture-uri-dark", "picture-uri"].iter().find_map(|key| {
         let out = std::process::Command::new("gsettings")
@@ -480,8 +481,8 @@ fn is_image(p: &Path) -> bool {
     })
 }
 
-/// Un fichier image, ou un paquet de fond d'écran KDE (`contents/images/1920x1080.jpg`…) : on
-/// prend alors la plus grande image.
+/// An image file, or a KDE wallpaper package (`contents/images/1920x1080.jpg`…): the largest
+/// image is then taken.
 fn resolve(path: &str) -> Option<PathBuf> {
     let path = PathBuf::from(path);
     if path.is_file() && is_image(&path) {

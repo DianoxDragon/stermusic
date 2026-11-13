@@ -1,4 +1,4 @@
 /target
 /dist
-# Réglages de compilation propres à cette machine (dossier cible hors du disque NTFS).
+# Build settings specific to this machine (target folder outside the NTFS disk).
 /.cargo/config.toml

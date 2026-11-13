@@ -1,9 +1,9 @@
-//! Paroles des morceaux, synchronisées si possible (format LRC : « [01:23.45] une ligne »).
+//! Track lyrics, synced when possible (LRC format: "[01:23.45] a line").
 //!
-//! Dans l'ordre : un fichier `.lrc` posé à côté du morceau, les paroles intégrées aux tags, puis
-//! (si c'est permis) LRCLIB, une base de paroles libre et gratuite (https://lrclib.net). Les
-//! réponses de LRCLIB sont gardées dans `~/.cache/stermusic/lyrics`, « rien trouvé » compris :
-//! un morceau n'est demandé qu'une fois.
+//! In order: a `.lrc` file next to the track, the lyrics embedded in the tags, then (if
+//! allowed) LRCLIB, a free and open lyrics database (https://lrclib.net). LRCLIB answers are
+//! kept in `~/.cache/stermusic/lyrics`, "nothing found" included: a track is only requested
+//! once.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,7 +15,7 @@ use crate::library::Track;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Line {
-    /// Début de la ligne, en secondes ; `None` pour des paroles non synchronisées.
+    /// Start of the line, in seconds; `None` for unsynced lyrics.
     pub time: Option<f32>,
     pub text: String,
 }
@@ -35,8 +35,8 @@ pub struct Lyrics {
 }
 
 impl Lyrics {
-    /// Ligne en cours à `pos` secondes (légèrement en avance : on lit la ligne au moment où elle
-    /// commence à être chantée).
+    /// Current line at `pos` seconds (slightly ahead: a line is read as soon as it starts being
+    /// sung).
     pub fn current(&self, pos: f32) -> Option<usize> {
         if !self.synced {
             return None;
@@ -47,11 +47,11 @@ impl Lyrics {
     }
 }
 
-/// « 01:23.45 », « 1:23 », « 01:23:450 » → secondes.
+/// "01:23.45", "1:23", "01:23:450" → seconds.
 fn timestamp(text: &str) -> Option<f32> {
     let (min, rest) = text.split_once(':')?;
     let min: f32 = min.trim().parse().ok()?;
-    // Certains fichiers séparent les centièmes par « : » au lieu de « . ».
+    // Some files separate the hundredths with ":" instead of ".".
     let rest = match rest.split_once(':') {
         Some((s, frac)) => format!("{s}.{frac}"),
         None => rest.to_owned(),
@@ -60,7 +60,7 @@ fn timestamp(text: &str) -> Option<f32> {
     (min >= 0.0 && sec >= 0.0).then_some(min * 60.0 + sec)
 }
 
-/// Lit des paroles au format LRC ; sans horodatage, ce sont des paroles simples.
+/// Reads lyrics in LRC format; without timestamps, they are plain lyrics.
 pub fn parse(text: &str, source: Source) -> Option<Lyrics> {
     let mut lines: Vec<Line> = Vec::new();
     let mut plain: Vec<Line> = Vec::new();
@@ -75,7 +75,7 @@ pub fn parse(text: &str, source: Source) -> Option<Lyrics> {
             match timestamp(tag) {
                 Some(t) => times.push(t),
                 None => {
-                    // Métadonnées : [ar:…], [ti:…], [offset:+250]…
+                    // Metadata: [ar:…], [ti:…], [offset:+250]…
                     if let Some(ms) = tag.strip_prefix("offset:") {
                         offset = ms.trim().parse::<f32>().unwrap_or(0.0) / 1000.0;
                     }
@@ -83,7 +83,7 @@ pub fn parse(text: &str, source: Source) -> Option<Lyrics> {
             }
             rest = &inner[end + 1..];
         }
-        // Format « enrichi » : un horodatage par mot (<01:02.03>), retiré.
+        // "Enhanced" format: one timestamp per word (<01:02.03>), removed.
         let mut text = String::new();
         let mut chars = rest.chars().peekable();
         while let Some(c) = chars.next() {
@@ -121,7 +121,7 @@ pub fn parse(text: &str, source: Source) -> Option<Lyrics> {
             source,
         });
     }
-    // Paroles simples : les lignes vides du début et de la fin ne servent à rien.
+    // Plain lyrics: the empty lines at the start and the end are useless.
     while plain.first().is_some_and(|l| l.text.is_empty()) {
         plain.remove(0);
     }
@@ -135,20 +135,20 @@ pub fn parse(text: &str, source: Source) -> Option<Lyrics> {
     })
 }
 
-/// Paroles d'un fichier `.lrc` à côté du morceau (même nom).
+/// Lyrics from a `.lrc` file next to the track (same name).
 fn from_file(path: &Path) -> Option<Lyrics> {
     let lrc = ["lrc", "LRC"]
         .iter()
         .map(|e| path.with_extension(e))
         .find(|p| p.is_file())?;
     let bytes = std::fs::read(lrc).ok()?;
-    // Les vieux fichiers .lrc sont souvent en Latin-1 / Windows-1252.
+    // Old .lrc files are often in Latin-1 / Windows-1252.
     let text =
         String::from_utf8(bytes.clone()).unwrap_or_else(|_| bytes.iter().map(|&b| b as char).collect());
     parse(text.trim_start_matches('\u{feff}'), Source::File)
 }
 
-/// Paroles intégrées aux tags (USLT en ID3, LYRICS en Vorbis, ©lyr en MP4).
+/// Lyrics embedded in the tags (USLT in ID3, LYRICS in Vorbis, ©lyr in MP4).
 fn from_tags(path: &Path) -> Option<Lyrics> {
     let tagged = lofty::probe::Probe::open(path).ok()?.read().ok()?;
     tagged
@@ -158,7 +158,7 @@ fn from_tags(path: &Path) -> Option<Lyrics> {
         .and_then(|text| parse(&text, Source::Tags))
 }
 
-/// Réponse de LRCLIB gardée sur le disque.
+/// LRCLIB answer kept on disk.
 #[derive(Serialize, Deserialize, Default)]
 struct Cached {
     synced: Option<String>,
@@ -209,8 +209,8 @@ struct Answer {
     duration: f64,
 }
 
-/// Demande les paroles à LRCLIB : la correspondance exacte (titre, artiste, album, durée), sinon
-/// une recherche dont on garde le résultat à la durée la plus proche. `Err` : pas de réseau.
+/// Asks LRCLIB for the lyrics: the exact match (title, artist, album, duration), otherwise a
+/// search whose result with the closest duration is kept. `Err`: no network.
 fn ask_lrclib(t: &Track) -> Result<Cached, String> {
     let artist = if t.artist.is_empty() {
         &t.album_artist
@@ -258,7 +258,7 @@ fn ask_lrclib(t: &Track) -> Result<Cached, String> {
         .into_string()
         .map_err(|e| e.to_string())?;
     let list: Vec<Answer> = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    // Une version trop différente en durée (live, remix) aurait des paroles décalées.
+    // A version whose duration differs too much (live, remix) would have lyrics out of sync.
     let best = list
         .into_iter()
         .filter(|a| secs <= 0.0 || (a.duration - secs).abs() <= 4.0)
@@ -281,9 +281,9 @@ fn from_cached(c: &Cached) -> Option<Lyrics> {
         .or_else(|| c.plain.as_deref().and_then(|s| parse(s, Source::Online)))
 }
 
-/// Cherche les paroles d'un morceau (à appeler hors du fil de l'interface).
+/// Looks up the lyrics of a track (to be called outside the interface thread).
 pub fn find(t: &Track, online: bool) -> Option<Lyrics> {
-    // Un morceau d'un fichier CUE ou d'un serveur n'a ni .lrc ni tags à lui : en ligne seulement.
+    // A track from a CUE sheet or a server has neither its own .lrc nor tags: online only.
     if t.is_plain_file() {
         if let Some(l) = from_file(&t.path).or_else(|| from_tags(&t.path)) {
             return Some(l);
@@ -307,7 +307,7 @@ pub fn find(t: &Track, online: bool) -> Option<Lyrics> {
             }
             from_cached(&c)
         }
-        // Pas de réseau : rien n'est gardé, on réessaiera au prochain passage du morceau.
+        // No network: nothing is kept, we'll try again the next time the track plays.
         Err(_) => None,
     }
 }

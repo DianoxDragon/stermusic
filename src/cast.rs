@@ -1,12 +1,13 @@
-//! Diffusion vers un appareil du réseau : téléviseurs, enceintes et amplis DLNA / UPnP, et
-//! Chromecast (ou enceintes « Google Cast »).
+//! Casting to a network device: DLNA / UPnP TVs, speakers and amplifiers, and Chromecast (or
+//! "Google Cast" speakers).
 //!
-//! - Découverte : SSDP (UPnP) et mDNS (`_googlecast._tcp`), en même temps, deux secondes et demie.
-//! - Les fichiers sont servis à l'appareil par un petit serveur HTTP local ; ce qu'il ne sait
-//!   pas lire (morceau d'un fichier CUE, WMA, APE…) est converti à la volée en MP3 par ffmpeg.
-//!   Un déplacement dans un flux converti le relance au bon endroit.
-//! - Chromecast : protocole Cast v2 (TLS, messages protobuf portant du JSON), récepteur
-//!   multimédia par défaut. DLNA : commandes SOAP AVTransport et RenderingControl.
+//! - Discovery: SSDP (UPnP) and mDNS (`_googlecast._tcp`), at the same time, for two and a half
+//!   seconds.
+//! - Files are served to the device by a small local HTTP server; what it cannot play (track
+//!   of a CUE sheet, WMA, APE…) is converted on the fly to MP3 by ffmpeg. Seeking in a
+//!   converted stream restarts it at the right place.
+//! - Chromecast: Cast v2 protocol (TLS, protobuf messages carrying JSON), default media
+//!   receiver. DLNA: AVTransport and RenderingControl SOAP commands.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -44,9 +45,9 @@ impl Device {
     }
 }
 
-// ---------- Découverte ----------
+// ---------- Discovery ----------
 
-/// Cherche les appareils du réseau (bloquant, deux secondes et demie).
+/// Looks for the devices on the network (blocking, two and a half seconds).
 pub fn discover() -> Vec<Device> {
     let (tx, rx) = channel();
     let t1 = tx.clone();
@@ -102,7 +103,7 @@ fn discover_dlna() -> Vec<Device> {
     locations.iter().filter_map(|l| describe_dlna(l)).collect()
 }
 
-/// Contenu de la première balise `<name>` (sans tenir compte d'un préfixe d'espace de noms).
+/// Content of the first `<name>` tag (ignoring any namespace prefix).
 fn xml_value(xml: &str, name: &str) -> Option<String> {
     let open = xml.find(&format!("<{name}>"))?;
     let rest = &xml[open + name.len() + 2..];
@@ -154,7 +155,7 @@ fn describe_dlna(location: &str) -> Option<Device> {
     })
 }
 
-// mDNS : question PTR « _googlecast._tcp.local », réponse demandée en direct (bit QU).
+// mDNS: PTR question "_googlecast._tcp.local", direct answer requested (QU bit).
 fn discover_cast() -> Vec<Device> {
     let Ok(sock) = UdpSocket::bind("0.0.0.0:0") else {
         return Vec::new();
@@ -257,12 +258,12 @@ fn parse_mdns(pkt: &[u8], from: IpAddr) -> Option<Device> {
     })
 }
 
-// ---------- Serveur HTTP local ----------
+// ---------- Local HTTP server ----------
 
 #[derive(Clone)]
 enum Entry {
     File(PathBuf, &'static str),
-    /// Converti à la volée en MP3 : entrée ffmpeg, début, fin.
+    /// Converted on the fly to MP3: ffmpeg input, start, end.
     Transcode(String, Duration, Option<Duration>),
 }
 
@@ -404,7 +405,7 @@ fn serve(mut conn: TcpStream) -> std::io::Result<()> {
     }
 }
 
-/// Adresse de cette machine vue depuis `peer` (celle qu'on donne à l'appareil).
+/// Address of this machine as seen from `peer` (the one given to the device).
 fn local_ip(peer: IpAddr) -> Option<IpAddr> {
     let sock = UdpSocket::bind("0.0.0.0:0").ok()?;
     sock.connect(SocketAddr::new(peer, 9)).ok()?;
@@ -420,16 +421,16 @@ fn publish(entry: Entry, peer: IpAddr, ext: &str) -> Option<String> {
 
 // ---------- Session ----------
 
-/// Ce qu'on montre sur l'appareil.
+/// What is shown on the device.
 #[derive(Clone, Debug, Default)]
 pub struct Meta {
     pub title: String,
     pub artist: String,
     pub album: String,
-    /// Pochette : un fichier local ou une adresse.
+    /// Album art: a local file or an address.
     pub cover_file: Option<PathBuf>,
     pub cover_url: Option<String>,
-    /// Direct (webradio) : pas de durée, pas de déplacement.
+    /// Live (web radio): no duration, no seeking.
     pub live: bool,
 }
 
@@ -446,7 +447,7 @@ pub enum State {
 #[derive(Clone, Debug, Default)]
 pub struct Status {
     pub state: State,
-    /// Position annoncée par l'appareil, et quand elle l'a été (on l'avance entre deux relevés).
+    /// Position reported by the device, and when (it is advanced between two polls).
     pub position: f32,
     pub at: Option<Instant>,
     pub error: Option<String>,
@@ -467,12 +468,12 @@ enum Cmd {
     Volume(f32),
 }
 
-/// Une diffusion en cours vers un appareil.
+/// A cast to a device in progress.
 pub struct Session {
     pub device: Device,
     tx: Sender<Cmd>,
     status: Arc<Mutex<Status>>,
-    /// Média chargé, et décalage d'un flux converti relancé plus loin.
+    /// Loaded media, and offset of a converted stream restarted further on.
     media: Option<(Media, Meta)>,
     offset: f32,
     transcoded: bool,
@@ -511,7 +512,7 @@ impl Session {
         })
     }
 
-    /// Ce que l'appareil peut lire tel quel ; le reste est converti en MP3.
+    /// What the device can play as is; the rest is converted to MP3.
     fn native(&self, media: &Media) -> bool {
         if !media.start.is_zero() || media.end.is_some() {
             return false;
@@ -527,7 +528,7 @@ impl Session {
     pub fn load(&mut self, media: &Media, meta: Meta, start: f32, paused: bool) {
         let transcode = !self.native(media);
         let (url, mime) = match (&media.input, transcode) {
-            // Adresse en ligne (radio, serveur, podcast) : l'appareil la lit lui-même.
+            // Online address (radio, server, podcast): the device plays it itself.
             (Input::Url(u), _) => (u.clone(), "audio/mpeg".to_owned()),
             (Input::File(p), false) => {
                 let mime = mime_of(p).unwrap_or("audio/mpeg");
@@ -556,7 +557,7 @@ impl Session {
                 meta.cover_url = publish(Entry::File(f.clone(), mime), self.peer, "png");
             }
         }
-        // Un flux converti part déjà du bon endroit : l'appareil commence à 0.
+        // A converted stream already starts at the right place: the device starts at 0.
         let transcoded = transcode && media.path().is_some();
         self.transcoded = transcoded;
         self.offset = if transcoded { start } else { 0.0 };
@@ -595,7 +596,7 @@ impl Session {
 
     pub fn seek(&mut self, pos: f32) {
         if self.transcoded {
-            // Flux converti : relancé au nouvel endroit.
+            // Converted stream: restarted at the new place.
             if let Some((media, meta)) = self.media.clone() {
                 let paused = self.state() == State::Paused;
                 self.load(&media, meta, pos, paused);
@@ -796,7 +797,7 @@ fn dlna_worker(av: &str, rendering: Option<&str>, rx: Receiver<Cmd>, status: &Mu
         if !loaded {
             continue;
         }
-        // Relevé de l'état et de la position.
+        // Polling the state and the position.
         let state = soap(
             av,
             "AVTransport",
@@ -818,7 +819,7 @@ fn dlna_worker(av: &str, rendering: Option<&str>, rx: Receiver<Cmd>, status: &Mu
             }
             "PAUSED_PLAYBACK" => State::Paused,
             "TRANSITIONING" => State::Loading,
-            // Arrêt après avoir joué : le morceau est fini.
+            // Stopped after playing: the track is finished.
             "STOPPED" | "NO_MEDIA_PRESENT" if was_playing => {
                 loaded = false;
                 State::Finished
@@ -847,7 +848,7 @@ impl rustls::client::danger::ServerCertVerifier for AcceptAny {
         _: &[u8],
         _: rustls::pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        // Les Chromecast ont un certificat qu'elles signent elles-mêmes : réseau local.
+        // Chromecasts have a self-signed certificate: local network.
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
 
@@ -894,7 +895,7 @@ fn varint(out: &mut Vec<u8>, mut v: u64) {
     }
 }
 
-/// Message Cast : protobuf `CastMessage` (version, source, destination, espace, texte JSON).
+/// Cast message: protobuf `CastMessage` (version, source, destination, namespace, JSON text).
 fn encode(src: &str, dst: &str, ns: &str, json: &str) -> Vec<u8> {
     let mut m = vec![0x08, 0x00];
     for (tag, s) in [(0x12u8, src), (0x1a, dst), (0x22, ns)] {
@@ -910,7 +911,7 @@ fn encode(src: &str, dst: &str, ns: &str, json: &str) -> Vec<u8> {
     frame
 }
 
-/// Espace de noms et JSON d'un message reçu.
+/// Namespace and JSON of a received message.
 fn decode(m: &[u8]) -> Option<(String, String)> {
     let mut i = 0;
     let (mut ns, mut payload) = (String::new(), String::new());
@@ -972,7 +973,7 @@ fn cast_worker(addr: SocketAddr, rx: Receiver<Cmd>, status: &Mutex<Status>) -> R
     let mut last_ping = Instant::now();
     let mut last_poll = Instant::now();
     loop {
-        // Commandes de l'application.
+        // Commands from the application.
         match rx.try_recv() {
             Ok(cmd) => pending = Some(cmd),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(()),
@@ -982,7 +983,7 @@ fn cast_worker(addr: SocketAddr, rx: Receiver<Cmd>, status: &Mutex<Status>) -> R
             request += 1;
             match cmd {
                 Cmd::Load { .. } if transport.is_none() => {
-                    // Le récepteur multimédia se lance d'abord ; le chargement attend sa réponse.
+                    // The media receiver starts first; loading waits for its answer.
                     send(
                         &mut tls,
                         "receiver-0",
@@ -1063,7 +1064,7 @@ fn cast_worker(addr: SocketAddr, rx: Receiver<Cmd>, status: &Mutex<Status>) -> R
                 );
             }
         }
-        // Messages de l'appareil.
+        // Messages from the device.
         let mut chunk = [0u8; 8192];
         match tls.read(&mut chunk) {
             Ok(0) => return Err(crate::i18n::tr("L'appareil a fermé la connexion").into()),
@@ -1156,7 +1157,7 @@ mod tests {
 
     #[test]
     fn mdns_answer() {
-        // Réponse fabriquée : PTR, TXT (fn=Salon) et A (192.168.1.20).
+        // Crafted answer: PTR, TXT (fn=Salon) and A (192.168.1.20).
         let mut p = vec![0, 0, 0x84, 0, 0, 0, 0, 3, 0, 0, 0, 0];
         let name = |p: &mut Vec<u8>, parts: &[&str]| {
             for l in parts {
@@ -1198,7 +1199,7 @@ mod tests {
         );
     }
 
-    /// Réseau local : `cargo test cast_discovery -- --ignored --nocapture` liste les appareils.
+    /// Local network: `cargo test cast_discovery -- --ignored --nocapture` lists the devices.
     #[test]
     #[ignore]
     fn cast_discovery() {
@@ -1212,7 +1213,7 @@ mod tests {
 mod live {
     use super::*;
 
-    /// Réseau local : connexion TLS à un Chromecast et état du récepteur, sans rien lancer.
+    /// Local network: TLS connection to a Chromecast and receiver status, without launching anything.
     /// `STERMUSIC_CAST=192.168.1.128 cargo test cast_handshake -- --ignored --nocapture`
     #[test]
     #[ignore]

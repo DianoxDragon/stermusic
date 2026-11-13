@@ -1,5 +1,5 @@
-//! Paroles dans « En cours de lecture » : elles défilent toutes seules, la ligne chantée en
-//! surbrillance ; un clic sur une ligne y amène la lecture.
+//! Lyrics in "Now Playing": they scroll by themselves, with the sung line highlighted; clicking
+//! a line seeks playback there.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
@@ -14,22 +14,22 @@ use crate::{anim, theme};
 
 #[derive(Default)]
 pub struct LyricsState {
-    /// Morceau dont on a (ou dont on cherche) les paroles.
+    /// Track whose lyrics we have (or are looking for).
     path: Option<PathBuf>,
     rx: Option<Receiver<(PathBuf, Option<Lyrics>)>>,
     pub lyrics: Option<Lyrics>,
 }
 
 impl LyricsState {
-    /// Oublie les paroles gardées (réglage changé, fichier .lrc ajouté…).
+    /// Forgets the stored lyrics (setting changed, .lrc file added…).
     pub fn forget(&mut self) {
         *self = Self::default();
     }
 }
 
 impl SterMusic {
-    /// Cherche les paroles du morceau en cours s'il a changé (appelé quand « En cours de lecture »
-    /// est affiché : rien n'est demandé pour les morceaux qu'on ne regarde pas).
+    /// Looks up the lyrics of the current track if it changed (called while "Now Playing" is shown:
+    /// nothing is requested for tracks nobody is looking at).
     pub(super) fn want_lyrics(&mut self, ctx: &egui::Context) {
         let Some(i) = self.current() else { return };
         let track = self.lib.tracks[i].clone();
@@ -65,8 +65,7 @@ impl SterMusic {
         }
     }
 
-    /// Paroles dans `rect` : synchronisées, elles défilent avec la musique ; sinon, un texte qui
-    /// défile à la main.
+    /// Lyrics in `rect`: synced lyrics scroll with the music; otherwise, a text scrolled by hand.
     pub(super) fn lyrics_panel(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let Some(lyrics) = self.lyrics.lyrics.clone() else {
             return;
@@ -115,7 +114,7 @@ impl SterMusic {
             .unwrap_or(0.0);
         let active = lyrics.current(pos);
         let w = panel.width();
-        // Mise en page de toutes les lignes (la ligne en cours est plus grande).
+        // Layout of every line (the current line is larger).
         let mut layout = Vec::with_capacity(lyrics.lines.len());
         let mut y = 0.0;
         for (k, line) in lyrics.lines.iter().enumerate() {
@@ -125,7 +124,7 @@ impl SterMusic {
             } else {
                 FontId::proportional(19.0)
             };
-            // Ligne vide : un silence instrumental, montré par une note.
+            // Empty line: an instrumental break, shown by a note.
             let text = if line.text.is_empty() {
                 "♪"
             } else {
@@ -136,7 +135,7 @@ impl SterMusic {
             layout.push((y, h, g));
             y += h + 14.0;
         }
-        // La ligne chantée se place au tiers de la hauteur ; le défilement glisse en douceur.
+        // The sung line sits at a third of the height; scrolling glides smoothly.
         let anchor = panel.height() * 0.36;
         let target = match active {
             Some(k) => layout[k].0 + layout[k].1 / 2.0 - anchor,
@@ -157,7 +156,7 @@ impl SterMusic {
             if top + h < panel.top() || top > panel.bottom() {
                 continue;
             }
-            // Fondu vers le haut et le bas du panneau.
+            // Fade towards the top and bottom of the panel.
             let edge = ((top - panel.top()).min(panel.bottom() - top - h) / fade).clamp(0.0, 1.0);
             let color = match active {
                 Some(a) if k == a => theme::TEXT,

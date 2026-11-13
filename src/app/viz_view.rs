@@ -1,13 +1,13 @@
-//! Choisir son visualiseur.
+//! Picking a visualizer.
 //!
-//! - Dans « En cours de lecture » : une pastille en haut à droite (‹ nom › ; molette ou V /
-//!   Maj+V pour passer au suivant ou au précédent) ; un clic sur le nom ouvre, en bas de la
-//!   page, un bandeau d'aperçus animés où l'on choisit d'un clic, la musique continuant derrière.
-//! - Dans les paramètres : l'aperçu de chaque emplacement, et une galerie (aperçus animés) pour
-//!   choisir, ou pour composer le tirage du mode automatique.
+//! - In "Now Playing": a pill at the top right (‹ name ›; wheel or V / Shift+V to go to the next
+//!   or previous one); clicking the name opens, at the bottom of the page, a strip of animated
+//!   previews to pick from with a click, while the music keeps playing behind.
+//! - In the settings: the preview of each slot, and a gallery (animated previews) to pick from,
+//!   or to compose the automatic mode's rotation.
 //!
-//! Les aperçus sont dessinés par le même shader que le visualiseur, sur le son en cours (ou sur
-//! un son imaginaire quand rien ne joue).
+//! The previews are drawn by the same shader as the visualizer, on the current sound (or on an
+//! imaginary sound when nothing is playing).
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, StrokeKind};
 
@@ -18,21 +18,21 @@ use crate::icons::{self, Icon};
 use crate::shader::{AUTO, STYLES};
 use crate::{theme, trf, widgets};
 
-/// Emplacement d'un visualiseur.
+/// Slot of a visualizer.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
     NowPlaying,
     Banner,
 }
 
-/// Galerie ouverte depuis les paramètres : choisir pour un emplacement, ou composer le tirage.
+/// Gallery opened from the settings: pick for a slot, or compose the rotation.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Gallery {
     Choose(Slot),
     Pool,
 }
 
-/// Rythmes du mode automatique (secondes ; 0 : à chaque morceau seulement).
+/// Automatic mode rhythms (seconds; 0: on each track only).
 const AUTO_RHYTHMS: [(f32, &str); 4] = [
     (0.0, crate::i18n::n_("À chaque morceau")),
     (45.0, crate::i18n::n_("Toutes les 45 s")),
@@ -57,8 +57,8 @@ impl SterMusic {
         self.viz_flash = self.egui_ctx.input(|i| i.time);
     }
 
-    /// Visualiseur suivant (`step` = 1) ou précédent (−1) dans « En cours de lecture ». En
-    /// automatique, on part de celui qui est à l'écran.
+    /// Next (`step` = 1) or previous (−1) visualizer in "Now Playing". In automatic mode, start
+    /// from the one on screen.
     pub(super) fn step_viz(&mut self, step: i32) {
         let from = if self.settings.viz_style >= AUTO {
             self.np_shown
@@ -70,7 +70,7 @@ impl SterMusic {
         self.set_slot(Slot::NowPlaying, next as usize);
     }
 
-    /// Réglages propres au visualiseur `style` (ceux d'origine s'il n'y a pas touché).
+    /// Settings specific to visualizer `style` (the original ones if they were never touched).
     pub(super) fn viz_tune(&self, style: usize) -> crate::viz::Tune {
         STYLES
             .get(style)
@@ -88,10 +88,10 @@ impl SterMusic {
         }
     }
 
-    // ---------- Aperçus ----------
+    // ---------- Previews ----------
 
-    /// Ce qu'il faut pour dessiner les aperçus d'une image : le son en cours (ou un son
-    /// imaginaire quand rien ne joue), la palette, la pochette floutée, le tirage automatique.
+    /// What is needed to draw the previews of a frame: the current sound (or an imaginary sound
+    /// when nothing is playing), the palette, the blurred album art, the automatic rotation.
     fn previews(&mut self, now: f64) -> Previews {
         let palette = crate::viz::harmonize(self.viz_palette());
         let mut w = crate::viz::waves(&self.spectrum, palette, 1.0);
@@ -123,9 +123,9 @@ impl SterMusic {
         }
     }
 
-    // ---------- En cours de lecture ----------
+    // ---------- Now Playing ----------
 
-    /// Pastille ‹ nom › en haut à droite de la page, et bandeau d'aperçus s'il est ouvert.
+    /// ‹ name › pill at the top right of the page, and preview strip if it is open.
     pub(super) fn np_viz_controls(&mut self, ui: &mut egui::Ui, area: Rect, shown: usize) {
         self.np_shown = shown;
         let now = ui.input(|i| i.time);
@@ -141,10 +141,10 @@ impl SterMusic {
         let w = text_w + 34.0 + 3.0 * 30.0 + 8.0;
         let pill = Rect::from_min_size(pos2(area.right() - 16.0 - w, area.top() + 10.0), vec2(w, h));
         let resp = ui.interact(pill, ui.id().with("np_viz_pill"), Sense::hover());
-        // Sur la pastille, la molette change de visualiseur, pas le volume.
+        // On the pill, the wheel changes the visualizer, not the volume.
         self.np_wheel.1.push(pill.expand(4.0));
         let flash = ((now - self.viz_flash) as f32 / 1.2).clamp(0.0, 1.0);
-        // Les flèches et le nom, posés par-dessus, prennent le survol : on regarde le pointeur.
+        // The arrows and the name, laid on top, take the hover: look at the pointer.
         let over_pill = ui.rect_contains_pointer(pill);
         let _ = resp;
         let hot = over_pill || self.viz_strip || self.viz_strip_tune || flash < 1.0;
@@ -161,7 +161,7 @@ impl SterMusic {
         painter.rect_stroke(pill, CornerRadius::same(17), Stroke::new(1.0_f32, border), StrokeKind::Inside);
         let text_color = theme::alpha(theme::TEXT, (150.0 + 105.0 * a) as u8);
         let mut step = 0;
-        // ‹ précédent
+        // ‹ previous
         let left = Rect::from_min_size(pill.min, vec2(30.0, h));
         let l = ui.interact(left, ui.id().with("np_viz_prev"), Sense::click()).on_hover_text(tr("Visualiseur précédent (Maj+V)"));
         if l.hovered() {
@@ -171,7 +171,7 @@ impl SterMusic {
         if l.clicked() {
             step = -1;
         }
-        // › suivant
+        // › next
         let right = Rect::from_min_size(pos2(pill.right() - 30.0, pill.top()), vec2(30.0, h));
         let r = ui.interact(right, ui.id().with("np_viz_next"), Sense::click()).on_hover_text(tr("Visualiseur suivant (V)"));
         if r.hovered() {
@@ -181,7 +181,7 @@ impl SterMusic {
         if r.clicked() {
             step = 1;
         }
-        // Réglages de l'effet à l'écran : une carte sous la pastille.
+        // Settings of the effect on screen: a card under the pill.
         let gear = Rect::from_min_size(pos2(right.left() - 30.0, pill.top()), vec2(30.0, h));
         let g = ui
             .interact(gear, ui.id().with("np_viz_tune"), Sense::click())
@@ -201,7 +201,7 @@ impl SterMusic {
             self.viz_strip_tune = !self.viz_strip_tune;
             self.viz_strip = false;
         }
-        // Le nom : ouvre ou ferme le bandeau d'aperçus.
+        // The name: opens or closes the preview strip.
         let mid = Rect::from_min_max(pos2(left.right(), pill.top()), pos2(gear.left(), pill.bottom()));
         let m = ui
             .interact(mid, ui.id().with("np_viz_name"), Sense::click())
@@ -223,7 +223,7 @@ impl SterMusic {
             self.viz_strip_scroll = self.viz_strip;
             self.viz_strip_tune = false;
         }
-        // Molette sur la pastille : visualiseur suivant ou précédent.
+        // Wheel over the pill: next or previous visualizer.
         if over_pill {
             let dy = ui.input(|i| i.raw_scroll_delta.y);
             if dy.abs() > 0.5 {
@@ -244,8 +244,8 @@ impl SterMusic {
         }
     }
 
-    /// Carte des réglages de l'effet à l'écran, sous la pastille : elle laisse voir la pochette
-    /// et le bas de la page, où vivent la plupart des effets.
+    /// Settings card of the effect on screen, under the pill: it leaves the album art and the
+    /// bottom of the page visible, where most effects live.
     fn np_viz_tune_card(&mut self, ui: &mut egui::Ui, pill: Rect) {
         let shown = self.np_shown.min(AUTO - 1);
         let tune = self.viz_tune(shown);
@@ -301,8 +301,8 @@ impl SterMusic {
         ui.ctx().request_repaint();
     }
 
-    /// Bandeau d'aperçus au bas de « En cours de lecture », au premier plan (par-dessus la
-    /// pochette et les textes).
+    /// Preview strip at the bottom of "Now Playing", in the foreground (above the album art and
+    /// the texts).
     fn np_viz_strip(&mut self, ui: &mut egui::Ui, area: Rect, now: f64) {
         let open = crate::anim::appear(ui.ctx(), egui::Id::new("np_viz_strip"), crate::anim::FAST);
         let tile = vec2(176.0, 99.0);
@@ -334,7 +334,7 @@ impl SterMusic {
                 );
                 painter.rect_filled(panel, CornerRadius::same(16), theme::alpha(theme::bg(), (235.0 * open) as u8));
                 painter.rect_stroke(panel, CornerRadius::same(16), Stroke::new(1.0_f32, theme::white(0x1C)), StrokeKind::Inside);
-                // Le fond du bandeau retient les clics (rien ne passe à la page dessous).
+                // The strip background holds the clicks (nothing goes through to the page below).
                 let _ = ui.interact(panel, ui.id().with("np_viz_strip_bg"), Sense::click());
                 let title = painter.text(
                     pos2(panel.left() + 20.0, panel.top() + 22.0),
@@ -377,14 +377,14 @@ impl SterMusic {
                                 if resp.clicked() {
                                     chosen = Some(style);
                                 }
-                                // À l'ouverture, le visualiseur choisi est amené à l'écran.
+                                // When opening, the chosen visualizer is brought into view.
                                 if style == setting && scroll_to_current {
                                     resp.scroll_to_me(Some(egui::Align::Center));
                                 }
                             }
                         });
                     });
-                // La molette (verticale) fait défiler le bandeau de côté.
+                // The (vertical) wheel scrolls the strip sideways.
                 if hovered {
                     let dy = ui.input(|i| i.raw_scroll_delta.y);
                     if dy != 0.0 {
@@ -404,9 +404,9 @@ impl SterMusic {
         ui.ctx().request_repaint();
     }
 
-    // ---------- Paramètres ----------
+    // ---------- Settings ----------
 
-    /// Section « Visualiseur » de la carte Son.
+    /// "Visualizer" section of the Sound card.
     pub(super) fn visualizer_settings(&mut self, ui: &mut egui::Ui) {
         let mut visualizer = self.settings.visualizer;
         card_row(ui, Icon::AudioLines, tr("Visualiseur"), tr("Lumières qui suivent la musique, aux couleurs de la pochette (En cours de lecture, accueil)."), |_, ui| {
@@ -419,7 +419,7 @@ impl SterMusic {
         let now = ui.input(|i| i.time);
         let pv = self.previews(now);
         ui.add_space(6.0);
-        // Les deux emplacements, côte à côte : aperçu, nom, « Changer ».
+        // The two slots, side by side: preview, name, "Change".
         ui.horizontal_wrapped(|ui| {
             ui.add_space(52.0);
             ui.spacing_mut().item_spacing = vec2(18.0, 12.0);
@@ -440,7 +440,7 @@ impl SterMusic {
         });
         ui.add_space(8.0);
         separator(ui);
-        // Mode automatique : rythme, et visualiseurs du tirage.
+        // Automatic mode: rhythm, and visualizers of the rotation.
         let pool = self.auto_allowed().len();
         let desc = trf!("Un visualiseur au hasard, en fondu enchaîné. Dans le tirage : {0} sur {1}.", pool, AUTO);
         card_row(ui, Icon::Shuffle, tr("Mode automatique"), &desc, |s, ui| {
@@ -459,7 +459,7 @@ impl SterMusic {
         });
         ui.add_space(6.0);
         separator(ui);
-        // Luminosité, vitesse, poussières.
+        // Brightness, speed, dust.
         for (label, tip, key, min, max) in [
             (tr("Luminosité"), tr("Plus discret ou plus éclatant."), "viz_intensity", 0.4, 1.6),
             (tr("Vitesse"), tr("Mouvements plus calmes ou plus vifs (la musique les accélère toujours)."), "viz_speed", 0.4, 2.0),
@@ -472,7 +472,7 @@ impl SterMusic {
                 let seek = widgets::seek_bar(ui, key, (value - min) / (max - min), 220.0, true);
                 if let Some(v) = seek.preview.or(seek.commit) {
                     let v = min + v * (max - min);
-                    // Un cran magnétique sur la valeur d'origine.
+                    // A magnetic notch on the original value.
                     let v = if (v - 1.0).abs() < 0.04 { 1.0 } else { v };
                     if key == "viz_intensity" {
                         self.settings.viz_intensity = v;
@@ -494,7 +494,7 @@ impl SterMusic {
         ui.ctx().request_repaint();
     }
 
-    /// Galerie des visualiseurs (aperçus animés), ouverte depuis les paramètres.
+    /// Visualizer gallery (animated previews), opened from the settings.
     pub(super) fn viz_gallery_ui(&mut self, ctx: &egui::Context) {
         let Some(mode) = self.viz_gallery else { return };
         let now = ctx.input(|i| i.time);
@@ -582,7 +582,7 @@ impl SterMusic {
                     if excluded.contains(&name) {
                         excluded.retain(|n| *n != name);
                     } else if pool.len() > 1 {
-                        // Au moins un visualiseur reste dans le tirage.
+                        // At least one visualizer stays in the rotation.
                         excluded.push(name);
                     }
                 }
@@ -593,7 +593,7 @@ impl SterMusic {
         ctx.request_repaint();
     }
 
-    /// Raccourcis du visualiseur (page « En cours de lecture ») : V, Maj+V, Échap.
+    /// Visualizer shortcuts ("Now Playing" page): V, Shift+V, Esc.
     pub(super) fn viz_keys(&mut self, ctx: &egui::Context) {
         if self.view != View::NowPlaying || !self.settings.visualizer {
             self.viz_strip = false;
@@ -615,17 +615,17 @@ impl SterMusic {
     }
 }
 
-/// Voir [`SterMusic::previews`].
+/// See [`SterMusic::previews`].
 struct Previews {
     waves: crate::shader::Waves,
-    /// Réglages propres à chaque visualiseur.
+    /// Settings specific to each visualizer.
     tunes: Vec<crate::viz::Tune>,
     pool: Vec<usize>,
     intensity: f32,
     now: f64,
 }
 
-/// Un aperçu animé de `style` dans `rect` (coins arrondis).
+/// An animated preview of `style` in `rect` (rounded corners).
 fn paint_preview(pv: &Previews, painter: &egui::Painter, rect: Rect, style: usize, alpha: f32) {
     let mut w = pv.waves;
     let fill = STYLES[style].1;
@@ -642,15 +642,15 @@ fn paint_preview(pv: &Previews, painter: &egui::Painter, rect: Rect, style: usiz
         w.fade_top = 0.25;
         w.fade_bottom = 0.0;
     }
-    // Une « pochette » imaginaire au centre, pour ceux qui tournent autour d'elle.
+    // An imaginary "album art" at the center, for those that revolve around it.
     w.focus = [rect.width() / 2.0, rect.height() / 2.0, rect.height() * 0.27];
     pv.tunes[style].apply(&mut w, style, rect.size());
     painter.rect_filled(rect, CornerRadius::same(10), Color32::from_black_alpha((90.0 * alpha) as u8));
     crate::shader::paint(painter, rect, w);
 }
 
-/// Une vignette : l'aperçu, son nom dessous ; `selected` l'entoure de l'accent, `check` ajoute
-/// une case (tirage automatique).
+/// A thumbnail: the preview, its name below; `selected` surrounds it with the accent, `check`
+/// adds a checkbox (automatic rotation).
 fn viz_tile(
     ui: &mut egui::Ui,
     pv: &Previews,
@@ -673,7 +673,7 @@ fn viz_tile(
     );
     let shown = preview.expand(2.0 * grow);
     if style >= AUTO {
-        // « Automatique » : les visualiseurs du tirage défilent en fondu.
+        // "Automatic": the visualizers of the rotation cross-fade in turn.
         let pool = &pv.pool;
         let k = (now / 1.6) as usize;
         let a = pool[k % pool.len()];
@@ -721,12 +721,12 @@ fn viz_tile(
     resp
 }
 
-/// Curseurs des réglages propres au visualiseur `style` ; renvoie les nouveaux réglages s'ils
-/// ont changé.
+/// Sliders for the settings specific to visualizer `style`; returns the new settings if they
+/// changed.
 fn tune_sliders(ui: &mut egui::Ui, style: usize, tune: crate::viz::Tune) -> Option<crate::viz::Tune> {
     let percent: fn(f32) -> String = |v| crate::i18n::percent(v * 100.0);
     let degrees: fn(f32) -> String = |v| format!("{:+.0}°", v * 360.0);
-    // (nom, minimum, maximum, valeur d'origine, texte affiché), dans l'ordre de `values`.
+    // (name, minimum, maximum, original value, displayed text), in the order of `values`.
     type Row<'a> = (&'a str, f32, f32, f32, fn(f32) -> String);
     let mut rows: Vec<Row> = vec![
         (tr("Luminosité"), 0.3, 2.0, 1.0, percent),
@@ -744,7 +744,7 @@ fn tune_sliders(ui: &mut egui::Ui, style: usize, tune: crate::viz::Tune) -> Opti
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.add_sized([158.0, 24.0], egui::Label::new(egui::RichText::new(label).color(theme::TEXT_2)).truncate());
-            // Le curseur est linéaire de part et d'autre de la valeur d'origine, qui tombe au milieu.
+            // The slider is linear on both sides of the original value, which falls in the middle.
             let to_ratio = |v: f32| {
                 if v < origin {
                     0.5 * (v - min) / (origin - min)
@@ -761,7 +761,7 @@ fn tune_sliders(ui: &mut egui::Ui, style: usize, tune: crate::viz::Tune) -> Opti
             };
             let seek = widgets::seek_bar(ui, label, to_ratio(*value), 118.0, true);
             if let Some(r) = seek.preview.or(seek.commit) {
-                // Cran magnétique sur la valeur d'origine.
+                // Magnetic notch on the original value.
                 *value = if (r - 0.5).abs() < 0.03 { origin } else { from_ratio(r) };
             }
             let changed = (*value - origin).abs() > 0.001;

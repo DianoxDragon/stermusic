@@ -1,7 +1,7 @@
-//! Globe terrestre dessiné par la carte graphique : l'image satellite (Blue Marble avec relief,
-//! NASA GIBS, domaine public) projetée sur une sphère vue de face, avec un liseré d'atmosphère.
-//! En zoomant, une image plus détaillée de la région affichée est téléchargée et fondue
-//! par-dessus. Les stations sont placées avec [`View::project`].
+//! Earth globe drawn by the graphics card: the satellite image (Blue Marble with relief, NASA
+//! GIBS, public domain) projected onto a sphere seen from the front, with a thin atmosphere
+//! rim. When zooming in, a more detailed image of the displayed region is downloaded and faded
+//! in on top. Stations are placed with [`View::project`].
 
 use std::f32::consts::{FRAC_PI_2, PI};
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -11,23 +11,23 @@ use eframe::egui::{self, pos2, Pos2, Rect};
 use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
 
-/// Image équirectangulaire de la Terre (4096 × 2048, longitude −180° à gauche).
+/// Equirectangular image of the Earth (4096 × 2048, longitude −180° on the left).
 pub const EARTH_JPG: &[u8] = include_bytes!("../assets/earth.jpg");
 
-/// Orientation et taille du globe à l'écran.
+/// Orientation and size of the globe on screen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
-    /// Longitude et latitude du point au centre du globe (radians).
+    /// Longitude and latitude of the point at the center of the globe (radians).
     pub lon: f32,
     pub lat: f32,
     pub center: Pos2,
-    /// Rayon du globe (points).
+    /// Radius of the globe (points).
     pub radius: f32,
 }
 
 impl View {
-    /// Position à l'écran d'un point (degrés), et sa profondeur (1 au centre, 0 sur le bord) ;
-    /// `None` s'il est sur la face cachée.
+    /// Screen position of a point (degrees), and its depth (1 at the center, 0 at the edge);
+    /// `None` if it is on the far side.
     pub fn project(&self, lat_deg: f32, lon_deg: f32) -> Option<(Pos2, f32)> {
         let (phi, lam) = (lat_deg.to_radians(), lon_deg.to_radians());
         let x1 = phi.cos() * (lam - self.lon).sin();
@@ -43,7 +43,7 @@ impl View {
         })
     }
 
-    /// Point du globe (latitude, longitude en degrés) sous une position de l'écran.
+    /// Point of the globe (latitude, longitude in degrees) under a screen position.
     pub fn unproject(&self, p: Pos2) -> Option<(f32, f32)> {
         let x2 = (p.x - self.center.x) / self.radius;
         let y2 = (self.center.y - p.y) / self.radius;
@@ -59,7 +59,7 @@ impl View {
         Some((phi.to_degrees(), wrap_deg(lam.to_degrees())))
     }
 
-    /// Fait tourner le globe d'un glissé de souris (points) : le point saisi suit le pointeur.
+    /// Rotates the globe by a mouse drag (points): the grabbed point follows the pointer.
     pub fn drag(&mut self, delta: egui::Vec2) {
         self.lon -= delta.x / self.radius / self.lat.cos().max(0.2);
         self.lat = (self.lat + delta.y / self.radius).clamp(-MAX_LAT, MAX_LAT);
@@ -75,10 +75,10 @@ fn wrap_deg(a: f32) -> f32 {
     (a + 180.0).rem_euclid(360.0) - 180.0
 }
 
-/// Latitude du centre, bornée pour ne pas basculer par-dessus les pôles.
+/// Latitude of the center, clamped so as not to tip over the poles.
 pub const MAX_LAT: f32 = FRAC_PI_2 * 0.92;
 
-/// 0 : inconnu, 1 : fonctionne, 2 : refusé par le pilote.
+/// 0: unknown, 1: works, 2: refused by the driver.
 static STATE: AtomicU8 = AtomicU8::new(0);
 static RESOURCES: Mutex<Option<Option<Resources>>> = Mutex::new(None);
 
@@ -105,36 +105,36 @@ const UNIFORMS: [&str; 13] = [
     "u_detail1_alpha",
 ];
 
-/// Image détaillée d'une région, posée sur la Terre de base quand on zoome.
+/// Detailed image of a region, laid over the base Earth when zooming in.
 #[derive(Clone, Copy, Debug)]
 pub struct Detail {
     pub texture: egui::TextureId,
-    /// Latitude et longitude minimales, puis maximales (degrés).
+    /// Minimum latitude and longitude, then maximum (degrees).
     pub bounds: [f32; 4],
-    /// Opacité (fondu d'apparition).
+    /// Opacity (fade-in).
     pub alpha: f32,
 }
 
-/// Ce qu'il faut pour dessiner une image du globe.
+/// What is needed to draw a frame of the globe.
 #[derive(Clone, Copy)]
 pub struct Frame {
     pub view: View,
-    /// Image de la Terre entière.
+    /// Image of the whole Earth.
     pub earth: egui::TextureId,
-    /// Images détaillées : l'ancienne (dessous) et la nouvelle, qui apparaît en fondu.
+    /// Detailed images: the old one (below) and the new one, fading in.
     pub details: [Option<Detail>; 2],
-    /// Couleur de l'atmosphère.
+    /// Atmosphere color.
     pub glow: egui::Color32,
-    /// Rayon du coin haut gauche de la zone (points).
+    /// Radius of the top left corner of the area (points).
     pub corner: f32,
 }
 
-/// Faux si le pilote a refusé le shader (le globe est alors dessiné sans l'image).
+/// False if the driver refused the shader (the globe is then drawn without the image).
 pub fn available() -> bool {
     STATE.load(Ordering::Relaxed) != 2
 }
 
-/// Dessine le globe dans `rect`.
+/// Draws the globe in `rect`.
 pub fn paint(painter: &egui::Painter, rect: Rect, frame: Frame) {
     let callback = egui_glow::CallbackFn::new(move |info, painter| {
         let mut guard = RESOURCES.lock().unwrap();
@@ -158,15 +158,15 @@ pub fn paint(painter: &egui::Painter, rect: Rect, frame: Frame) {
 }
 
 const FRAGMENT: &str = r#"
-uniform vec4 u_rect;    // viewport : x0, y0 (bas gauche), largeur, hauteur en pixels
-uniform vec3 u_globe;   // centre x, y (pixels depuis le bas gauche du viewport), rayon
-uniform vec2 u_rot;     // longitude, latitude du centre (radians)
+uniform vec4 u_rect;    // viewport: x0, y0 (bottom left), width, height in pixels
+uniform vec3 u_globe;   // center x, y (pixels from the bottom left of the viewport), radius
+uniform vec2 u_rot;     // longitude, latitude of the center (radians)
 uniform sampler2D u_tex;
 uniform int u_srgb;
-uniform vec3 u_glow;    // couleur de l'atmosphère
-uniform float u_corner; // rayon du coin haut gauche (pixels), celui de la zone de contenu
-// Images détaillées de régions (l'ancienne, puis la nouvelle par-dessus) : zone en degrés
-// (latitude min, longitude min, latitude max, longitude max) et opacité (0 : aucune).
+uniform vec3 u_glow;    // atmosphere color
+uniform float u_corner; // radius of the top left corner (pixels), that of the content area
+// Detailed images of regions (the old one, then the new one on top): area in degrees
+// (min latitude, min longitude, max latitude, max longitude) and opacity (0: none).
 uniform sampler2D u_detail0;
 uniform vec4 u_detail0_box;
 uniform float u_detail0_alpha;
@@ -181,8 +181,8 @@ vec3 srgb_from_linear(vec3 c) {
     return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, vec3(lessThan(c, vec3(0.0031308))));
 }
 
-// Une image détaillée, fondue sur ses bords dans ce qui est dessous ; ses trous (tuiles
-// manquantes) sont transparents.
+// A detailed image, blended at its edges into what lies below; its holes (missing tiles)
+// are transparent.
 vec3 detail(vec3 col, sampler2D tex, vec4 box, float alpha, float lat, float lon) {
     vec2 duv = vec2((lon - box.y) / (box.w - box.y), (box.z - lat) / (box.z - box.x));
     if (alpha <= 0.0 || duv.x <= 0.0 || duv.x >= 1.0 || duv.y <= 0.0 || duv.y >= 1.0) return col;
@@ -193,7 +193,7 @@ vec3 detail(vec3 col, sampler2D tex, vec4 box, float alpha, float lat, float lon
 }
 
 float corner_mask(vec2 p) {
-    vec2 q = vec2(p.x, u_rect.w - p.y);  // distance au coin haut gauche
+    vec2 q = vec2(p.x, u_rect.w - p.y);  // distance to the top left corner
     if (q.x >= u_corner || q.y >= u_corner) return 1.0;
     float d = length(vec2(u_corner) - q) - u_corner;
     return clamp(0.5 - d, 0.0, 1.0);
@@ -205,7 +205,7 @@ void main() {
     vec2 d = (p - u_globe.xy) / u_globe.z;
     float r = length(d);
     float aa = 1.5 / u_globe.z;
-    // Atmosphère : halo autour du disque.
+    // Atmosphere: halo around the disc.
     float halo = exp(-max(r - 1.0, 0.0) * 18.0) * smoothstep(1.0 - aa, 1.0 + aa, r);
     vec4 outside = vec4(u_glow * halo * 0.55, halo * 0.55);
     if (r > 1.0 + aa) {
@@ -219,22 +219,22 @@ void main() {
     float phi = asin(clamp(y1, -1.0, 1.0));
     float lam = u_rot.x + atan(d.x, z1);
     vec2 uv = vec2(fract(lam / (2.0 * PI) + 0.5), 0.5 - phi / PI);
-    // Dérivées calculées sans le saut de longitude à ±180° (sinon une ligne floue apparaît).
+    // Derivatives computed without the longitude jump at ±180° (otherwise a blurry line appears).
     vec2 dx = dFdx(uv), dy = dFdy(uv);
     dx.x -= sign(dx.x) * step(0.5, abs(dx.x));
     dy.x -= sign(dy.x) * step(0.5, abs(dy.x));
     vec3 col = textureGrad(u_tex, uv, dx, dy).rgb;
-    // Images détaillées de la région affichée, par-dessus la Terre de base.
+    // Detailed images of the displayed region, on top of the base Earth.
     float lat = degrees(phi);
     float lon = mod(degrees(lam) + 180.0, 360.0) - 180.0;
     col = detail(col, u_detail0, u_detail0_box, u_detail0_alpha, lat, lon);
     col = detail(col, u_detail1, u_detail1_box, u_detail1_alpha, lat, lon);
     if (u_srgb == 1) col = srgb_from_linear(col);
-    // Aux pôles, l'image se resserre en un point (traînées en étoile) : on la fond dans la
-    // teinte moyenne de ses bords (océan Arctique en haut, banquise en bas).
+    // At the poles, the image narrows to a point (star-shaped streaks): it is blended into the
+    // average hue of its edges (Arctic Ocean at the top, pack ice at the bottom).
     vec3 pole = phi > 0.0 ? vec3(6.0, 17.0, 46.0) / 255.0 : vec3(241.0, 241.0, 241.0) / 255.0;
     col = mix(col, pole, smoothstep(1.32, 1.48, abs(phi)));
-    // Lumière douce venue du haut à gauche, assombrissement vers le bord, liseré d'atmosphère.
+    // Soft light from the top left, darkening towards the edge, atmosphere rim.
     vec3 n = vec3(d, z);
     float light = 0.55 + 0.55 * max(dot(n, normalize(vec3(-0.35, 0.45, 0.85))), 0.0);
     col *= light;
@@ -320,7 +320,7 @@ unsafe fn draw(
     let l = |name: &str| res.loc[UNIFORMS.iter().position(|n| *n == name).unwrap()].as_ref();
     let view = frame.view;
     let glow_color = egui::Rgba::from(frame.glow);
-    // Centre du globe en pixels, depuis le coin bas gauche du rectangle de dessin.
+    // Center of the globe in pixels, from the bottom left corner of the drawing rectangle.
     let cx = (view.center.x - rect.left()) * ppp;
     let cy = (rect.bottom() - view.center.y) * ppp;
     unsafe {
@@ -343,7 +343,7 @@ unsafe fn draw(
         gl.uniform_1_i32(l("u_tex"), 0);
         for (k, detail) in details.iter().enumerate() {
             let name = |what: &str| format!("u_detail{k}{what}");
-            // Toujours une texture liée à chaque unité (celle de la Terre à défaut).
+            // Always a texture bound to each unit (the Earth's as a fallback).
             gl.active_texture(glow::TEXTURE1 + k as u32);
             gl.bind_texture(glow::TEXTURE_2D, Some(detail.map_or(earth, |(t, _)| t)));
             gl.uniform_1_i32(l(&name("")), 1 + k as i32);
@@ -368,27 +368,27 @@ unsafe fn draw(
     }
 }
 
-// ---------- Tuiles détaillées (NASA GIBS) ----------
+// ---------- Detailed tiles (NASA GIBS) ----------
 
-/// Niveaux de tuiles utilisés : en dessous de 3, la Terre de base est aussi fine ; 7 est le
-/// plus fin que propose la NASA pour cette image (500 m par pixel environ).
+/// Tile levels used: below 3, the base Earth is just as fine; 7 is the finest NASA offers for
+/// this image (about 500 m per pixel).
 pub const MIN_LEVEL: u32 = 3;
 pub const MAX_LEVEL: u32 = 7;
 const TILE_PX: u32 = 512;
-/// Au-delà, la zone est trop grande pour une seule image détaillée.
+/// Beyond this, the area is too large for a single detailed image.
 pub const MAX_TILES: u32 = 36;
 
-/// Côté d'une tuile en degrés (288° au niveau 0, moitié moins à chaque niveau).
+/// Side of a tile in degrees (288° at level 0, half as much at each level).
 pub fn tile_deg(level: u32) -> f32 {
     288.0 / (1u32 << level) as f32
 }
 
-/// Pixels par degré des tuiles d'un niveau.
+/// Pixels per degree of the tiles of a level.
 pub fn level_px_per_deg(level: u32) -> f32 {
     TILE_PX as f32 / tile_deg(level)
 }
 
-/// Un bloc de tuiles d'un même niveau : lignes et colonnes (fin exclue).
+/// A block of tiles of the same level: rows and columns (end excluded).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileRange {
     pub level: u32,
@@ -397,7 +397,7 @@ pub struct TileRange {
 }
 
 impl TileRange {
-    /// Les tuiles qui couvrent une zone (degrés, comme [`Detail::bounds`]).
+    /// The tiles covering an area (degrees, as in [`Detail::bounds`]).
     pub fn covering(bounds: [f32; 4], level: u32) -> Self {
         let td = tile_deg(level);
         let max_row = (180.0 / td).ceil() as u32;
@@ -416,7 +416,7 @@ impl TileRange {
         (self.rows.1 - self.rows.0) * (self.cols.1 - self.cols.0)
     }
 
-    /// Zone couverte (degrés).
+    /// Area covered (degrees).
     pub fn bounds(&self) -> [f32; 4] {
         let td = tile_deg(self.level);
         [
@@ -427,7 +427,7 @@ impl TileRange {
         ]
     }
 
-    /// Vrai si `other` est entièrement couvert, au moins aussi finement.
+    /// True if `other` is entirely covered, at least as finely.
     pub fn contains(&self, other: &TileRange) -> bool {
         if other.level > self.level {
             return false;
@@ -445,7 +445,7 @@ fn tile_file(level: u32, row: u32, col: u32) -> std::path::PathBuf {
         .join(format!("{row}_{col}.jpg"))
 }
 
-/// Une tuile : depuis le cache du disque, sinon téléchargée (puis gardée).
+/// A tile: from the disk cache, otherwise downloaded (then kept).
 fn tile(agent: &ureq::Agent, level: u32, row: u32, col: u32) -> Option<image::RgbaImage> {
     let file = tile_file(level, row, col);
     if let Ok(bytes) = std::fs::read(&file) {
@@ -471,8 +471,8 @@ fn tile(agent: &ureq::Agent, level: u32, row: u32, col: u32) -> Option<image::Rg
     Some(img)
 }
 
-/// Assemble un bloc de tuiles en une image (tuiles téléchargées en parallèle ; une tuile
-/// manquante reste transparente). `None` si aucune n'a pu être obtenue. Bloquant.
+/// Assembles a block of tiles into one image (tiles downloaded in parallel; a missing tile
+/// stays transparent). `None` if none could be obtained. Blocking.
 pub fn mosaic(range: TileRange) -> Option<egui::ColorImage> {
     let agent = ureq::AgentBuilder::new()
         .user_agent(concat!("SterMusic/", env!("CARGO_PKG_VERSION")))
@@ -506,7 +506,7 @@ pub fn mosaic(range: TileRange) -> Option<egui::ColorImage> {
     ))
 }
 
-/// Image de la Terre décodée, prête à devenir une texture (à faire hors du thread de l'interface).
+/// Decoded Earth image, ready to become a texture (to be done outside the interface thread).
 pub fn decode_earth() -> Option<egui::ColorImage> {
     let img = image::load_from_memory_with_format(EARTH_JPG, image::ImageFormat::Jpeg)
         .ok()?
@@ -529,10 +529,10 @@ mod tests {
             center: pos2(400.0, 300.0),
             radius: 250.0,
         };
-        // Le point au centre de la vue tombe au centre du globe.
+        // The point at the center of the view falls at the center of the globe.
         let (p, z) = view.project(48.85, 2.35).unwrap();
         assert!((p - view.center).length() < 0.01 && (z - 1.0).abs() < 1e-4);
-        // Aller-retour écran → globe → écran.
+        // Round trip screen → globe → screen.
         for (lat, lon) in [(51.5, -0.12), (40.4, -3.7), (59.3, 18.0), (36.8, 10.2)] {
             let (p, _) = view.project(lat, lon).unwrap();
             let (la, lo) = view.unproject(p).unwrap();
@@ -541,21 +541,21 @@ mod tests {
                 "{lat},{lon} → {la},{lo}"
             );
         }
-        // Les antipodes sont sur la face cachée.
+        // The antipodes are on the far side.
         assert!(view.project(-48.85, -177.65).is_none());
-        // Nord en haut : Londres est au-dessus de Paris.
+        // North up: London is above Paris.
         assert!(view.project(51.5, -0.12).unwrap().0.y < view.center.y);
     }
 
     #[test]
     fn tiles() {
-        // La tuile 7/18/78 couvre l'ouest de la Bretagne (vérifié sur le serveur de la NASA).
+        // Tile 7/18/78 covers western Brittany (checked on NASA's server).
         let r = TileRange::covering([47.5, -4.0, 48.5, -3.0], 7);
         assert_eq!((r.rows, r.cols), ((18, 19), (78, 79)));
         assert_eq!(r.bounds(), [47.25, -4.5, 49.5, -2.25]);
         let wide = TileRange::covering([40.0, -10.0, 52.0, 10.0], 5);
         assert!(wide.contains(&TileRange::covering([45.0, -5.0, 46.0, -4.0], 5)));
-        assert!(!wide.contains(&r)); // plus fin : pas couvert
+        assert!(!wide.contains(&r)); // finer: not covered
         assert!(level_px_per_deg(MAX_LEVEL) > 220.0);
     }
 

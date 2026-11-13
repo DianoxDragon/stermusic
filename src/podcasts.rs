@@ -1,8 +1,8 @@
-//! Podcasts : abonnements (flux RSS), épisodes, recherche dans l'annuaire d'Apple (public,
-//! sans compte), téléchargement pour l'écoute hors ligne.
+//! Podcasts: subscriptions (RSS feeds), episodes, search in Apple's directory (public, no
+//! account), downloads for offline listening.
 //!
-//! Les épisodes de chaque flux sont gardés sur le disque (`podcasts/<clé>.json`) ; les fichiers
-//! téléchargés vont dans `podcasts/fichiers/`.
+//! The episodes of each feed are kept on disk (`podcasts/<key>.json`); downloaded files go to
+//! `podcasts/fichiers/`.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Podcast {
-    /// Adresse du flux RSS (elle identifie le podcast).
+    /// Address of the RSS feed (it identifies the podcast).
     pub feed: String,
     pub title: String,
     pub author: String,
@@ -24,21 +24,21 @@ pub struct Podcast {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Episode {
-    /// Identifiant de l'épisode dans le flux (sinon son adresse).
+    /// Identifier of the episode in the feed (otherwise its address).
     pub guid: String,
     pub title: String,
-    /// Date de publication (secondes depuis 1970).
+    /// Publication date (seconds since 1970).
     pub date: u64,
     pub duration_ms: u64,
-    /// Adresse du son.
+    /// Address of the audio.
     pub url: String,
     pub description: String,
-    /// Image propre à l'épisode (sinon celle du podcast).
+    /// Image specific to the episode (otherwise the podcast's).
     pub image: String,
 }
 
 impl Episode {
-    /// Clé stable de l'épisode (avancement, fichier téléchargé).
+    /// Stable key of the episode (progress, downloaded file).
     pub fn key(&self) -> String {
         hash(if self.guid.is_empty() {
             &self.url
@@ -48,7 +48,7 @@ impl Episode {
     }
 }
 
-/// Où en est l'écoute d'un épisode.
+/// How far the listening of an episode got.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Progress {
@@ -72,9 +72,9 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .build()
 }
 
-// ---------- Recherche ----------
+// ---------- Search ----------
 
-/// Recherche dans l'annuaire des podcasts d'Apple (bloquant).
+/// Search in Apple's podcast directory (blocking).
 pub fn search(term: &str, country: &str) -> Result<Vec<Podcast>, String> {
     let v: serde_json::Value = agent(Duration::from_secs(15))
         .get("https://itunes.apple.com/search")
@@ -107,9 +107,9 @@ pub fn search(term: &str, country: &str) -> Result<Vec<Podcast>, String> {
         .unwrap_or_default())
 }
 
-// ---------- Flux RSS ----------
+// ---------- RSS feeds ----------
 
-/// Télécharge et lit un flux (bloquant).
+/// Downloads and reads a feed (blocking).
 pub fn fetch(feed: &str) -> Result<(Podcast, Vec<Episode>), String> {
     let mut text = String::new();
     agent(Duration::from_secs(30))
@@ -126,13 +126,13 @@ pub fn fetch(feed: &str) -> Result<(Podcast, Vec<Episode>), String> {
     Ok((podcast, episodes))
 }
 
-/// Contenu du premier élément `<name …>…</name>` de `xml`.
+/// Content of the first `<name …>…</name>` element of `xml`.
 fn element<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
     let mut from = 0;
     loop {
         let i = from + xml[from..].find(&format!("<{name}"))?;
         let after = &xml[i + name.len() + 1..];
-        // « <title> » ou « <title attr> », pas « <titles> ».
+        // "<title>" or "<title attr>", not "<titles>".
         match after.chars().next() {
             Some('>') | Some(' ') | Some('\t') | Some('\n') | Some('\r') | Some('/') => {}
             _ => {
@@ -150,7 +150,7 @@ fn element<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
-/// Attribut `attr` de la première balise `<name …>`.
+/// Attribute `attr` of the first `<name …>` tag.
 fn attribute(xml: &str, name: &str, attr: &str) -> Option<String> {
     let mut from = 0;
     loop {
@@ -172,7 +172,7 @@ fn attribute(xml: &str, name: &str, attr: &str) -> Option<String> {
     }
 }
 
-/// Texte lisible : CDATA ôté, balises HTML retirées, entités décodées, espaces resserrés.
+/// Readable text: CDATA stripped, HTML tags removed, entities decoded, spaces collapsed.
 fn text(raw: &str) -> String {
     let raw = raw.trim();
     let raw = raw
@@ -229,7 +229,7 @@ fn decode(s: &str) -> String {
     out
 }
 
-/// « 01:02:03 », « 62:03 » ou « 3723 » → millisecondes.
+/// "01:02:03", "62:03" or "3723" → milliseconds.
 fn duration(s: &str) -> u64 {
     let parts: Vec<f64> = s
         .trim()
@@ -240,7 +240,7 @@ fn duration(s: &str) -> u64 {
     (secs * 1000.0) as u64
 }
 
-/// Date RFC 2822 : « Tue, 05 Mar 2024 18:22:10 +0100 » → secondes depuis 1970.
+/// RFC 2822 date: "Tue, 05 Mar 2024 18:22:10 +0100" → seconds since 1970.
 fn date(s: &str) -> u64 {
     let s = s.trim();
     let s = s.split_once(',').map(|(_, r)| r).unwrap_or(s);
@@ -260,7 +260,7 @@ fn date(s: &str) -> u64 {
     let time = p.next().unwrap_or("00:00:00");
     let iso = format!("{year}-{:02}-{:0>2}T{time}", m + 1, day);
     let base = crate::servers::parse_iso(&iso).unwrap_or(0) as i64;
-    // Fuseau : « +0100 », « -0500 » (les noms comme GMT valent zéro).
+    // Time zone: "+0100", "-0500" (names like GMT count as zero).
     let offset = p
         .next()
         .filter(|z| z.len() == 5 && (z.starts_with('+') || z.starts_with('-')))
@@ -276,7 +276,7 @@ fn date(s: &str) -> u64 {
 
 pub fn parse(xml: &str) -> Option<(Podcast, Vec<Episode>)> {
     let channel = element(xml, "channel")?;
-    // Les informations du podcast sont avant le premier épisode.
+    // The podcast's information comes before the first episode.
     let head = &channel[..channel.find("<item").unwrap_or(channel.len())];
     let image = attribute(head, "itunes:image", "href")
         .or_else(|| element(head, "image").and_then(|i| element(i, "url")).map(text))
@@ -325,7 +325,7 @@ pub fn parse(xml: &str) -> Option<(Podcast, Vec<Episode>)> {
     Some((podcast, episodes))
 }
 
-// ---------- Disque ----------
+// ---------- Disk ----------
 
 fn dir() -> PathBuf {
     crate::library::data_dir().join("podcasts")
@@ -345,7 +345,7 @@ pub fn save_episodes(feed: &str, episodes: &[Episode]) {
     }
 }
 
-/// Fichier d'un épisode téléchargé (qu'il existe ou non).
+/// File of a downloaded episode (whether it exists or not).
 pub fn download_path(ep: &Episode) -> PathBuf {
     let ext = ep
         .url
@@ -362,7 +362,7 @@ pub fn downloaded(ep: &Episode) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-/// Télécharge un épisode ; `progress` reçoit la part faite (0 → 1). Bloquant.
+/// Downloads an episode; `progress` receives the share done (0 → 1). Blocking.
 pub fn download(ep: &Episode, progress: &std::sync::atomic::AtomicU32) -> Result<PathBuf, String> {
     let target = download_path(ep);
     let resp = agent(Duration::from_secs(60))
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(p.image, "https://ex.org/cover.jpg");
         assert_eq!(p.description, "Un podcast génial .");
         assert_eq!(eps.len(), 2);
-        // Le plus récent d'abord.
+        // Most recent first.
         assert_eq!(eps[0].title, "Épisode 2");
         assert_eq!(eps[0].duration_ms, 754_000);
         assert_eq!(eps[1].duration_ms, 3_723_000);
@@ -433,7 +433,7 @@ mod tests {
 
 #[cfg(test)]
 mod live {
-    /// Réseau : `cargo test live_podcast -- --ignored --nocapture`.
+    /// Network: `cargo test live_podcast -- --ignored --nocapture`.
     #[test]
     #[ignore]
     fn live_podcast() {

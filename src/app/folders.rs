@@ -1,5 +1,5 @@
-//! Vue par dossiers : la bibliothèque telle qu'elle est rangée sur le disque. Plus parlante que
-//! la vue Albums pour des fichiers mal tagués (« ## Personnel/Papa »…).
+//! Folder view: the library as it is organized on disk. More telling than the Albums view for
+//! badly tagged files ("## Personal/Dad"…).
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -13,16 +13,16 @@ use crate::icons::{self, Icon};
 use crate::library::{fold, plural, Library};
 use crate::{theme, widgets};
 
-/// Contenu d'un dossier.
+/// Content of a folder.
 #[derive(Default)]
 pub struct Folder {
-    /// Sous-dossiers (chemin complet), triés par nom.
+    /// Subfolders (full path), sorted by name.
     pub children: Vec<PathBuf>,
-    /// Morceaux posés directement dans ce dossier, dans l'ordre de la bibliothèque.
+    /// Tracks placed directly in this folder, in library order.
     pub tracks: Vec<usize>,
-    /// Nombre de morceaux, sous-dossiers compris.
+    /// Number of tracks, subfolders included.
     pub total: usize,
-    /// Un morceau du dossier ou d'un sous-dossier : sa pochette illustre le dossier.
+    /// A track of the folder or of a subfolder: its art illustrates the folder.
     pub first: Option<usize>,
 }
 
@@ -42,7 +42,7 @@ impl FolderIndex {
             };
             let Some(dir) = t.path.parent() else { continue };
             folders.entry(dir.to_path_buf()).or_default().tracks.push(i);
-            // Chaque dossier, jusqu'à la racine, compte le morceau et connaît son sous-dossier.
+            // Every folder, up to the root, counts the track and knows its subfolder.
             let mut cur = dir;
             loop {
                 let f = folders.entry(cur.to_path_buf()).or_default();
@@ -75,17 +75,17 @@ impl FolderIndex {
     }
 }
 
-/// Nombre de morceaux et de sous-dossiers d'un dossier, et le morceau qui l'illustre.
+/// Number of tracks and subfolders of a folder, and the track that illustrates it.
 type FolderInfo = (usize, usize, Option<usize>);
 
-/// Icône de dossier dessinée à la main (couleur d'accent), avec la pochette `tex` qui en dépasse :
-/// un dossier ne se confond pas avec un morceau.
+/// Hand-drawn folder icon (accent color), with the `tex` album art sticking out of it: a folder
+/// is not mistaken for a track.
 fn paint_folder(painter: &egui::Painter, art: egui::Rect, tex: Option<&egui::TextureHandle>, seed: &str) {
     use egui::{CornerRadius, Rect, Stroke};
     let back = theme::accent().lerp_to_gamma(egui::Color32::BLACK, 0.35);
     let front = theme::accent().lerp_to_gamma(egui::Color32::WHITE, 0.18);
     let w = art.width();
-    // Onglet et dos du dossier.
+    // Tab and back of the folder.
     let tab = Rect::from_min_size(art.min + vec2(1.0, 3.0), vec2(w * 0.42, 8.0));
     painter.rect_filled(
         tab,
@@ -98,11 +98,11 @@ fn paint_folder(painter: &egui::Painter, art: egui::Rect, tex: Option<&egui::Tex
     );
     let body = Rect::from_min_max(art.min + vec2(1.0, 7.0), art.max - vec2(1.0, 2.0));
     painter.rect_filled(body, 4, back);
-    // La pochette, glissée dedans.
+    // The album art, slipped inside.
     let side = w - 14.0;
     let cover = Rect::from_min_size(art.min + vec2(7.0, 5.0), vec2(side, side));
     widgets::cover(painter, cover, tex, 3, seed);
-    // Le devant du dossier, qui cache le bas de la pochette.
+    // The front of the folder, hiding the bottom of the album art.
     let lid = Rect::from_min_max(pos2(art.left() + 1.0, art.top() + 17.0), art.max - vec2(1.0, 2.0));
     painter.add(
         egui::Shadow {
@@ -135,7 +135,7 @@ impl SterMusic {
         self.folder_index.as_ref().unwrap()
     }
 
-    /// Tous les morceaux d'un dossier, sous-dossiers compris, dans l'ordre de la bibliothèque.
+    /// All the tracks of a folder, subfolders included, in library order.
     fn folder_tracks(&self, dir: &Path) -> Vec<usize> {
         (0..self.lib.tracks.len())
             .filter(|&i| self.lib.tracks[i].path.starts_with(dir))
@@ -143,7 +143,7 @@ impl SterMusic {
     }
 
     pub(super) fn folders_tab(&mut self, ui: &mut egui::Ui, query: &str) {
-        // Un dossier qui n'existe plus (rescan, dossier retiré) : retour aux racines.
+        // A folder that no longer exists (rescan, folder removed): back to the roots.
         let current = self
             .lib_folder
             .clone()
@@ -157,7 +157,7 @@ impl SterMusic {
                 (f.children.clone(), f.tracks.clone())
             }
         };
-        // Pour chaque sous-dossier : nombre de morceaux, de sous-dossiers, et sa pochette.
+        // For each subfolder: number of tracks, of subfolders, and its album art.
         let info: Vec<FolderInfo> = kids
             .iter()
             .map(|k| {
@@ -170,7 +170,7 @@ impl SterMusic {
             .collect();
         let roots = index.roots.clone();
 
-        // Fil d'Ariane à gauche, actions du dossier à droite.
+        // Breadcrumb on the left, folder actions on the right.
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             if widgets::link(ui, tr("Tous les dossiers")).clicked() {
@@ -239,7 +239,7 @@ impl SterMusic {
             return;
         }
 
-        // Une seule liste, comme un gestionnaire de fichiers : les sous-dossiers, puis les morceaux.
+        // A single list, like a file manager: the subfolders, then the tracks.
         let opts = ListOpts {
             cover: true,
             album: true,
@@ -284,7 +284,7 @@ impl SterMusic {
                         ui.painter().rect_filled(r, 6, theme::white(0x03));
                     }
                     widgets::paint_interaction(ui, r, 6, &resp);
-                    // Un dossier, d'où dépasse la pochette d'un de ses morceaux.
+                    // A folder, with the art of one of its tracks sticking out.
                     let art = egui::Rect::from_min_size(
                         pos2(r.left() + 12.0, r.center().y - 18.0),
                         vec2(36.0, 36.0),
@@ -399,7 +399,7 @@ mod tests {
         assert_eq!(idx.roots, vec![PathBuf::from("/m")]);
         let root = &idx.folders[Path::new("/m")];
         assert_eq!(root.total, 5);
-        // Tri sans tenir compte des accents ni des majuscules.
+        // Sorting regardless of accents and case.
         assert_eq!(
             root.children,
             vec![

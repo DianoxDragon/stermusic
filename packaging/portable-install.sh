@@ -14,7 +14,7 @@ say() { if [ "$fr" = 1 ]; then echo "$1"; else echo "$2"; fi; }
 BIN="$HOME/.local/bin/stermusic"
 install -Dm755 stermusic "$BIN"
 install -Dm644 stermusic.png "$HOME/.local/share/icons/hicolor/256x256/apps/stermusic.png"
-# Chemin complet dans le lanceur : le menu marche même si ~/.local/bin n'est pas dans le PATH.
+# Full path in the launcher: the menu works even if ~/.local/bin is not in the PATH.
 mkdir -p "$HOME/.local/share/applications"
 sed "s|^Exec=stermusic|Exec=$BIN|" stermusic.desktop > "$HOME/.local/share/applications/stermusic.desktop"
 SERVICE_MENU="$HOME/.local/share/kio/servicemenus/stermusic-tags.desktop"

@@ -1,10 +1,8 @@
-//! Outils de l'éditeur de tags qui s'ouvrent dans une fenêtre : rechercher-remplacer (avec les
-//! expressions régulières et leur aide-mémoire), renommer les fichiers d'après les tags, et lire
-//! les tags dans les noms de fichiers.
+//! Tag editor tools that open in a window: search and replace (with regular expressions and
+//! their cheat sheet), rename files from tags, and read tags from file names.
 //!
-//! Chaque outil montre un aperçu de ce qu'il va faire avant « Appliquer ». Seul le renommage
-//! touche aux fichiers tout de suite ; les deux autres remplissent les champs de l'éditeur, et
-//! rien n'est écrit avant « Enregistrer ».
+//! Each tool shows a preview of what it will do before "Apply". Only renaming touches the files
+//! right away; the other two fill the editor's fields, and nothing is written before "Save".
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,7 +27,7 @@ pub enum ToolKind {
     FromName,
 }
 
-/// Champs proposés au rechercher-remplacer (les champs numériques n'ont rien à y gagner).
+/// Fields offered for search and replace (numeric fields have nothing to gain from it).
 const TEXT_FIELDS: [Field; 7] = [
     Field::Title,
     Field::Artist,
@@ -40,7 +38,7 @@ const TEXT_FIELDS: [Field; 7] = [
     Field::Comment,
 ];
 
-/// Motifs tout prêts, dans les deux sens.
+/// Ready-made patterns, both ways.
 const PATTERNS: [&str; 5] = [
     "%track% - %title%",
     "%track%. %title%",
@@ -49,7 +47,7 @@ const PATTERNS: [&str; 5] = [
     "%disc%-%track% - %title%",
 ];
 
-/// Aide-mémoire des expressions régulières.
+/// Regular expression cheat sheet.
 const REGEX_HELP: [(&str, &str); 12] = [
     (".", n_("n'importe quel caractère")),
     ("\\d   \\w   \\s", n_("chiffre · lettre ou chiffre · espace")),
@@ -65,7 +63,7 @@ const REGEX_HELP: [(&str, &str); 12] = [
     ("(?i)", n_("en tête : ignore les majuscules")),
 ];
 
-/// Exemples prêts à l'emploi : (ce que ça fait, rechercher, remplacer par).
+/// Ready-to-use examples: (what it does, search, replace with).
 const REGEX_EXAMPLES: [(&str, &str, &str); 6] = [
     (
         n_("Retirer « (feat. …) »"),
@@ -85,11 +83,11 @@ const REGEX_EXAMPLES: [(&str, &str, &str); 6] = [
 
 const WARN: Color32 = Color32::from_rgb(0xFF, 0xC0, 0x70);
 const ERROR: Color32 = Color32::from_rgb(0xFF, 0x99, 0x99);
-/// Lignes d'aperçu affichées (le décompte, lui, porte sur tous les fichiers).
+/// Preview rows shown (the count covers every file).
 const SHOWN: usize = 300;
 
 struct Row {
-    /// Petit libellé en tête de ligne (le champ touché).
+    /// Small label at the start of the row (the field touched).
     tag: &'static str,
     left: String,
     right: String,
@@ -100,7 +98,7 @@ struct Row {
 #[derive(Default)]
 struct Preview {
     rows: Vec<Row>,
-    /// Ce qui sera fait, ce qui n'a pas besoin de l'être, ce qui ne peut pas l'être.
+    /// What will be done, what doesn't need to be, what cannot be.
     changes: usize,
     files: usize,
     unchanged: usize,
@@ -110,23 +108,23 @@ struct Preview {
 
 pub struct Tool {
     kind: ToolKind,
-    /// Toute la liste plutôt que la sélection.
+    /// The whole list rather than the selection.
     all: bool,
     find: String,
     with: String,
     regex: bool,
     case: bool,
-    /// Champ visé par le remplacement ; `None` : tous les champs de texte.
+    /// Field targeted by the replacement; `None`: every text field.
     field: Option<Field>,
     help: bool,
     pattern: String,
-    /// Aperçu, recalculé quand la saisie change.
+    /// Preview, recomputed when the input changes.
     key: String,
     preview: Preview,
     focused: bool,
 }
 
-/// Nouveau chemin de chaque fichier d'après le motif, ou pourquoi il ne peut pas être renommé.
+/// New path of each file according to the pattern, or why it cannot be renamed.
 fn rename_plan(
     ed: &TagEditor,
     targets: &[usize],
@@ -145,7 +143,7 @@ fn rename_plan(
             (k, new)
         })
         .collect();
-    // Deux fichiers ne peuvent pas prendre le même nom.
+    // Two files cannot take the same name.
     let mut uses: HashMap<PathBuf, usize> = HashMap::new();
     for (_, new) in &plan {
         if let Ok(p) = new {
@@ -253,8 +251,8 @@ impl Tool {
                 } else {
                     for (k, new) in rename_plan(ed, &targets, &self.pattern) {
                         let old = &ed.files[k].path;
-                        // La présence sur le disque n'est vérifiée que pour les lignes affichées
-                        // (et de nouveau, pour toutes, au moment de renommer).
+                        // Presence on disk is only checked for the rows shown (and again, for all of them, when
+                        // renaming).
                         let new = match new {
                             Ok(n) if n != *old && p.rows.len() < SHOWN && n.exists() => {
                                 Err(tr("un fichier porte déjà ce nom"))
@@ -328,7 +326,7 @@ impl Tool {
         self.preview = p;
     }
 
-    /// Phrase de bilan sous l'aperçu.
+    /// Summary sentence under the preview.
     fn summary(&self) -> String {
         let p = &self.preview;
         match self.kind {
@@ -364,7 +362,7 @@ impl Tool {
     }
 }
 
-/// Remplit les champs d'après le rechercher-remplacer ; renvoie (valeurs, fichiers) touchés.
+/// Fills the fields from the search and replace; returns the (values, files) touched.
 fn apply_replace(tool: &Tool, ed: &mut TagEditor) -> (usize, usize) {
     let Ok(Some(r)) = tool.replacer() else {
         return (0, 0);
@@ -385,7 +383,7 @@ fn apply_replace(tool: &Tool, ed: &mut TagEditor) -> (usize, usize) {
     (values, files)
 }
 
-/// Remplit les champs lus dans les noms de fichiers ; renvoie le nombre de fichiers reconnus.
+/// Fills the fields read from file names; returns the number of files recognized.
 fn apply_from_name(tool: &Tool, ed: &mut TagEditor) -> usize {
     let Some(parser) = NameParser::new(&tool.pattern) else {
         return 0;
@@ -440,7 +438,7 @@ impl SterMusic {
                     ui.label(RichText::new(title).font(theme::semibold(20.0)));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        // Sans rien de plus dans la liste que la sélection, pas de choix à faire.
+                        // With nothing more in the list than the selection, there is no choice to make.
                         if total > selected {
                             if segment(ui, &trf!("Toute la liste ({total})", total), tool.all).clicked() {
                                 tool.all = true;
@@ -452,7 +450,7 @@ impl SterMusic {
                     });
                 });
                 ui.add_space(14.0);
-                // L'aide et l'aperçu se partagent la hauteur de la fenêtre.
+                // The help and the preview share the window height.
                 let screen_h = ui.ctx().screen_rect().height();
                 let top = ui.cursor().top();
                 match tool.kind {
@@ -526,8 +524,8 @@ impl SterMusic {
         }
     }
 
-    /// Renomme les fichiers sur le disque, et fait suivre tout ce qui les désigne par leur
-    /// chemin : la liste de l'éditeur, la bibliothèque, les playlists, les favoris, les écoutes.
+    /// Renames the files on disk, and updates everything that refers to them by path: the editor
+    /// list, the library, the playlists, the favorites, the plays.
     fn rename_files(&mut self, plan: Vec<(usize, Result<PathBuf, &'static str>)>) {
         let mut renamed: Vec<PathBuf> = Vec::new();
         let mut failed: Vec<String> = Vec::new();
@@ -602,7 +600,7 @@ impl SterMusic {
     }
 }
 
-/// Champ de saisie qui prend le focus à l'ouverture de la fenêtre.
+/// Input field that takes the focus when the window opens.
 fn focus_once(tool: &mut Tool, resp: &egui::Response) {
     if !tool.focused {
         tool.focused = true;
@@ -653,7 +651,7 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
             .clicked()
         {
             tool.regex = !tool.regex;
-            // L'aide s'ouvre avec le mode, la première fois qu'on en a besoin.
+            // The help opens with the mode, the first time it is needed.
             tool.help |= tool.regex && tool.find.is_empty();
         }
         if segment(ui, tr("Respecter la casse"), tool.case)
@@ -684,7 +682,7 @@ fn replace_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32, screen_h: f32) {
     }
 }
 
-/// Aide-mémoire des expressions régulières, et exemples qui se copient dans les champs d'un clic.
+/// Regular expression cheat sheet, and examples copied into the fields with a click.
 fn regex_help(ui: &mut egui::Ui, tool: &mut Tool, width: f32, max_height: f32) {
     egui::Frame::NONE
         .fill(theme::white(0x08))
@@ -794,7 +792,7 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
         ui.label(RichText::new(tr("Mots-clés :")).color(theme::TEXT_2));
         for (name, field) in PLACEHOLDERS {
-            // Les totaux servent rarement dans un nom de fichier.
+            // Totals are rarely useful in a file name.
             if matches!(field, Field::TrackTotal | Field::DiscTotal) {
                 continue;
             }
@@ -837,7 +835,7 @@ fn pattern_form(ui: &mut egui::Ui, tool: &mut Tool, width: f32) {
     );
 }
 
-/// Aperçu : ce que deviendra chaque valeur ou chaque nom.
+/// Preview: what each value or each name will become.
 fn preview(ui: &mut egui::Ui, tool: &Tool, width: f32, height: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     ui.painter().rect(
@@ -947,7 +945,7 @@ mod tests {
             ("/m/a/z.mp3", "", ""),
             ("/m/a/d1.mp3", "1", "Pareil"),
             ("/m/a/d2.mp3", "1", "Pareil"),
-            // Même nom, autre dossier : pas de conflit.
+            // Same name, other folder: no conflict.
             ("/m/b/d3.mp3", "1", "Pareil"),
         ]);
         let plan = rename_plan(&ed, &[0, 1, 2, 3, 4, 5], "%track% - %title%");

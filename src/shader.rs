@@ -1,9 +1,9 @@
-//! Vagues de lumière dessinées par la carte graphique (shader GLSL), comme le verre dépoli de
-//! SterCode : un rappel OpenGL glissé dans le rendu d'egui. Nettes à toutes les tailles, avec une
-//! vraie lueur et des fondus doux ; le spectre et les couleurs de la pochette arrivent à chaque image.
+//! Waves of light drawn by the graphics card (GLSL shader), like SterCode's frosted glass: an
+//! OpenGL callback slipped into egui's rendering. Sharp at any size, with a real glow and soft
+//! fades; the spectrum and the album art colors arrive every frame.
 //!
-//! Si le pilote refuse le shader, `available()` devient faux et l'appelant revient au rendu
-//! calculé par le processeur.
+//! If the driver refuses the shader, `available()` becomes false and the caller falls back to
+//! the rendering computed by the processor.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,10 +12,10 @@ use eframe::egui::{self, Rect};
 use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
 
-/// Nombre de niveaux de spectre envoyés au shader (du centre vers les bords).
+/// Number of spectrum levels sent to the shader (from the center towards the edges).
 pub const LEVELS: usize = 16;
 
-/// Réglages d'une image de vagues.
+/// Settings of a frame of waves.
 #[derive(Clone, Copy)]
 pub struct Waves {
     pub time: f32,
@@ -24,40 +24,40 @@ pub struct Waves {
     pub kick: f32,
     pub bass: f32,
     pub intensity: f32,
-    /// Ligne de base des vagues (0 = haut, 1 = bas du rectangle).
+    /// Baseline of the waves (0 = top, 1 = bottom of the rectangle).
     pub base: f32,
-    /// Amplitude relative des vagues.
+    /// Relative amplitude of the waves.
     pub amp: f32,
-    /// Fondus progressifs en haut et en bas (part de la hauteur).
+    /// Progressive fades at the top and bottom (share of the height).
     pub fade_top: f32,
     pub fade_bottom: f32,
-    /// Atténuation à gauche (texte du bandeau de l'accueil), 0 = aucune.
+    /// Attenuation on the left (home banner text), 0 = none.
     pub left: f32,
-    /// Rayon des coins, en points.
+    /// Corner radius, in points.
     pub radius: f32,
-    /// Visualiseur (voir [`STYLES`]).
+    /// Visualizer (see [`STYLES`]).
     pub mode: i32,
     pub energy: f32,
-    /// Zoom des motifs (caustiques, nébuleuse, plasma) : plus grand = motifs plus larges.
+    /// Zoom of the patterns (caustics, nebula, plasma): larger = wider patterns.
     pub scale: f32,
-    /// Forme d'onde récente (−1 → 1), pour l'Oscilloscope.
+    /// Recent waveform (−1 → 1), for the Oscilloscope.
     pub wave: [f32; WAVE],
-    /// Pochette (floutée) pour la Pochette liquide.
+    /// (Blurred) album art for Liquid album art.
     pub texture: Option<egui::TextureId>,
-    /// Centre et rayon de la pochette, en points depuis le coin haut gauche du rectangle (Anneau).
+    /// Center and radius of the album art, in points from the top left corner of the rectangle (Ring).
     pub focus: [f32; 3],
-    /// Réglage « détail » de l'effet (0 → 1 ; 0,5 : d'origine), voir [`DETAILS`].
+    /// "Detail" setting of the effect (0 → 1; 0.5: original), see [`DETAILS`].
     pub detail: f32,
-    /// Zoom de l'effet (1 : d'origine) et son centre, en points depuis le coin haut gauche.
+    /// Zoom of the effect (1: original) and its center, in points from the top left corner.
     pub zoom: f32,
     pub zoom_center: [f32; 2],
 }
 
-/// Nombre de points de la forme d'onde envoyés au shader.
+/// Number of waveform points sent to the shader.
 pub const WAVE: usize = 128;
 
-/// Les visualiseurs : nom, et vrai s'il remplit toute la page (sinon, une bande en bas).
-/// Choix « Automatique » : un visualiseur au hasard à chaque morceau (et toutes les 45 s).
+/// The visualizers: name, and true if it fills the whole page (otherwise, a band at the
+/// bottom). "Automatic" choice: a random visualizer on each track (and every 45 s).
 pub const AUTO: usize = STYLES.len();
 
 pub const STYLES: [(&str, bool); 50] = [
@@ -113,8 +113,8 @@ pub const STYLES: [(&str, bool); 50] = [
     (crate::i18n::n_("Néon"), true),
 ];
 
-/// Le réglage « détail » de chaque visualiseur (dans l'ordre de [`STYLES`]) : son nom, ou `None`
-/// s'il n'en a pas.
+/// The "detail" setting of each visualizer (in the order of [`STYLES`]): its name, or `None` if
+/// it has none.
 pub const DETAILS: [Option<&str>; 50] = [
     Some(crate::i18n::n_("Finesse des rayons")),
     Some(crate::i18n::n_("Finesse des reflets")),
@@ -168,14 +168,14 @@ pub const DETAILS: [Option<&str>; 50] = [
     Some(crate::i18n::n_("Halo des tubes")),
 ];
 
-/// Visualiseurs centrés sur la pochette (leur zoom se fait autour d'elle).
+/// Visualizers centered on the album art (they zoom around it).
 pub const FOCUSED: [usize; 10] = [12, 21, 22, 28, 29, 30, 37, 41, 47, 49];
 
 struct Resources {
     program: glow::Program,
     vao: glow::VertexArray,
     loc: Vec<Option<glow::UniformLocation>>,
-    /// Textures d'egui stockées en sRGB (leur lecture renvoie alors des couleurs linéaires).
+    /// egui textures stored in sRGB (reading them then returns linear colors).
     srgb_textures: bool,
 }
 
@@ -204,17 +204,17 @@ const UNIFORMS: [&str; 22] = [
     "u_zoom",
 ];
 
-/// `None` tant que rien n'a été créé, `Some(None)` si la création a échoué.
+/// `None` as long as nothing has been created, `Some(None)` if creation failed.
 static RESOURCES: Mutex<Option<Option<Resources>>> = Mutex::new(None);
-/// 0 : inconnu, 1 : fonctionne, 2 : refusé par le pilote.
+/// 0: unknown, 1: works, 2: refused by the driver.
 static STATE: AtomicU8 = AtomicU8::new(0);
 
-/// Faux si le pilote a refusé le shader (utiliser alors le rendu du processeur).
+/// False if the driver refused the shader (then use the processor rendering).
 pub fn available() -> bool {
     STATE.load(Ordering::Relaxed) != 2
 }
 
-/// Dessine des vagues dans `rect`.
+/// Draws waves in `rect`.
 pub fn paint(painter: &egui::Painter, rect: Rect, waves: Waves) {
     let callback = egui_glow::CallbackFn::new(move |info, painter| {
         let mut guard = RESOURCES.lock().unwrap();
@@ -235,31 +235,31 @@ pub fn paint(painter: &egui::Painter, rect: Rect, waves: Waves) {
 }
 
 const FRAGMENT: &str = r#"
-uniform vec4 u_rect;        // x0, y0, x1, y1 en pixels (origine en bas à gauche)
+uniform vec4 u_rect;        // x0, y0, x1, y1 in pixels (origin at the bottom left)
 uniform float u_radius;     // pixels
 uniform float u_time;
-uniform float u_levels[16]; // spectre, du centre (graves) vers les bords (aigus)
+uniform float u_levels[16]; // spectrum, from the center (bass) towards the edges (treble)
 uniform vec3 u_colors[3];
 uniform float u_kick;
 uniform float u_bass;
 uniform float u_energy;
 uniform float u_intensity;
-uniform vec4 u_shape;       // base, amplitude, —, —
-uniform vec2 u_fade;        // fondu haut, fondu bas
+uniform vec4 u_shape;       // baseline, amplitude, —, —
+uniform vec2 u_fade;        // top fade, bottom fade
 uniform float u_left;
 uniform float u_ppp;
 uniform int u_mode;
 uniform float u_scale;
 uniform float u_wave[128];
-uniform vec3 u_focus;       // centre x, y (pixels depuis le coin haut gauche), rayon
+uniform vec3 u_focus;       // center x, y (pixels from the top left corner), radius
 uniform sampler2D u_tex;
 uniform int u_has_tex;
 uniform int u_srgb;
-uniform float u_detail;     // réglage « détail » de l'effet (0 → 1)
-uniform vec3 u_zoom;        // zoom, puis son centre x, y (pixels depuis le coin haut gauche)
+uniform float u_detail;     // "detail" setting of the effect (0 → 1)
+uniform vec3 u_zoom;        // zoom, then its center x, y (pixels from the top left corner)
 out vec4 out_color;
 
-// ---------- Outils ----------
+// ---------- Tools ----------
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 vec2 hash2(vec2 p) {
@@ -292,7 +292,7 @@ float wave(float u, float freq, float speed, float phase) {
     return sin(u * freq * 6.28318 + u_time * speed + phase)
          + 0.35 * sin(u * freq * 2.3 * 6.28318 - u_time * speed * 1.4 + phase);
 }
-// Distance au bord de cellule (F2 − F1) d'un réseau de Voronoï animé : des filets de lumière.
+// Distance to the cell edge (F2 − F1) of an animated Voronoi network: threads of light.
 float cell_edge(vec2 p, float t) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -312,7 +312,7 @@ float cell_edge(vec2 p, float t) {
 vec3 srgb_from_linear(vec3 c) {
     return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92, vec3(lessThan(c, vec3(0.0031308))));
 }
-// Niveau d'une fréquence, de 0 (graves) à 1 (aigus).
+// Level of a frequency, from 0 (bass) to 1 (treble).
 float band(float f) {
     float d = clamp(f, 0.0, 1.0) * 15.0;
     int i = int(floor(d));
@@ -323,7 +323,7 @@ mat2 rot(float a) {
     float s = sin(a);
     return mat2(c, -s, s, c);
 }
-// Couleur de la pochette (floutée) en `uv` (0 → 1), sinon un dégradé de la palette.
+// Color of the (blurred) album art at `uv` (0 → 1), otherwise a gradient of the palette.
 vec3 cover_color(vec2 uv) {
     if (u_has_tex == 1) {
         vec3 c = texture(u_tex, clamp(uv, 0.0, 1.0)).rgb;
@@ -331,16 +331,16 @@ vec3 cover_color(vec2 uv) {
     }
     return mix(u_colors[2], u_colors[0], uv.y);
 }
-// Réglage « détail » de l'effet (0 → 1, 0,5 au départ) : `lo` à 0, `mid` à 0,5, `hi` à 1.
+// "Detail" setting of the effect (0 → 1, 0.5 at first): `lo` at 0, `mid` at 0.5, `hi` at 1.
 float detail(float lo, float mid, float hi) {
     return u_detail < 0.5 ? mix(lo, mid, u_detail * 2.0) : mix(mid, hi, u_detail * 2.0 - 1.0);
 }
 
-// ---------- 1. Caustiques : reflets de l'eau au fond d'une piscine ----------
+// ---------- 1. Caustics: water reflections at the bottom of a swimming pool ----------
 
-// Distance au bord de cellule la plus proche (réseau de Voronoï animé).
+// Distance to the closest cell edge (animated Voronoi network).
 float caustic_layer(vec2 p, float t) {
-    // Forte déformation par un bruit doux : les filets se courbent comme des reflets d'eau.
+    // Strong distortion by a soft noise: the threads bend like water reflections.
     vec2 warp = vec2(fbm(p * 0.55 + vec2(t * 0.12, 0.0)), fbm(p * 0.55 + vec2(5.2, t * 0.10))) - 0.5;
     p += warp * 1.8;
     float e = cell_edge(p, t);
@@ -351,14 +351,14 @@ vec3 caustics(vec2 px, float H, float v) {
     float t = u_time * 0.8;
     float a = caustic_layer(p, t);
     float b = caustic_layer(p * 1.35 + vec2(3.7, 1.9), t * 1.2);
-    // Brillance irrégulière ; les croisements des deux couches s'illuminent davantage.
+    // Irregular brightness; where the two layers cross, it lights up more.
     float light = (0.55 * a + 0.45 * b + 1.4 * a * b) * (0.55 + 0.6 * noise(p * 0.7 + t * 0.1));
     float shimmer = 0.55 + 0.35 * u_energy + 0.6 * u_kick;
     vec3 water = mix(u_colors[2], u_colors[1], v) * (0.07 + 0.05 * v);
     return water + mix(u_colors[1], vec3(1.0), 0.6) * light * 0.30 * shimmer;
 }
 
-// ---------- 2. Nébuleuse : nuages de couleur qui dérivent ----------
+// ---------- 2. Nebula: drifting clouds of color ----------
 
 vec3 nebula(vec2 px, float H) {
     vec2 p = px / (H * u_scale) * 1.3;
@@ -370,7 +370,7 @@ vec3 nebula(vec2 px, float H) {
     return col * (0.22 + 1.2 * n * n) * (0.75 + 0.45 * u_bass + 0.6 * u_kick);
 }
 
-// ---------- 4. Ondes : anneaux qui partent du bas sur le rythme ----------
+// ---------- 4. Ripples: rings starting from the bottom on the beat ----------
 
 vec3 ripples(vec2 px, float W, float H, float u) {
     vec2 c = vec2(0.5 * W, H * 1.02);
@@ -388,7 +388,7 @@ vec3 ripples(vec2 px, float W, float H, float u) {
     return acc;
 }
 
-// ---------- 6. Plasma : couleurs douces qui se mélangent ----------
+// ---------- 6. Plasma: soft blending colors ----------
 
 vec3 plasma(vec2 px, float H) {
     vec2 p = px / (H * u_scale) * detail(0.5, 1.0, 2.2);
@@ -401,7 +401,7 @@ vec3 plasma(vec2 px, float H) {
     return col * (0.38 + 0.30 * u_bass + 0.45 * u_kick);
 }
 
-// ---------- 8. Étoiles : un champ d'étoiles qui file vers soi ----------
+// ---------- 8. Stars: a star field rushing towards you ----------
 
 vec3 stars(vec2 px, float W, float H) {
     vec2 c = vec2(0.5 * W, 0.55 * H);
@@ -413,11 +413,11 @@ vec3 stars(vec2 px, float W, float H) {
         vec2 q = p * zoom + float(i) * 17.0;
         vec2 g0 = floor(q);
         vec2 f0 = fract(q);
-        // Petit point net et son halo ; les étoiles grossissent en approchant.
+        // Small sharp dot and its halo; stars grow as they get closer.
         float px_size = u_ppp / H * zoom;
         float life = smoothstep(0.0, 0.3, z) * (1.0 - smoothstep(0.85, 1.0, z));
-        // Une étoile par case, mais chaque pixel regarde aussi les cases voisines : sinon le halo
-        // d'une étoile proche d'un bord était coupé net et dessinait une grille.
+        // One star per cell, but each pixel also looks at the neighboring cells: otherwise the halo
+        // of a star near an edge was cut off sharply and drew a grid.
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
                 vec2 cell = vec2(float(x), float(y));
@@ -436,7 +436,7 @@ vec3 stars(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 10. Pochette liquide : la pochette floutée qui coule lentement ----------
+// ---------- 10. Liquid album art: the blurred album art flowing slowly ----------
 
 vec3 liquid(vec2 px, float W, float H) {
     float t = u_time * 0.07;
@@ -446,7 +446,7 @@ vec3 liquid(vec2 px, float W, float H) {
     vec2 warp = vec2(fbm(q * 2.0 + vec2(t, -t)), fbm(q * 2.0 + vec2(-t, t) + 5.3)) - 0.5;
     q += warp * (detail(0.12, 0.55, 1.2) + 0.30 * u_bass + 0.25 * u_kick);
     vec2 uv = q + 0.5;
-    uv = 1.0 - abs(1.0 - mod(uv, 2.0));  // miroir : jamais de bord visible
+    uv = 1.0 - abs(1.0 - mod(uv, 2.0));  // mirror: never a visible edge
     vec3 col;
     if (u_has_tex == 1) {
         col = texture(u_tex, uv).rgb;
@@ -459,7 +459,7 @@ vec3 liquid(vec2 px, float W, float H) {
     return col * (1.05 + 0.35 * u_bass + 0.45 * u_kick);
 }
 
-// ---------- 11. Bokeh : disques de lumière flous qui dérivent ----------
+// ---------- 11. Bokeh: blurry discs of light drifting ----------
 
 vec3 bokeh(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
@@ -480,7 +480,7 @@ vec3 bokeh(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 12. Anneau : cercle de lumière autour de la pochette ----------
+// ---------- 12. Ring: circle of light around the album art ----------
 
 vec3 ring(vec2 px, float W, float H) {
     vec2 c = u_focus.xy;
@@ -501,7 +501,7 @@ vec3 ring(vec2 px, float W, float H) {
     return col * line * body * 0.9 + mix(u_colors[1], vec3(1.0), 0.4) * rim * 0.55 + u_colors[2] * halo;
 }
 
-// ---------- 14. Fumée : volutes d'encre colorée ----------
+// ---------- 14. Smoke: swirls of colored ink ----------
 
 vec3 smoke(vec2 px, float H) {
     vec2 p = px / (H * u_scale) * 1.6;
@@ -515,7 +515,7 @@ vec3 smoke(vec2 px, float H) {
     return col * pow(f, 2.2) * 0.95 * (0.7 + 0.5 * u_bass + 0.9 * u_kick);
 }
 
-// ---------- 15. Lucioles : petites lumières et leur traînée ----------
+// ---------- 15. Fireflies: small lights and their trail ----------
 
 vec3 fireflies(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
@@ -525,8 +525,8 @@ vec3 fireflies(vec2 px, float W, float H) {
         if (i >= count) break;
         float fi = float(i);
         vec2 seed = vec2(hash(vec2(fi, 2.1)), hash(vec2(fi, 5.9)));
-        // u_time avance déjà plus vite quand la musique est forte : le multiplier par l'énergie
-        // instantanée faisait sauter les lucioles d'avant en arrière à chaque variation.
+        // u_time already moves faster when the music is loud: multiplying it by the instantaneous
+        // energy made the fireflies jump back and forth on every variation.
         float speed = 0.30 + 0.35 * hash(vec2(fi, 8.3));
         float blink = 0.5 + 0.5 * sin(u_time * (1.5 + seed.x * 2.0) + fi);
         for (int k = 0; k < 6; k++) {
@@ -542,7 +542,7 @@ vec3 fireflies(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 17. Orage : nuages et éclairs sur les coups de grosse caisse ----------
+// ---------- 17. Storm: clouds and lightning on kick drum hits ----------
 
 vec3 storm(vec2 px, float W, float H) {
     vec2 p = px / (H * u_scale) * 1.4;
@@ -556,21 +556,21 @@ vec3 storm(vec2 px, float W, float H) {
     col += mix(u_colors[1], vec3(0.85, 0.9, 1.0), 0.6) * clouds * near * flash * 2.2;
     float bx = fx + (fbm(vec2(px.y / H * 6.0, seed)) - 0.5) * H * 0.35;
     float bolt = exp(-pow((px.x - bx) / (1.5 * u_ppp), 2.0)) * smoothstep(H * 0.75, H * 0.35, px.y);
-    // Réglage : plus il est haut, plus un petit coup suffit à faire tomber un éclair.
+    // Setting: the higher it is, the smaller the hit needed to strike lightning.
     float th = detail(0.6, 0.35, 0.10);
     col += vec3(0.95, 0.95, 1.0) * bolt * smoothstep(th, th + 0.45, u_kick);
     return col;
 }
 
-// ---------- 18. Tunnel : anneaux et rayons qui filent vers soi ----------
+// ---------- 18. Tunnel: rings and rays rushing towards you ----------
 
 vec3 tunnel(vec2 px, float W, float H) {
     vec2 p = (px - vec2(0.5 * W, 0.5 * H)) / H;
     float r = max(length(p), 1e-3);
     float u = fract(atan(p.y, p.x) / 6.28318 + 0.25);
-    float z = 0.3 / r + u_time * 0.5;  // profondeur
+    float z = 0.3 / r + u_time * 0.5;  // depth
     float lv = level(u);
-    // Largeur d'un pixel en profondeur : les anneaux lointains, serrés, restent nets.
+    // Width of a pixel in depth: distant, tightly packed rings stay sharp.
     float pixel = u_ppp / H * 0.3 / (r * r);
     float rings = exp(-pow((fract(z) - 0.5) / max(0.045, pixel * 1.5), 2.0));
     float nsp = floor(detail(8.0, 24.0, 48.0));
@@ -583,7 +583,7 @@ vec3 tunnel(vec2 px, float W, float H) {
          + u_colors[2] * glow;
 }
 
-// ---------- 19. Spirale : bras de lumière qui tournent ----------
+// ---------- 19. Spiral: rotating arms of light ----------
 
 vec3 spiral(vec2 px, float W, float H) {
     vec2 p = (px - vec2(0.5 * W, 0.5 * H)) / H;
@@ -600,10 +600,10 @@ vec3 spiral(vec2 px, float W, float H) {
          + mix(u_colors[2], vec3(1.0), 0.3) * core;
 }
 
-// ---------- 23. Flammes : un feu qui monte plus haut sur les graves ----------
+// ---------- 23. Flames: a fire rising higher on the bass ----------
 
 vec3 flames(vec2 px, float W, float H, float u) {
-    vec2 p = vec2(px.x / H, (H - px.y) / H);  // y vers le haut, depuis le bas
+    vec2 p = vec2(px.x / H, (H - px.y) / H);  // y upwards, from the bottom
     float t = u_time * 0.9;
     float lv = level(u) * envelope(u);
     float n = fbm(vec2(p.x * 3.0, p.y * 2.0 - t) + fbm(vec2(p.x * 1.5 + 3.0, p.y - t * 0.6)));
@@ -615,7 +615,7 @@ vec3 flames(vec2 px, float W, float H, float u) {
     return col * f * 1.3 * (0.7 + 0.5 * u_energy);
 }
 
-// ---------- 25. Cristaux : facettes qui s'allument sur leurs fréquences ----------
+// ---------- 25. Crystals: facets lighting up on their frequencies ----------
 
 vec3 crystals(vec2 px, float W, float H) {
     float size = H * detail(0.34, 0.18, 0.08) * u_scale;
@@ -642,7 +642,7 @@ vec3 crystals(vec2 px, float W, float H) {
          + mix(col, vec3(1.0), 0.5) * edge * (0.25 + 0.5 * u_energy);
 }
 
-// ---------- 26. Lampe à lave : bulles qui montent, fusionnent et gonflent sur les graves ----------
+// ---------- 26. Lava lamp: blobs rising, merging and swelling on the bass ----------
 
 vec3 lava(vec2 px, float W, float H) {
     vec2 p = px / H;
@@ -669,7 +669,7 @@ vec3 lava(vec2 px, float W, float H) {
     return col * (blob * 0.55 + glow * 0.35) + mix(col, vec3(1.0), 0.5) * rim * 0.35;
 }
 
-// ---------- 28. Vinyle : un disque qui tourne derrière la pochette, ses sillons scintillent ----------
+// ---------- 28. Vinyl: a record spinning behind the album art, its grooves glittering ----------
 
 vec3 vinyl(vec2 px, float W, float H) {
     float R = u_focus.z * 1.5;
@@ -681,12 +681,12 @@ vec3 vinyl(vec2 px, float W, float H) {
     vec3 acc = u_colors[2] * exp(-pow((r - 1.0) * 2.4, 2.0)) * (0.08 + 0.22 * u_bass + 0.35 * u_kick);
     float edge = 1.0 - smoothstep(1.0 - 1.5 * u_ppp / R, 1.0, r);
     if (edge <= 0.0) return acc;
-    // Du bord (graves) vers l'étiquette (aigus).
+    // From the edge (bass) towards the label (treble).
     float f = clamp((1.0 - r) / 0.64, 0.0, 1.0);
     float lv = band(f);
     float groove = 0.55 + 0.45 * sin(rr / u_ppp * 1.9);
     float track = smoothstep(0.0, 0.015, abs(fract(r * floor(detail(3.0, 7.0, 14.0)) + 0.3) - 0.5) - 0.025);
-    // La lampe est fixe, le disque tourne dessous : les reflets restent, la poussière défile.
+    // The lamp is fixed, the record spins under it: the reflections stay, the dust scrolls by.
     float hl = pow(abs(cos(a - 0.7)), 22.0) + 0.55 * pow(abs(cos(a + 0.9)), 40.0);
     float dust = smoothstep(0.82, 1.0, noise(vec2((a - spin) * 40.0, r * 90.0)));
     vec3 sheen = mix(u_colors[0], u_colors[1], f);
@@ -695,7 +695,7 @@ vec3 vinyl(vec2 px, float W, float H) {
               + sheen * (0.07 + 0.16 * lv) * groove * track
               + vec3(0.14) * dust * (0.3 + hl);
     disc += mix(sheen, vec3(1.0), 0.5) * exp(-pow((r - 0.993) * R / (1.2 * u_ppp), 2.0)) * 0.45;
-    // Étiquette : la pochette qui tourne (visible quand rien ne la recouvre).
+    // Label: the spinning album art (visible when nothing covers it).
     float lab = 0.33;
     if (r < lab + 0.01) {
         vec2 q = rot(spin) * (d / (R * lab));
@@ -708,7 +708,7 @@ vec3 vinyl(vec2 px, float W, float H) {
     return acc * (1.0 - edge) + disc * edge;
 }
 
-// ---------- 29. Ferrofluide : un liquide sombre hérissé de pointes qui se dressent sur les graves ----------
+// ---------- 29. Ferrofluid: a dark liquid bristling with spikes that rise on the bass ----------
 
 vec3 ferrofluid(vec2 px, float W, float H) {
     vec2 d = px - u_focus.xy;
@@ -724,7 +724,7 @@ vec3 ferrofluid(vec2 px, float W, float H) {
     float tri = max(1.0 - abs(local) * 2.0, 0.0);
     float profile = pow(tri, 2.4);
     float edge = base + h * profile + u_focus.z * 0.025 * sin(a * 3.0 + u_time * 0.7);
-    // Distance au bord corrigée par la pente : un trait d'épaisseur régulière sur les pointes.
+    // Distance to the edge corrected by the slope: a line of even thickness on the spikes.
     float slope = h * 2.4 * pow(tri, 1.4) * 2.0 * N / 6.28318 / max(r, 1.0);
     float dd = (r - edge) / sqrt(1.0 + slope * slope);
     float rim = exp(-pow(dd / (1.6 * u_ppp), 2.0));
@@ -738,7 +738,7 @@ vec3 ferrofluid(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 30. Hologramme : une sphère de points qui tourne, ses latitudes suivent le spectre ----------
+// ---------- 30. Hologram: a rotating sphere of dots, its latitudes follow the spectrum ----------
 
 vec3 hologram(vec2 px, float W, float H) {
     float R = u_focus.z * 1.9 * (1.0 + 0.04 * u_bass + 0.06 * u_kick);
@@ -773,7 +773,7 @@ vec3 hologram(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 31. Soie : un drapé qui ondule, des reflets qui glissent dessus ----------
+// ---------- 31. Silk: a rippling drape, with reflections gliding over it ----------
 
 float silk_h(vec2 p, float t) {
     return sin(p.x * 1.6 + 1.7 * sin(p.y * 1.1 + t * 0.45) + 0.6 * sin(p.y * 2.3 - t * 0.31 + p.x * 0.7))
@@ -799,7 +799,7 @@ vec3 silk(vec2 px, float H) {
          + mix(u_colors[1], vec3(1.0), 0.6) * spec * (0.45 + 0.6 * u_kick + 0.3 * u_energy);
 }
 
-// ---------- 32. Irisé : une fine pellicule aux couleurs changeantes, comme une bulle de savon ----------
+// ---------- 32. Iridescent: a thin film with shifting colors, like a soap bubble ----------
 
 vec3 iridescence(vec2 px, float H) {
     vec2 p = px / (H * 0.55 * u_scale);
@@ -811,11 +811,11 @@ vec3 iridescence(vec2 px, float H) {
     vec3 col = mix(film, tint * (0.6 + 0.8 * film), 0.6);
     float ridge = 1.0 - abs(fract(th * detail(2.5, 6.0, 12.0)) - 0.5) * 2.0;
     float glint = pow(ridge, 10.0);
-    // Une pellicule sombre où seules les nervures brillent vraiment.
+    // A dark film where only the veins really shine.
     return col * (0.03 + 0.07 * th) * (0.8 + 0.5 * u_energy) + col * glint * (0.16 + 0.35 * u_kick + 0.2 * u_energy);
 }
 
-// ---------- 33. Topographie : courbes de niveau d'un relief qui se soulève avec la musique ----------
+// ---------- 33. Topography: contour lines of a relief rising with the music ----------
 
 vec3 topography(vec2 px, float W, float H) {
     vec2 p = px / (H * 0.5 * u_scale);
@@ -838,7 +838,7 @@ vec3 topography(vec2 px, float W, float H) {
     return col * line * (0.30 + 0.45 * major + 0.35 * u_energy + 0.3 * u_kick) + col * 0.03 * h;
 }
 
-// ---------- 34. Verre : colonnes de verre dépoli, un reflet sur leur flanc ----------
+// ---------- 34. Glass: frosted glass columns, a reflection on their side ----------
 
 vec3 glass(vec2 px, float W, float H, float u) {
     float n = floor(detail(10.0, 24.0, 48.0));
@@ -862,7 +862,7 @@ vec3 glass(vec2 px, float W, float H, float u) {
     vec3 acc = col * inside * (0.10 + 0.25 * yy) * frost * (0.7 + 0.6 * u_kick)
              + mix(col, vec3(1.0), 0.6) * border * 0.55
              + vec3(1.0) * stripe * inside * 0.18;
-    // Reflet : la même colonne arrondie, renversée sous la ligne de base, qui s'efface vite.
+    // Reflection: the same rounded column, upside down under the baseline, fading quickly.
     float below = px.y - base;
     vec2 mq = vec2(q.x, (2.0 * base - px.y) - (base - h * 0.5));
     vec2 mdq = abs(mq) - vec2(bw * 0.5, h * 0.5) + rr;
@@ -872,7 +872,7 @@ vec3 glass(vec2 px, float W, float H, float u) {
     return acc;
 }
 
-// ---------- 35. Flux : traînées de lumière qui suivent un courant invisible ----------
+// ---------- 35. Flow: trails of light following an invisible current ----------
 
 vec3 flux(vec2 px, float H) {
     vec2 p = px / (H * 0.6 * u_scale);
@@ -890,7 +890,7 @@ vec3 flux(vec2 px, float H) {
          + u_colors[2] * 0.025;
 }
 
-// ---------- 36. Trame : une trame de points, comme une affiche imprimée, qui respire ----------
+// ---------- 36. Halftone: a dot screen, like a printed poster, breathing ----------
 
 vec3 halftone(vec2 px, float W, float H) {
     float cell = max(H * u_scale / detail(16.0, 34.0, 64.0), 5.0 * u_ppp);
@@ -913,7 +913,7 @@ vec3 halftone(vec2 px, float W, float H) {
     return col * dotv * (0.25 + 0.55 * v);
 }
 
-// ---------- 37. Lissajous : la forme d'onde tracée contre elle-même, une boucle qui se tord ----------
+// ---------- 37. Lissajous: the waveform plotted against itself, a twisting loop ----------
 
 vec3 lissajous(vec2 px, float W, float H) {
     float R = u_focus.z * 1.8;
@@ -923,8 +923,8 @@ vec3 lissajous(vec2 px, float W, float H) {
     acc += u_colors[1] * guide * 0.10;
     if (dot(q, q) > 2.4) return acc;
     mat2 m = rot(u_time * 0.08);
-    // Points lissés (moyenne de trois voisins) : une boucle souple plutôt qu'une ligne brisée ;
-    // puis gain automatique, pour que la boucle garde sa taille, son faible ou fort.
+    // Smoothed points (average of three neighbors): a supple loop rather than a broken line; then
+    // automatic gain, so the loop keeps its size, whether the sound is quiet or loud.
     vec2 pts[64];
     float peak = 0.05;
     for (int i = 0; i < 64; i++) {
@@ -951,7 +951,7 @@ vec3 lissajous(vec2 px, float W, float H) {
          + mix(u_colors[0], vec3(1.0), 0.55) * a * exp(-d * d / (1.1 * u_ppp * 1.1 * u_ppp));
 }
 
-// ---------- 38. Rétro : soleil rayé, montagnes du spectre et sol quadrillé qui défile ----------
+// ---------- 38. Retro: striped sun, spectrum mountains and a scrolling grid floor ----------
 
 vec3 retro(vec2 px, float W, float H) {
     float hy = H * 0.60;
@@ -962,13 +962,13 @@ vec3 retro(vec2 px, float W, float H) {
         float d = length(px - sc);
         float yy = (px.y - (sc.y - sr)) / (2.0 * sr);
         float sun = 1.0 - smoothstep(sr - u_ppp, sr + u_ppp, d);
-        // Bandes du soleil, de plus en plus larges vers le bas, qui descendent lentement.
+        // Bands of the sun, wider and wider towards the bottom, moving down slowly.
         float band_w = mix(0.0, 0.5, smoothstep(0.42, 1.0, yy));
         float stripes = step(band_w, fract(px.y / (H * 0.035) + u_time * 0.3));
         vec3 sunc = mix(u_colors[1], u_colors[0], clamp(yy, 0.0, 1.0));
         acc += mix(sunc, vec3(1.0), 0.2) * sun * stripes * (0.9 + 0.4 * u_energy);
         acc += u_colors[0] * exp(-pow(max(d - sr, 0.0) / (H * 0.10), 2.0)) * 0.22 * (1.0 - sun);
-        // Montagnes : leur crête suit le spectre.
+        // Mountains: their ridge follows the spectrum.
         float u = px.x / W;
         float ridge = hy - H * (0.015 + detail(0.03, 0.11, 0.24) * level(u) * envelope(u) + 0.03 * noise(vec2(u * 14.0, 1.0)));
         float inside = smoothstep(ridge - u_ppp, ridge + u_ppp, px.y);
@@ -991,7 +991,7 @@ vec3 retro(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 39. Mosaïque : la pochette en carreaux qui pivotent et s'allument sur le rythme ----------
+// ---------- 39. Mosaic: the album art as tiles that flip and light up on the beat ----------
 
 vec3 mosaic(vec2 px, float W, float H) {
     float cs = max(H * u_scale / detail(6.0, 13.0, 26.0), 8.0 * u_ppp);
@@ -999,7 +999,7 @@ vec3 mosaic(vec2 px, float W, float H) {
     vec2 f = px / cs - id - 0.5;
     vec2 center = (id + 0.5) * cs;
     float h = hash(id);
-    // Les carreaux pivotent à tour de rôle (vus de côté, ils s'amincissent).
+    // The tiles flip in turn (seen from the side, they get thinner).
     float flip = abs(cos(u_time * 0.5 + h * 6.28318 + id.x * 0.15));
     float lv = band(h);
     float size = 0.40 * (0.80 + 0.25 * lv);
@@ -1017,7 +1017,7 @@ vec3 mosaic(vec2 px, float W, float H) {
     return col * tile * shade * (0.45 + 0.6 * lv) + mix(col, vec3(1.0), 0.6) * tile * flash * 0.6;
 }
 
-// ---------- 40. Vitrail : des éclats de verre colorés que la musique éclaire par derrière ----------
+// ---------- 40. Stained glass: shards of colored glass lit from behind by the music ----------
 
 vec3 stained(vec2 px, float W, float H) {
     vec2 p = px / (H * detail(0.38, 0.20, 0.10) * u_scale);
@@ -1045,7 +1045,7 @@ vec3 stained(vec2 px, float W, float H) {
          + mix(glassc, vec3(1.0), 0.5) * exp(-pow((d2 - d1 - 0.07) / 0.02, 2.0)) * 0.06;
 }
 
-// ---------- 41. Radar : un balayage qui révèle les fréquences comme des échos ----------
+// ---------- 41. Radar: a sweep revealing the frequencies as echoes ----------
 
 vec3 radar(vec2 px, float W, float H) {
     float R = u_focus.z * 2.1;
@@ -1063,7 +1063,7 @@ vec3 radar(vec2 px, float W, float H) {
         acc += u_colors[1] * rings * 0.25;
     }
     acc += u_colors[1] * exp(-pow((r - 1.0) * R / (1.2 * u_ppp), 2.0)) * 0.35;
-    // Échos : seize fréquences à des places fixes, ravivées au passage du faisceau.
+    // Echoes: sixteen frequencies at fixed places, revived as the beam passes.
     int count = int(floor(detail(6.0, 16.0, 32.0)));
     for (int i = 0; i < 32; i++) {
         if (i >= count) break;
@@ -1081,7 +1081,7 @@ vec3 radar(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 42. Hélice : une double hélice qui tourne, ses barreaux suivent le spectre ----------
+// ---------- 42. Helix: a rotating double helix, its rungs follow the spectrum ----------
 
 vec3 helix(vec2 px, float W, float H) {
     float cy = H * 0.5;
@@ -1101,7 +1101,7 @@ vec3 helix(vec2 px, float W, float H) {
         acc += mix(col, vec3(1.0), 0.3) * exp(-pow(dist / w, 2.0)) * bright
              + col * exp(-pow(dist / (w * 6.0), 2.0)) * 0.15 * bright;
     }
-    // Barreaux : un tous les 2,6 % de la largeur ; leur éclat suit le spectre.
+    // Rungs: one every 2.6 % of the width; their brightness follows the spectrum.
     float sp = W / floor(detail(16.0, 38.0, 76.0));
     float xr = (floor(px.x / sp) + 0.5) * sp;
     float phr = xr * k + u_time * 0.9;
@@ -1116,7 +1116,7 @@ vec3 helix(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 44. Constellation : des étoiles reliées quand elles se rapprochent ----------
+// ---------- 44. Constellation: stars linked when they get close ----------
 
 vec3 constellation(vec2 px, float W, float H) {
     float cs = H * detail(0.28, 0.17, 0.09) * u_scale;
@@ -1154,7 +1154,7 @@ vec3 constellation(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 46. Bulles : des bulles de savon qui montent, irisées, et brillent sur les coups ----------
+// ---------- 46. Bubbles: iridescent soap bubbles rising, shining on the hits ----------
 
 vec3 bubbles(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
@@ -1182,11 +1182,11 @@ vec3 bubbles(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 47. Éclipse : la pochette en lune noire, la couronne du soleil autour ----------
+// ---------- 47. Eclipse: the album art as a black moon, the sun's corona around it ----------
 
-// Bruit fonction de l'angle, sans couture : `atan` saute de +π à −π à gauche du centre, ce qui
-// traçait une ligne horizontale dans la couronne. Près du saut, on mêle le bruit pris de l'autre
-// côté du tour : les deux bords donnent alors la même valeur.
+// Seamless noise as a function of the angle: `atan` jumps from +π to −π left of the center,
+// which drew a horizontal line in the corona. Near the jump, the noise taken from the other
+// side of the turn is blended in: both edges then give the same value.
 float angular_fbm(float a, float k, float off, float y) {
     float other = a - sign(a) * 6.28318;
     float w = 0.5 * smoothstep(3.14159 - 0.7, 3.14159, abs(a));
@@ -1201,14 +1201,14 @@ vec3 eclipse(vec2 px, float W, float H) {
     float out_r = max(r - r0, 0.0) / H;
     float u = fract(a / 6.28318 + 0.25);
     float lv = level(u);
-    // Filets de la couronne, qui s'étirent vers l'extérieur.
+    // Corona streamers, stretching outwards.
     float fil = angular_fbm(a, 5.0, 0.0, out_r * 6.0 - u_time * 0.25);
     float fil2 = angular_fbm(a, 11.0, 3.0, out_r * 10.0 - u_time * 0.4);
     float reach = (0.10 + 0.20 * lv + 0.10 * u_kick) * detail(0.4, 1.0, 2.0);
     float corona = exp(-out_r / (reach * (0.5 + fil))) * (0.5 + 0.8 * fil2);
     vec3 acc = mix(u_colors[0], vec3(1.0), 0.25) * corona * step(r0, r) * (0.45 + 0.4 * u_energy);
     acc += u_colors[1] * exp(-out_r / 0.35) * 0.12;
-    // Le bord éclairé, et un « diamant » qui en fait le tour.
+    // The lit edge, and a "diamond" going around it.
     float rim = exp(-pow((r - r0) / (1.4 * u_ppp), 2.0));
     acc += mix(u_colors[1], vec3(1.0), 0.6) * rim * 0.9;
     float da = mod(a - u_time * 0.2 + 3.14159, 6.28318) - 3.14159;
@@ -1217,7 +1217,7 @@ vec3 eclipse(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 48. Moiré : deux trames de cercles qui glissent l'une sur l'autre ----------
+// ---------- 48. Moiré: two grids of circles sliding over each other ----------
 
 vec3 moire(vec2 px, float W, float H) {
     float sp = (detail(3.5, 6.0, 11.0) + 2.0 * u_bass) * u_ppp;
@@ -1226,14 +1226,14 @@ vec3 moire(vec2 px, float W, float H) {
     float l1 = 0.5 + 0.5 * cos(length(px - c1) / sp * 6.28318);
     float l2 = 0.5 + 0.5 * cos(length(px - c2) / sp * 6.28318);
     float m = pow(l1 * l2, 3.0);
-    // La figure de moiré elle-même (basse fréquence), qui porte la couleur.
+    // The moiré figure itself (low frequency), carrying the color.
     float beat = 0.5 + 0.5 * cos((length(px - c1) - length(px - c2)) / sp * 6.28318 * 0.5);
     float lv = band(beat);
     vec3 col = mix(u_colors[0], u_colors[1], beat);
     return col * m * (0.35 + 0.7 * lv + 0.4 * u_kick) + u_colors[2] * beat * 0.06;
 }
 
-// ---------- 49. Néon : des tubes de néon qui tournent autour de la pochette et grésillent ----------
+// ---------- 49. Neon: neon tubes circling around the album art and buzzing ----------
 
 float neon_tri(vec2 p, float r) {
     const float k = 1.7320508;
@@ -1257,7 +1257,7 @@ vec3 neon(vec2 px, float W, float H) {
     for (int i = 0; i < 3; i++) {
         float d = i == 0 ? d0 : (i == 1 ? d1 : d2);
         float lv = band(float(i) / 2.0);
-        // Grésillement : de temps en temps, un tube vacille.
+        // Buzzing: now and then, a tube flickers.
         float tick = floor(u_time * 9.0);
         float flicker = step(0.06, hash(vec2(tick, float(i)))) * (0.75 + 0.25 * hash(vec2(tick, float(i) + 9.0)));
         vec3 col = u_colors[i];
@@ -1268,9 +1268,9 @@ vec3 neon(vec2 px, float W, float H) {
     return acc;
 }
 
-// ================= Effets retravaillés =================
+// ================= Reworked effects =================
 
-// ---------- 0. Aurore : rideaux de lumière aux rayons verticaux, comme une aurore boréale ----------
+// ---------- 0. Aurora: curtains of light with vertical rays, like the northern lights ----------
 
 vec3 aurora(vec2 px, float W, float H, float u) {
     float env = envelope(u);
@@ -1281,12 +1281,12 @@ vec3 aurora(vec2 px, float W, float H, float u) {
         float fk = float(k);
         float freq = k == 0 ? 1.1 : (k == 1 ? 1.7 : 0.8);
         float speed = k == 0 ? 0.35 : (k == 1 ? 0.5 : 0.25);
-        // L'ourlet du rideau ondule ; le rideau monte d'autant plus haut que sa fréquence est forte.
+        // The hem of the curtain ripples; the curtain rises higher the stronger its frequency is.
         float hem = H * (u_shape.x - 0.045 * fk) + wave(u, freq, speed, fk * 2.1) * H * 0.085 * u_shape.y * max(env, 0.25);
         float hgt = H * u_shape.y * (0.20 + 0.85 * lv + 0.18 * u_kick) * max(env, 0.12) * (1.0 - 0.16 * fk);
-        float dy = hem - px.y;  // > 0 au-dessus de l'ourlet
+        float dy = hem - px.y;  // > 0 above the hem
         float body = smoothstep(-1.5 * u_ppp, 1.5 * u_ppp, dy) * exp(-max(dy, 0.0) / max(hgt, 1.0));
-        // Rayons : stries verticales qui glissent le long du rideau.
+        // Rays: vertical streaks gliding along the curtain.
         float sx = px.x / (7.0 * u_ppp) * fine;
         float rays_ = 0.35 + 0.65 * noise(vec2(sx + u_time * (0.5 + 0.25 * fk), fk * 7.3 + dy / (H * 0.9)));
         rays_ *= 0.65 + 0.35 * noise(vec2(sx * 0.21 - u_time * 0.18, fk + 3.0));
@@ -1295,13 +1295,13 @@ vec3 aurora(vec2 px, float W, float H, float u) {
         acc += col * body * rays_ * a;
         acc += mix(col, vec3(1.0), 0.5) * exp(-pow(dy / (1.7 * u_ppp), 2.0)) * a * 0.75;
     }
-    // Lueur au sol, sous les rideaux.
+    // Glow on the ground, under the curtains.
     float base = H * u_shape.x;
     acc += u_colors[2] * exp(-pow((px.y - base - 0.05 * H) / (0.06 * H), 2.0)) * env * (0.10 + 0.25 * u_bass + 0.3 * u_kick);
     return acc;
 }
 
-// ---------- 3. Spectre : colonnes arrondies, coiffe lumineuse, halo et reflet ----------
+// ---------- 3. Spectrum: rounded columns, glowing cap, halo and reflection ----------
 
 vec3 spectrum_bars(vec2 px, float W, float H, float u) {
     float n = floor(detail(20.0, 48.0, 110.0));
@@ -1314,7 +1314,7 @@ vec3 spectrum_bars(vec2 px, float W, float H, float u) {
     float bw = cw * 0.66;
     float rr = min(bw * 0.5, 5.0 * u_ppp);
     float qx = px.x - (cell + 0.5) * cw;
-    // Boîte arrondie en haut, coupée net à la ligne de base.
+    // Box rounded at the top, cut off sharply at the baseline.
     vec2 q = vec2(qx, px.y - (base - h * 0.5 + rr * 0.5));
     vec2 dq = abs(q) - vec2(bw * 0.5, (h + rr) * 0.5) + rr;
     float sd = length(max(dq, 0.0)) + min(max(dq.x, dq.y), 0.0) - rr;
@@ -1323,14 +1323,14 @@ vec3 spectrum_bars(vec2 px, float W, float H, float u) {
     vec3 col = mix(u_colors[0], u_colors[1], yy);
     col = mix(col, vec3(1.0), smoothstep(0.7, 1.0, yy) * 0.35);
     vec3 acc = col * body * (0.50 + 0.30 * yy + 0.5 * u_kick);
-    // Coiffe : le haut de chaque colonne brille.
+    // Cap: the top of each column shines.
     float cap = exp(-pow((px.y - (base - h)) / (1.4 * u_ppp), 2.0)) * (1.0 - smoothstep(bw * 0.5 - rr, bw * 0.5, abs(qx)));
     acc += mix(u_colors[1], vec3(1.0), 0.6) * cap * 0.6;
-    // Halo derrière, qui suit la courbe lissée du spectre.
+    // Halo behind, following the smoothed curve of the spectrum.
     float dy = base - px.y;
     float smooth_h = level(u) * envelope(u) * H * 0.55 * u_shape.y;
     acc += u_colors[0] * exp(-pow(max(dy - smooth_h, 0.0) / (H * 0.07), 2.0)) * step(0.0, dy) * (0.05 + 0.10 * level(u));
-    // Reflet, de la forme de la colonne, qui s'efface vite.
+    // Reflection, shaped like the column, fading quickly.
     float below = px.y - base;
     float refl = step(0.0, below) * (1.0 - smoothstep(bw * 0.5 - u_ppp, bw * 0.5 + u_ppp, abs(qx)))
                * smoothstep(h * 0.55, 0.0, below) * exp(-below / (H * 0.05));
@@ -1338,12 +1338,12 @@ vec3 spectrum_bars(vec2 px, float W, float H, float u) {
     return acc;
 }
 
-// ---------- 5. Lignes : relief de crêtes empilées, chaque ligne cachant celles de derrière ----------
+// ---------- 5. Lines: relief of stacked ridges, each line hiding the ones behind ----------
 
 vec3 lines(vec2 px, float W, float H, float u) {
     vec3 acc = vec3(0.0);
     float n = floor(detail(10.0, 20.0, 34.0));
-    // Les crêtes se concentrent au centre, comme sur la célèbre pochette.
+    // The ridges gather in the center, as on the famous album cover.
     float centre = pow(max(1.0 - abs(u * 2.0 - 1.0) / 0.78, 0.0), 1.6);
     for (int i = 0; i < 34; i++) {
         if (float(i) >= n) break;
@@ -1354,7 +1354,7 @@ vec3 lines(vec2 px, float W, float H, float u) {
         ridge = ridge * ridge * (0.6 + 0.8 * noise(vec2(u * 31.0 - fl, u_time * 0.8)));
         float bump = centre * (0.25 + 1.3 * level(u)) * ridge * (1.0 + 0.5 * u_kick);
         float y = y_base - H * 0.20 * u_shape.y * bump;
-        // Ce qui est sous la ligne est caché : les lignes de derrière ne la traversent pas.
+        // What is under the line is hidden: the lines behind don't cross it.
         acc *= 1.0 - 0.93 * smoothstep(-u_ppp, u_ppp, px.y - y);
         float d = abs(px.y - y);
         float core = (0.8 + 0.5 * fi) * u_ppp;
@@ -1364,7 +1364,7 @@ vec3 lines(vec2 px, float W, float H, float u) {
     return acc;
 }
 
-// ---------- 7. Faisceaux : projecteurs de scène, brume dans les faisceaux, tache au sol ----------
+// ---------- 7. Beams: stage spotlights, haze in the beams, a pool of light on the floor ----------
 
 vec3 beams(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
@@ -1381,14 +1381,14 @@ vec3 beams(vec2 px, float W, float H) {
         float width = 0.012 * H + along * 0.085;
         float lvk = u_levels[k + k / 2];
         float power = 0.35 + 1.1 * lvk + 0.5 * u_kick;
-        // Bord doux et cœur plus vif ; la brume fait vivre le faisceau.
+        // Soft edge and brighter core; the haze brings the beam to life.
         float t = across / max(width, 1.0);
         float shape = exp(-t * t * 1.6) + 0.5 * exp(-t * t * 14.0);
         float haze = 0.55 + 0.45 * fbm(vec2(along / (H * 0.22) - u_time * 0.25, across / (H * 0.10) + fk * 5.0));
         float reach = smoothstep(0.0, 0.03 * H, along) * exp(-along / (1.25 * H));
         vec3 col = u_colors[k - (k / 3) * 3];
         acc += col * shape * haze * reach * power * 0.9;
-        // La lampe, en haut, et la tache de lumière au sol.
+        // The lamp, at the top, and the pool of light on the floor.
         acc += mix(col, vec3(1.0), 0.6) * exp(-dot(rel, rel) / pow(0.022 * H, 2.0)) * (0.6 + power);
         float hit_x = o.x + tan(a) * (H - o.y);
         vec2 fd = (px - vec2(hit_x, H)) / vec2(0.16 * H, 0.035 * H);
@@ -1397,13 +1397,13 @@ vec3 beams(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 9. Rayons : grand soleil levant, deux couronnes de rayons qui suivent le spectre ----------
+// ---------- 9. Rays: large rising sun, two crowns of rays following the spectrum ----------
 
 vec3 rays(vec2 px, float W, float H) {
     vec2 c = vec2(0.5 * W, H * 1.02);
     vec2 d = px - c;
     float r = length(d) / H;
-    float ang = atan(d.x, -d.y);  // 0 vers le haut
+    float ang = atan(d.x, -d.y);  // 0 upwards
     float u = clamp(0.5 + ang / 3.14159, 0.0, 1.0);
     float n = floor(detail(18.0, 44.0, 90.0));
     vec3 acc = vec3(0.0);
@@ -1413,13 +1413,13 @@ vec3 rays(vec2 px, float W, float H) {
         float lv = level(floor(su * nn) / nn + 0.5 / nn);
         float edge = abs(fract(su * nn) - 0.5) * 2.0;
         float ray = 1.0 - smoothstep(layer == 0 ? 0.22 : 0.10, layer == 0 ? 0.62 : 0.34, edge);
-        // Les rayons vont loin : jusqu'en haut de la page sur les fréquences fortes.
+        // The rays reach far: up to the top of the page on strong frequencies.
         float reach = (layer == 0 ? 0.50 : 0.32) + (layer == 0 ? 1.15 : 0.75) * lv + 0.12 * u_kick;
         float body = ray * smoothstep(reach, reach * 0.25, r) * smoothstep(0.10, 0.20, r);
         vec3 col = mix(u_colors[layer], u_colors[1 - layer], clamp(r / max(reach, 0.01), 0.0, 1.0));
         acc += col * body * (layer == 0 ? 0.42 : 0.30) * (0.8 + 0.6 * u_kick);
     }
-    // Le soleil : disque, couronne et grande lueur.
+    // The sun: disc, corona and large glow.
     float sun_r = 0.13 + 0.015 * u_bass + 0.02 * u_kick;
     acc += mix(u_colors[1], vec3(1.0), 0.5) * (1.0 - smoothstep(sun_r - 0.004, sun_r + 0.004, r)) * (0.75 + 0.5 * u_kick);
     acc += u_colors[1] * exp(-pow(max(r - sun_r, 0.0) / 0.07, 2.0)) * 0.45;
@@ -1427,7 +1427,7 @@ vec3 rays(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 13. Oscilloscope : la forme d'onde sur un écran à réticule, avec sa rémanence ----------
+// ---------- 13. Oscilloscope: the waveform on a screen with a graticule, with its afterglow ----------
 
 float wave_at(float u) {
     float x = clamp(u, 0.0, 1.0) * 127.0;
@@ -1446,31 +1446,31 @@ vec3 scope(vec2 px, float W, float H, float u) {
     float a = (0.55 + 0.8 * u_energy + 0.6 * u_kick) * max(env, 0.15);
     vec3 col = u_colors[0];
     vec3 acc = vec3(0.0);
-    // Réticule : quadrillage fin et axe central, comme sur l'écran d'un appareil de mesure.
+    // Graticule: fine grid and central axis, like on the screen of a measuring instrument.
     float gs = H * 0.07;
     vec2 g = abs(fract(vec2(px.x, px.y - base) / gs + 0.5) - 0.5) * gs;
     float in_screen = smoothstep(amp * 1.9, amp * 1.2, abs(px.y - base)) * env;
     acc += u_colors[2] * (exp(-pow(min(g.x, g.y) / (0.7 * u_ppp), 2.0)) * 0.10
          + exp(-pow((px.y - base) / (0.8 * u_ppp), 2.0)) * 0.22) * in_screen;
-    // Remplissage entre la trace et l'axe : la « matière » du son.
+    // Fill between the trace and the axis: the "substance" of the sound.
     float between = step(min(y0, base), px.y) * step(px.y, max(y0, base));
     acc += col * between * 0.16 * a * (0.4 + 0.6 * abs(px.y - base) / max(abs(y0 - base), 1.0));
-    // La trace : lueur large, halo, cœur presque blanc.
+    // The trace: broad glow, halo, almost white core.
     float glow = H * (0.018 + 0.03 * u_energy);
     acc += col * a * 0.45 * exp(-d * d / (glow * glow));
     acc += mix(col, vec3(1.0), 0.6) * a * exp(-d * d / (1.5 * u_ppp * 1.5 * u_ppp));
-    // Rémanence : la même trace, pâle, en miroir sous l'axe.
+    // Afterglow: the same trace, pale, mirrored under the axis.
     float ym = base + w0 * amp * 0.55;
     acc += u_colors[1] * a * 0.16 * exp(-pow((px.y - ym) / (2.2 * u_ppp), 2.0));
     return acc;
 }
 
-// ---------- 16. Horizon : route de lumière entre deux reliefs, soleil rayé au fond ----------
+// ---------- 16. Horizon: road of light between two reliefs, striped sun in the distance ----------
 
 vec3 horizon(vec2 px, float W, float H, float u) {
     float hy = H * 0.50;
     vec3 acc = vec3(0.0);
-    // Soleil : demi-disque rayé posé sur l'horizon.
+    // Sun: striped half-disc resting on the horizon.
     vec2 sc = vec2(0.5 * W, hy);
     float sr = H * (0.17 + 0.02 * u_bass + 0.02 * u_kick);
     float sd = length(px - sc);
@@ -1487,13 +1487,13 @@ vec3 horizon(vec2 px, float W, float H, float u) {
         float speed = 0.5;
         float scroll = fract(u_time * speed);
         float row0 = floor(u_time * speed);
-        // Une vallée plate au milieu (la route), le relief sur les côtés.
+        // A flat valley in the middle (the road), the relief on the sides.
         float side = smoothstep(0.10, 0.42, abs(u - 0.5));
-        // Du fond vers l'avant : chaque rangée cache celles de derrière.
+        // From the back to the front: each row hides the ones behind.
         for (int j = 0; j < 18; j++) {
             int i = 17 - j;
             float z = float(i) + 1.0 - scroll;
-            float id = float(i) + row0;  // la rangée garde son relief en avançant
+            float id = float(i) + row0;  // the row keeps its relief as it moves forward
             float terrain = (0.35 + 1.1 * level(u)) * noise(vec2(u * 7.0, id * 0.9)) + 0.25 * noise(vec2(u * 23.0, id * 1.7));
             float y = hy + (H - hy) / z - side * terrain * relief * H * 0.26 / sqrt(z) * (1.0 + 0.35 * u_kick);
             acc *= 1.0 - 0.85 * smoothstep(-u_ppp, u_ppp, px.y - y) * smoothstep(0.0, 1.0, z);
@@ -1503,7 +1503,7 @@ vec3 horizon(vec2 px, float W, float H, float u) {
             vec3 col = mix(u_colors[0], u_colors[2], clamp(z / 16.0, 0.0, 1.0));
             acc += col * fade * (exp(-d * d / (core * core)) + 0.12 * exp(-d / (6.0 * u_ppp)));
         }
-        // Lignes de fuite, seulement sur la route.
+        // Vanishing lines, only on the road.
         float k = (px.x - 0.5 * W) / max(px.y - hy, 1.0);
         float g = abs(fract(k * 0.8 + 0.5) - 0.5) / 0.8 * (px.y - hy);
         float vfade = smoothstep(hy, H, px.y) * (1.0 - side);
@@ -1512,7 +1512,7 @@ vec3 horizon(vec2 px, float W, float H, float u) {
     return acc;
 }
 
-// ---------- 20. Pluie de lumière : gouttes qui tombent, leur traînée sort de l'écran avec elles ----------
+// ---------- 20. Light rain: falling drops, their trail leaves the screen with them ----------
 
 vec3 light_rain(vec2 px, float W, float H) {
     vec3 acc = vec3(0.0);
@@ -1527,18 +1527,18 @@ vec3 light_rain(vec2 px, float W, float H) {
         float line = exp(-dx * dx / (width * width));
         float lv = level((ci + 0.5) / n);
         vec3 col = mix(u_colors[layer], vec3(1.0), 0.15);
-        // Deux gouttes par colonne. La longueur de la traînée est fixe (c'est son éclat qui suit
-        // la musique) et la course va assez loin sous l'écran pour qu'elle en sorte en entier.
+        // Two drops per column. The trail length is fixed (its brightness follows the music) and the
+        // fall goes far enough below the screen for the trail to leave it entirely.
         for (int j = 0; j < 2; j++) {
             float seed = hash(vec2(ci, fl * 13.0 + float(j) * 5.0));
             float len = 0.16 + 0.14 * seed;
             float speed = (0.10 + 0.20 * seed) * (1.0 + 0.5 * fl);
             float head = fract(u_time * speed + seed * 7.0 + float(j) * 0.5) * (1.12 + 5.0 * len) - 0.10;
-            float d = head - px.y / H;  // > 0 au-dessus de la tête de la goutte
+            float d = head - px.y / H;  // > 0 above the head of the drop
             float trail = step(0.0, d) * exp(-d / len);
             float tip = exp(-pow(d * H / (4.0 * u_ppp), 2.0));
             acc += col * line * (trail * (0.25 + 1.0 * lv) + tip * 1.2) * (layer == 0 ? 1.0 : 0.5) * (0.7 + 0.5 * u_kick);
-            // Éclat au sol quand la goutte touche le bas.
+            // Splash on the ground when the drop touches the bottom.
             float splash = exp(-pow((head - 1.0) / 0.03, 2.0)) * step(1.0, head + 0.03);
             vec2 sp = vec2((px.x - (ci + 0.5) * W / n) / (10.0 * u_ppp), (px.y - H) / (3.0 * u_ppp));
             acc += col * splash * exp(-dot(sp, sp)) * (0.5 + lv);
@@ -1547,7 +1547,7 @@ vec3 light_rain(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 21. Kaléidoscope : miroirs autour de la pochette, facettes et filets de lumière ----------
+// ---------- 21. Kaleidoscope: mirrors around the album art, facets and threads of light ----------
 
 vec3 kaleidoscope(vec2 px, float W, float H) {
     vec2 p = (px - u_focus.xy) / H;
@@ -1559,7 +1559,7 @@ vec3 kaleidoscope(vec2 px, float W, float H) {
     vec2 q = vec2(cos(a), sin(a)) * r / u_scale;
     float t = u_time * 0.15;
     float n = fbm(q * 4.0 + vec2(t, -t * 0.7) + 1.5 * fbm(q * 3.0 - t));
-    // Facettes : un réseau de cellules pris dans les miroirs, dont les arêtes brillent.
+    // Facets: a network of cells caught in the mirrors, whose edges shine.
     float e = cell_edge(q * 7.0 + vec2(t * 0.6, 0.0), u_time * 0.3);
     float facet = exp(-e / 0.05);
     float lines_ = exp(-pow((fract(n * 6.0) - 0.5) / 0.08, 2.0));
@@ -1567,7 +1567,7 @@ vec3 kaleidoscope(vec2 px, float W, float H) {
     col = mix(col, u_colors[1], smoothstep(0.6, 0.9, n));
     float lv = level(fract(r * 1.6));
     float pulse = 0.6 + 0.4 * u_bass + 0.7 * u_kick;
-    // Arêtes des miroirs, très fines.
+    // Mirror edges, very thin.
     float mirror = exp(-pow(a * r * H / (1.0 * u_ppp), 2.0)) + exp(-pow((seg * 0.5 - a) * r * H / (1.0 * u_ppp), 2.0));
     return (col * (0.20 + 0.8 * n * n)
           + mix(col, vec3(1.0), 0.4) * lines_ * 0.30 * (0.5 + lv)
@@ -1575,7 +1575,7 @@ vec3 kaleidoscope(vec2 px, float W, float H) {
           + u_colors[1] * mirror * 0.10) * pulse * smoothstep(1.7, 0.25, r);
 }
 
-// ---------- 22. Rosace : trois couronnes de pétales autour de la pochette (graves, médiums, aigus) ----------
+// ---------- 22. Rosette: three crowns of petals around the album art (bass, mids, treble) ----------
 
 vec3 rosette(vec2 px, float W, float H) {
     vec2 d = px - u_focus.xy;
@@ -1594,7 +1594,7 @@ vec3 rosette(vec2 px, float W, float H) {
         float r_in = R * (1.10 - 0.02 * fk);
         float r_out = R * ((k == 0 ? 1.50 : (k == 1 ? 1.34 : 1.20)) + (k == 0 ? 0.95 : (k == 1 ? 0.75 : 0.50)) * lv);
         float edge = r_in + (r_out - r_in) * shape;
-        // Pente du contour, pour un trait d'épaisseur régulière.
+        // Slope of the outline, for a line of even thickness.
         float de = (r_out - r_in) * 0.7 * pow(max(c, 0.02), -0.3) * abs(sin((a + turn) * n * 0.5)) * n * 0.5 / max(r, 1.0);
         float sd = (r - edge) / sqrt(1.0 + de * de);
         vec3 col = mix(u_colors[k], vec3(1.0), 0.25);
@@ -1607,31 +1607,31 @@ vec3 rosette(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 24. Galaxie : bras d'étoiles, bandes de poussière, nébuleuses et bulbe central ----------
+// ---------- 24. Galaxy: arms of stars, dust lanes, nebulae and central bulge ----------
 
 vec3 galaxy(vec2 px, float W, float H) {
     vec2 p = (px - vec2(0.5 * W, 0.5 * H)) / H;
     p = rot(0.35) * p * 0.62;
-    p.y *= 1.9;  // vue inclinée
+    p.y *= 1.9;  // tilted view
     float r = length(p);
     float a = atan(p.y, p.x);
     float t = u_time * 0.06;
     float wind = detail(2.2, 4.0, 7.5);
-    // Deux bras en spirale logarithmique, épaissis et froissés par du bruit.
+    // Two logarithmic spiral arms, thickened and crumpled by noise.
     float spiral = 2.0 * (a + t * 3.0) - log(r + 0.015) * wind;
     float wobble = fbm(vec2(a * 3.0 + t, r * 9.0)) - 0.5;
     float arm = 0.5 + 0.5 * cos(spiral + wobble * 2.2);
     float falloff = exp(-r * 3.2);
     float disc = falloff * (0.18 + 0.82 * pow(arm, 2.5));
-    // Bandes de poussière : sombres, sur le bord intérieur des bras.
+    // Dust lanes: dark, on the inner edge of the arms.
     float dust = fbm(vec2(spiral * 0.8, r * 14.0 - t * 2.0));
     float lane = smoothstep(0.35, 0.75, dust) * pow(0.5 + 0.5 * cos(spiral + 1.1), 3.0);
     vec3 col = mix(mix(u_colors[1], vec3(1.0, 0.94, 0.86), 0.5), u_colors[0], clamp(r * 2.4, 0.0, 1.0));
     vec3 acc = col * disc * (1.0 - 0.75 * lane) * (0.75 + 0.5 * u_bass + 0.4 * u_kick);
-    // Nébuleuses : nœuds colorés le long des bras, qui pulsent avec leurs fréquences.
+    // Nebulae: colored knots along the arms, pulsing with their frequencies.
     float knots = smoothstep(0.62, 0.9, fbm(vec2(spiral * 1.3 + 4.0, r * 22.0))) * pow(arm, 4.0);
     acc += mix(u_colors[2], u_colors[1], 0.5) * knots * falloff * 2.2 * (0.4 + 1.4 * band(clamp(r * 2.0, 0.0, 1.0)));
-    // Étoiles : trois tailles de grille ; plus nombreuses et plus vives dans les bras.
+    // Stars: three grid sizes; more numerous and brighter in the arms.
     vec2 sp = rot(t * 3.0) * p;
     for (int s = 0; s < 3; s++) {
         float sc = s == 0 ? 26.0 : (s == 1 ? 55.0 : 110.0);
@@ -1644,14 +1644,14 @@ vec3 galaxy(vec2 px, float W, float H) {
         float tw = 0.6 + 0.4 * sin(u_time * (1.5 + 3.0 * hsh) + hsh * 40.0);
         acc += mix(vec3(1.0), col, 0.35) * star * tw * (s == 0 ? 0.9 : (s == 1 ? 0.55 : 0.35)) * (0.6 + 0.8 * u_energy);
     }
-    // Bulbe central : cœur chaud, légèrement allongé (une barre).
+    // Central bulge: warm core, slightly elongated (a bar).
     vec2 bp = rot(t * 3.0 + 0.6) * p;
     float bulge = exp(-(bp.x * bp.x * 40.0 + bp.y * bp.y * 110.0)) + 0.8 * exp(-r * r * 220.0);
     acc += mix(u_colors[1], vec3(1.0, 0.95, 0.88), 0.7) * bulge * (0.7 + 0.8 * u_kick);
     return acc;
 }
 
-// ---------- 27. Diodes : vumètre à segments, comme la façade d'une chaîne hi-fi ----------
+// ---------- 27. LEDs: segmented VU meter, like the front of a hi-fi system ----------
 
 vec3 leds(vec2 px, float W, float H, float u) {
     float cols = floor(detail(14.0, 30.0, 60.0));
@@ -1665,7 +1665,7 @@ vec3 leds(vec2 px, float W, float H, float u) {
     float lv = level(cu) * envelope(cu);
     float most = max(floor(H * 0.55 * u_shape.y / pitch), 3.0);
     float lit = floor(lv * most + 0.5 * u_kick);
-    // Segment : un petit rectangle arrondi, plus large que haut.
+    // Segment: a small rounded rectangle, wider than tall.
     vec2 q = vec2(px.x - (col_i + 0.5) * cw, (base - px.y) - (row + 0.5) * pitch);
     vec2 half_ = vec2(cw * 0.5 - max(1.5 * u_ppp, cw * 0.09), seg_h * 0.5);
     float rr = min(2.0 * u_ppp, half_.y);
@@ -1676,20 +1676,20 @@ vec3 leds(vec2 px, float W, float H, float u) {
     float on = inside * step(row, lit - 1.0);
     float peak = inside * step(lit - 1.5, row) * step(row, lit - 0.5);
     float height = row / most;
-    // Couleur par zone, comme un vrai vumètre : calme, fort, puis rouge-blanc tout en haut.
+    // Color per zone, like a real VU meter: calm, loud, then red-white at the very top.
     vec3 col = mix(u_colors[0], u_colors[1], smoothstep(0.35, 0.7, height));
     col = mix(col, vec3(1.0, 0.92, 0.85), smoothstep(0.78, 0.95, height) * 0.7);
     vec3 acc = col * seg * (on * (0.85 + 0.5 * u_kick) + peak * 0.5 + inside * 0.045);
-    // Halo des segments allumés (la lumière déborde un peu).
+    // Halo of the lit segments (the light spills a little).
     acc += col * on * exp(-pow(max(sd, 0.0) / (2.5 * u_ppp), 2.0)) * 0.16;
-    // Reflet sur la façade, sous la ligne de base.
+    // Reflection on the front panel, under the baseline.
     float below = px.y - base;
     acc += u_colors[0] * step(0.0, below) * (1.0 - smoothstep(half_.x - u_ppp, half_.x + u_ppp, abs(q.x)))
          * exp(-below / (H * 0.03)) * lv * 0.18;
     return acc;
 }
 
-// ---------- 43. Pendules : une rangée de pendules reliés par un fil de lumière, qui ondule et se défait ----------
+// ---------- 43. Pendulums: a row of pendulums linked by a thread of light, rippling and coming apart ----------
 
 float pendulum_y(float i, float n, float H) {
     float lv = level((i + 0.5) / n);
@@ -1703,7 +1703,7 @@ vec3 pendulums(vec2 px, float W, float H) {
     float fx = px.x / cw - 0.5;
     float ci = floor(fx);
     vec3 acc = vec3(0.0);
-    // Le fil : une courbe douce qui passe par toutes les boules.
+    // The thread: a smooth curve going through every ball.
     float i0 = clamp(ci, 0.0, n - 1.0);
     float i1 = clamp(ci + 1.0, 0.0, n - 1.0);
     float s = smoothstep(0.0, 1.0, fract(fx));
@@ -1714,7 +1714,7 @@ vec3 pendulums(vec2 px, float W, float H) {
     float dl = abs(px.y - yl) / sqrt(1.0 + slope * slope);
     vec3 lcol = mix(u_colors[0], u_colors[1], px.x / W);
     acc += lcol * (exp(-pow(dl / (1.3 * u_ppp), 2.0)) * 0.55 + exp(-dl / (H * 0.03)) * 0.10) * (0.7 + 0.5 * u_energy);
-    // Les boules, leur tige (jusqu'en haut) et leur halo.
+    // The balls, their rod (up to the top) and their halo.
     for (int o = 0; o <= 1; o++) {
         float i = ci + float(o);
         if (i < 0.0 || i >= n) continue;
@@ -1726,7 +1726,7 @@ vec3 pendulums(vec2 px, float W, float H) {
         float rad = (7.0 + 6.0 * lv + 2.5 * u_kick) * u_ppp;
         float d = length(px - vec2(cx, y));
         float ball = 1.0 - smoothstep(rad - u_ppp, rad + u_ppp, d);
-        // Petit reflet en haut à gauche : la boule a du volume.
+        // Small highlight at the top left: the ball has volume.
         float shine = exp(-pow(length(px - vec2(cx - rad * 0.3, y - rad * 0.35)) / (rad * 0.35), 2.0));
         acc += col * rod
              + mix(col, vec3(1.0), 0.25) * ball * (0.75 + 0.5 * lv)
@@ -1736,7 +1736,7 @@ vec3 pendulums(vec2 px, float W, float H) {
     return acc;
 }
 
-// ---------- 45. Dunes : crêtes de sable douces sous un soleil bas, ridées par le vent ----------
+// ---------- 45. Dunes: soft sand ridges under a low sun, rippled by the wind ----------
 
 float dune_ridge(float x, float fl, float H, float W) {
     float lambda = W * (0.70 - 0.09 * fl);
@@ -1748,7 +1748,7 @@ float dune_ridge(float x, float fl, float H, float W) {
 vec3 dunes(vec2 px, float W, float H) {
     float u = px.x / W;
     float relief = detail(0.5, 1.0, 1.8);
-    // Ciel : le soleil bas et sa lueur.
+    // Sky: the low sun and its glow.
     vec2 sun = vec2(W * 0.80, H * 0.34);
     float sd = length(px - sun);
     float sr = H * 0.075;
@@ -1762,16 +1762,16 @@ vec3 dunes(vec2 px, float W, float H) {
         float ridge = H * (0.50 + 0.105 * fl) - dune_ridge(px.x, fl, H, W) * amp;
         float below = px.y - ridge;
         float inside = smoothstep(-u_ppp, u_ppp, below);
-        // Le sable : éclairé près de la crête, de plus en plus sombre en descendant.
+        // The sand: lit near the ridge, darker and darker going down.
         vec3 sand = mix(u_colors[2], u_colors[0], 0.25 + 0.5 * depth);
         float shade = 0.16 + 0.80 * exp(-max(below, 0.0) / (H * (0.06 + 0.07 * depth)));
-        // Rides du vent : de fines lignes qui suivent la forme de la dune.
+        // Wind ripples: thin lines following the shape of the dune.
         float ripples_ = 0.85 + 0.15 * sin(below / ((2.2 + 2.0 * depth) * u_ppp) + px.x / (H * 0.05));
         vec3 body = sand * shade * ripples_ * (0.35 + 0.65 * depth);
-        // Brume entre les plans : les dunes lointaines se fondent dans le ciel.
+        // Haze between the layers: distant dunes melt into the sky.
         body = mix(body, u_colors[0] * 0.10, (1.0 - depth) * 0.55);
         acc = mix(acc, body, inside);
-        // Liseré de lumière sur la crête, côté soleil.
+        // Rim of light on the ridge, on the sun's side.
         float toward = 0.5 + 0.5 * clamp((sun.x - px.x) / (W * 0.5), -1.0, 1.0);
         acc += mix(u_colors[1], vec3(1.0), 0.4) * exp(-pow(below / ((1.0 + depth) * u_ppp), 2.0)) * (0.12 + 0.30 * depth) * (0.5 + 0.5 * toward);
     }
@@ -1783,15 +1783,15 @@ void main() {
     vec2 size = u_rect.zw - u_rect.xy;
     float W = size.x;
     float H = size.y;
-    vec2 px = vec2(p.x - u_rect.x, u_rect.w - p.y);  // pixels, y vers le bas
+    vec2 px = vec2(p.x - u_rect.x, u_rect.w - p.y);  // pixels, y downwards
     float u = px.x / W;
     float v = px.y / H;
-    // Zoom de l'effet autour de son centre ; les fondus, eux, restent ceux de la page.
+    // Zoom of the effect around its center; the fades stay those of the page.
     vec2 zp = u_zoom.yz + (px - u_zoom.yz) / max(u_zoom.x, 0.05);
     float zu = zp.x / W;
     float zv = zp.y / H;
 
-    // Rectangle arrondi.
+    // Rounded rectangle.
     vec2 c = (u_rect.xy + u_rect.zw) * 0.5;
     vec2 q = abs(p - c) - size * 0.5 + vec2(u_radius);
     float dist = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - u_radius;
@@ -1849,17 +1849,17 @@ void main() {
     else if (u_mode == 49) acc = neon(zp, W, H);
     else acc = aurora(zp, W, H, zu);
 
-    // Fondus doux : en haut, en bas, et côté texte pour le bandeau.
+    // Soft fades: at the top, at the bottom, and on the text side for the banner.
     float fade = smoothstep(0.0, u_fade.x, v) * (1.0 - smoothstep(1.0 - u_fade.y, 1.0, v));
     fade *= mix(1.0, smoothstep(0.30, 0.95, u), u_left);
     acc *= fade * u_intensity;
 
-    // Saturation douce : les zones intenses éclatent sans brûler ; léger tramage contre les bandes.
+    // Soft saturation: intense areas burst without burning out; slight dithering against banding.
     vec3 color = 1.0 - exp(-acc * 1.6);
     color += (fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
     color = max(color, 0.0);
     float alpha = max(max(color.r, color.g), color.b);
-    out_color = vec4(color, alpha) * mask;  // alpha prémultiplié, comme egui
+    out_color = vec4(color, alpha) * mask;  // premultiplied alpha, like egui
 }
 "#;
 
@@ -1915,7 +1915,7 @@ unsafe fn create(gl: &glow::Context) -> Option<Resources> {
             .iter()
             .map(|n| gl.get_uniform_location(program, n))
             .collect();
-        // Même règle qu'egui_glow pour savoir si ses textures sont en sRGB.
+        // Same rule as egui_glow to tell whether its textures are in sRGB.
         let srgb_textures = version == egui_glow::ShaderVersion::Es300
             || gl.supported_extensions().iter().any(|e| e.contains("sRGB"));
         Some(Resources {

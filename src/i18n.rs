@@ -1,9 +1,9 @@
-//! Langue de l'interface : français (la langue du code) ou anglais.
+//! Interface language: French (the language of the code) or English.
 //!
-//! Les textes restent écrits en français dans le code ; [`tr`] donne leur traduction dans la
-//! langue choisie, et [`trf!`] fait de même pour un texte à trous (« {n} fichiers »), avant de
-//! remplir les trous. Un texte sans traduction s'affiche en français : rien ne casse s'il en
-//! manque une. Les traductions anglaises sont dans `i18n_en.rs`.
+//! Texts stay written in French in the code; [`tr`] gives their translation in the chosen
+//! language, and [`trf!`] does the same for a text with placeholders ("{n} fichiers"), before
+//! filling them in. A text without a translation is shown in French: nothing breaks if one is
+//! missing. The English translations are in `i18n_en.rs`.
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -22,7 +22,7 @@ pub enum Lang {
 impl Lang {
     pub const ALL: [Lang; 2] = [Lang::Fr, Lang::En];
 
-    /// Nom de la langue, dans cette langue (on la reconnaît même sans lire l'autre).
+    /// Name of the language, in that language (recognizable even without reading the other one).
     pub fn native_name(self) -> &'static str {
         match self {
             Lang::Fr => "Français",
@@ -30,8 +30,8 @@ impl Lang {
         }
     }
 
-    /// Langue du bureau (`LC_ALL`, `LC_MESSAGES`, `LANG`) : français si elle l'est, sinon
-    /// anglais (y compris sans langue réglée, « C » ou vide).
+    /// Desktop language (`LC_ALL`, `LC_MESSAGES`, `LANG`): French if it is French, otherwise English
+    /// (including with no language set, "C" or empty).
     pub fn from_env() -> Lang {
         let locale = ["LC_ALL", "LC_MESSAGES", "LANG"]
             .iter()
@@ -64,14 +64,14 @@ fn english() -> &'static HashMap<&'static str, &'static str> {
     MAP.get_or_init(|| crate::i18n_en::EN.iter().copied().collect())
 }
 
-/// Marque un texte à traduire là où `tr` ne peut pas être appelé (une constante) : la traduction
-/// se fait à l'affichage, avec `tr`. Sert aussi au test qui vérifie que tout est traduit.
+/// Marks a text to translate where `tr` cannot be called (a constant): the translation happens
+/// when it is displayed, with `tr`. Also used by the test that checks everything is translated.
 pub const fn n_(fr: &'static str) -> &'static str {
     fr
 }
 
-/// Le texte dans la langue de l'interface (un texte inconnu est rendu tel quel : un titre de
-/// morceau, par exemple).
+/// The text in the interface language (an unknown text is returned as is: a track title, for
+/// example).
 pub fn tr(fr: &str) -> &str {
     match lang() {
         Lang::Fr => fr,
@@ -79,13 +79,13 @@ pub fn tr(fr: &str) -> &str {
     }
 }
 
-/// Noms des trous d'un texte (« {n} », « {total} »), dans l'ordre de leur première apparition.
+/// Names of the placeholders of a text ("{n}", "{total}"), in order of first appearance.
 fn holes(template: &str) -> Vec<&str> {
     let mut names: Vec<&str> = Vec::new();
     let mut rest = template;
     while let Some(i) = rest.find(['{', '}']) {
         let after = &rest[i + 1..];
-        // « {{ » et « }} » sont des accolades écrites telles quelles.
+        // "{{" and "}}" are literal braces.
         if after.starts_with(&rest[i..i + 1]) {
             rest = &after[1..];
             continue;
@@ -105,9 +105,9 @@ fn holes(template: &str) -> Vec<&str> {
     names
 }
 
-/// Texte à trous dans la langue de l'interface : `trf!("{n} fichiers sur {total}", n, total)`.
-/// Les valeurs sont données dans l'ordre où leurs trous apparaissent dans le texte français ; la
-/// traduction peut les placer ailleurs.
+/// Text with placeholders in the interface language: `trf!("{n} fichiers sur {total}", n, total)`.
+/// The values are given in the order their placeholders appear in the French text; the
+/// translation may place them elsewhere.
 #[macro_export]
 macro_rules! trf {
     ($fr:expr $(, $value:expr)* $(,)?) => {
@@ -115,7 +115,7 @@ macro_rules! trf {
     };
 }
 
-/// Ce que fait `trf!` : traduit le texte, puis remplit ses trous.
+/// What `trf!` does: translates the text, then fills its placeholders.
 pub fn fill(fr: &str, values: &[&dyn Display]) -> String {
     let names = holes(fr);
     let text = tr(fr);
@@ -148,7 +148,7 @@ pub fn fill(fr: &str, values: &[&dyn Display]) -> String {
     out
 }
 
-/// « 60 % » en français, « 60% » en anglais.
+/// "60 %" in French, "60%" in English.
 pub fn percent(value: f32) -> String {
     match lang() {
         Lang::Fr => format!("{value:.0} %"),
@@ -156,8 +156,8 @@ pub fn percent(value: f32) -> String {
     }
 }
 
-/// « 3 fichiers », « 1 fichier » : le nombre et le mot, au singulier ou au pluriel selon la
-/// langue (en français, 0 est au singulier ; en anglais, au pluriel).
+/// "3 files", "1 file": the number and the word, singular or plural depending on the language
+/// (in French, 0 is singular; in English, plural).
 pub fn plural(n: usize, one: &str, many: &str) -> String {
     let single = match lang() {
         Lang::Fr => n <= 1,
@@ -170,7 +170,7 @@ pub fn plural(n: usize, one: &str, many: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Une seule fonction de test touche à la langue (globale) : les tests tournent en parallèle.
+    /// A single test function touches the (global) language: tests run in parallel.
     #[test]
     fn translations() {
         set(Lang::Fr);
@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(holes("{a} {b} {a} {{x}}"), vec!["a", "b"]);
     }
 
-    /// Chaque texte traduit garde les mêmes trous que l'original (sinon une valeur se perdrait).
+    /// Every translated text keeps the same placeholders as the original (otherwise a value would be lost).
     #[test]
     fn same_holes() {
         for (fr, en) in crate::i18n_en::EN {
@@ -200,7 +200,7 @@ mod tests {
         }
     }
 
-    /// Chaque texte du code passé à `tr`, `trf` ou `plural` a sa traduction anglaise.
+    /// Every text of the code passed to `tr`, `trf` or `plural` has its English translation.
     #[test]
     fn everything_translated() {
         let english = english();

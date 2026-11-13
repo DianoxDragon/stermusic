@@ -1,10 +1,10 @@
-//! Second moteur de décodage : `ffmpeg`, pour ce que Symphonia ne sait pas lire (Opus, WMA,
-//! APE, WavPack, DSD, Musepack…) et pour les morceaux lus à distance (serveurs, podcasts).
+//! Second decoding engine: `ffmpeg`, for what Symphonia cannot read (Opus, WMA, APE, WavPack,
+//! DSD, Musepack…) and for tracks played remotely (servers, podcasts).
 //!
-//! `ffmpeg` décode vers du son brut (flottants 32 bits, stéréo, 44,1 kHz ; au format du fichier
-//! en bit-perfect) sur sa sortie ; un
-//! thread le lit et le passe au lecteur par paquets, pour que le son ne dépende jamais d'une
-//! lecture bloquante. Un déplacement dans le morceau relance `ffmpeg` au bon endroit (`-ss`).
+//! `ffmpeg` decodes to raw audio (32-bit floats, stereo, 44.1 kHz; in the file's own format for
+//! bit-perfect output) on its standard output; a thread reads it and passes it to the player in
+//! packets, so that the sound never depends on a blocking read. Seeking within the track
+//! restarts `ffmpeg` at the right place (`-ss`).
 
 use std::io::Read;
 use std::process::{Child, Command, Stdio};
@@ -14,19 +14,19 @@ use std::time::Duration;
 const RATE: u32 = 44_100;
 const CHANNELS: u16 = 2;
 
-/// Extensions confiées d'office à `ffmpeg`.
+/// Extensions always handed to `ffmpeg`.
 pub const EXTENSIONS: &[&str] = &[
     "opus", "wma", "ape", "wv", "dsf", "dff", "mpc", "tta", "ac3", "mka", "webm",
 ];
 
-/// Vrai si ce fichier doit être lu par `ffmpeg`.
+/// True if this file must be read by `ffmpeg`.
 pub fn wants(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
-/// Vrai si `ffmpeg` est installé (vérifié une fois).
+/// True if `ffmpeg` is installed (checked once).
 pub fn available() -> bool {
     static OK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *OK.get_or_init(|| {
@@ -39,12 +39,12 @@ pub fn available() -> bool {
     })
 }
 
-/// Le son d'un fichier ou d'une adresse, décodé par `ffmpeg`.
+/// The audio of a file or an address, decoded by `ffmpeg`.
 pub struct FfmpegSource {
     input: String,
     rate: u32,
     channels: u16,
-    /// Début du morceau dans le fichier (morceau d'un fichier CUE), et sa durée.
+    /// Start of the track within the file (track of a CUE sheet), and its duration.
     start: Duration,
     total: Option<Duration>,
     child: Option<Child>,
@@ -55,13 +55,13 @@ pub struct FfmpegSource {
 }
 
 impl FfmpegSource {
-    /// Ouvre `input` (chemin ou adresse), à partir de `start`.
+    /// Opens `input` (path or address), from `start`.
     pub fn open(input: &str, start: Duration, total: Option<Duration>) -> Result<Self, String> {
         Self::open_as(input, start, total, RATE, CHANNELS)
     }
 
-    /// Comme [`open`](Self::open), mais à la fréquence et avec les canaux du fichier (sortie
-    /// bit-perfect) : rien n'est rééchantillonné ni mélangé.
+    /// Like [`open`](Self::open), but at the file's sample rate and with its channels (bit-perfect
+    /// output): nothing is resampled or mixed.
     pub fn open_native(input: &str, start: Duration, total: Option<Duration>) -> Result<Self, String> {
         let (rate, channels) = native_format(input).unwrap_or((RATE, CHANNELS));
         Self::open_as(input, start, total, rate, channels)
@@ -94,8 +94,9 @@ impl FfmpegSource {
     }
 }
 
-/// Fréquence et canaux du premier flux audio (`ffprobe`). Le DSD, décodé en PCM par ffmpeg, est
-/// ramené à 352,8 kHz au plus ; au-delà de huit canaux, le son est mélangé en stéréo.
+/// Sample rate and channels of the first audio stream (`ffprobe`). DSD, decoded to PCM by
+/// ffmpeg, is brought down to 352.8 kHz at most; beyond eight channels, the sound is downmixed
+/// to stereo.
 fn native_format(input: &str) -> Option<(u32, u16)> {
     let out = Command::new("ffprobe")
         .args([
@@ -125,7 +126,7 @@ fn spawn(input: &str, at: Duration, rate: u32, channels: u16) -> Result<(Child, 
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-nostdin", "-hide_banner", "-v", "error"]);
     if input.starts_with("http") {
-        // Coupure réseau : ffmpeg se reconnecte au lieu d'abandonner.
+        // Network drop: ffmpeg reconnects instead of giving up.
         cmd.args([
             "-reconnect",
             "1",
@@ -147,7 +148,7 @@ fn spawn(input: &str, at: Duration, rate: u32, channels: u16) -> Result<(Child, 
         .spawn()
         .map_err(|e| crate::trf!("ffmpeg ne démarre pas : {e}", e))?;
     let mut out = child.stdout.take().ok_or("ffmpeg")?;
-    // Environ trois secondes d'avance au plus (paquets de 0,1 s).
+    // About three seconds ahead at most (packets of 0.1 s).
     let (tx, rx) = sync_channel::<Vec<f32>>(30);
     std::thread::spawn(move || {
         let mut bytes = vec![0u8; 4410 * 2 * 4];
@@ -182,7 +183,7 @@ impl Iterator for FfmpegSource {
             if self.ended {
                 return None;
             }
-            // Un réseau lent peut faire attendre : au-delà de vingt secondes, le morceau s'arrête.
+            // A slow network can make us wait: beyond twenty seconds, the track stops.
             match self.rx.recv_timeout(Duration::from_secs(20)) {
                 Ok(c) => {
                     self.chunk = c;
@@ -238,9 +239,9 @@ impl Drop for FfmpegSource {
     }
 }
 
-// ---------- Informations (ffprobe) ----------
+// ---------- Information (ffprobe) ----------
 
-/// Tags et durée lus par `ffprobe`, pour les formats que lofty ne connaît pas (WMA, DSD…).
+/// Tags and duration read by `ffprobe`, for the formats lofty doesn't know (WMA, DSD…).
 #[derive(Default, Debug)]
 pub struct Probe {
     pub title: String,
@@ -264,7 +265,7 @@ pub fn probe(path: &std::path::Path) -> Option<Probe> {
         .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
     let format = v.get("format")?;
-    // Les tags sont dans le conteneur (WMA, MKA…) ou dans le flux audio (Ogg, Opus).
+    // Tags are in the container (WMA, MKA…) or in the audio stream (Ogg, Opus).
     let audio = v.get("streams").and_then(|s| s.as_array()).and_then(|s| {
         s.iter()
             .find(|st| st.get("codec_type").and_then(|c| c.as_str()) == Some("audio"))
@@ -287,7 +288,7 @@ pub fn probe(path: &std::path::Path) -> Option<Probe> {
         }
         String::new()
     };
-    // « 3/12 » → 3 ; « 2004-05-01 » → 2004.
+    // "3/12" → 3; "2004-05-01" → 2004.
     let number = |s: String| s.split(['/', '-']).next().and_then(|n| n.trim().parse().ok());
     let duration = format
         .get("duration")
@@ -313,7 +314,7 @@ mod tests {
     use super::*;
     use rodio::Source;
 
-    /// Avec ffmpeg : un fichier Opus fabriqué pour l'occasion se lit et se déplace.
+    /// With ffmpeg: an Opus file made for the occasion can be played and seeked.
     #[test]
     fn opus_round_trip() {
         if !available() {

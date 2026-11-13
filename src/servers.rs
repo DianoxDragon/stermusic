@@ -1,9 +1,9 @@
-//! Serveurs de musique : ceux qui parlent l'API Subsonic (Navidrome, Airsonic, Gonic,
-//! Ampache…) et Jellyfin. Leurs morceaux entrent dans la bibliothèque comme des morceaux
-//! « distants » : ils se lisent en flux (par ffmpeg), leurs pochettes viennent du serveur.
+//! Music servers: those speaking the Subsonic API (Navidrome, Airsonic, Gonic, Ampache…) and
+//! Jellyfin. Their tracks enter the library as "remote" tracks: they are streamed (through
+//! ffmpeg), and their album art comes from the server.
 //!
-//! La liste des morceaux est gardée sur le disque (`servers/<id>.json`) : la bibliothèque
-//! s'affiche tout de suite au lancement, et « Actualiser » la redemande au serveur.
+//! The track list is kept on disk (`servers/<id>.json`): the library shows up right away at
+//! startup, and "Refresh" asks the server again.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -32,20 +32,20 @@ impl Kind {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Server {
-    /// Identifiant interne (il entre dans le chemin des morceaux).
+    /// Internal identifier (it is part of the track paths).
     pub id: String,
     pub kind: Kind,
-    /// Nom affiché (celui du serveur, ou son adresse).
+    /// Displayed name (the server's own, or its address).
     pub name: String,
     pub url: String,
     pub user: String,
-    /// Subsonic : le mot de passe (chaque appel en tire un jeton salé).
+    /// Subsonic: the password (each call derives a salted token from it).
     pub password: String,
-    /// Jellyfin : le jeton d'accès et l'utilisateur, obtenus à la connexion.
+    /// Jellyfin: the access token and the user, obtained when connecting.
     pub token: String,
     pub user_id: String,
     pub enabled: bool,
-    /// Dernière actualisation (secondes) et nombre de morceaux trouvés.
+    /// Last refresh (seconds) and number of tracks found.
     pub synced: u64,
     pub count: usize,
 }
@@ -69,7 +69,7 @@ fn base(url: &str) -> String {
     }
 }
 
-/// Message lisible d'une erreur de requête.
+/// Readable message for a request error.
 fn describe(e: ureq::Error) -> String {
     match e {
         ureq::Error::Status(401 | 403, _) => crate::i18n::tr("Identifiant ou mot de passe refusé").into(),
@@ -78,7 +78,7 @@ fn describe(e: ureq::Error) -> String {
     }
 }
 
-/// Vérifie l'accès et complète le serveur (nom, jeton Jellyfin). Bloquant.
+/// Checks access and completes the server (name, Jellyfin token). Blocking.
 pub fn connect(mut server: Server) -> Result<Server, String> {
     server.url = base(&server.url);
     if server.id.is_empty() {
@@ -106,7 +106,7 @@ pub fn connect(mut server: Server) -> Result<Server, String> {
             if server.token.is_empty() {
                 return Err(crate::i18n::tr("Réponse du serveur inattendue").into());
             }
-            // Le jeton suffit désormais : le mot de passe n'est pas gardé.
+            // The token is now enough: the password is not kept.
             server.password.clear();
             if server.name.is_empty() {
                 server.name = format!("Jellyfin ({})", host(&server.url));
@@ -134,7 +134,7 @@ fn host(url: &str) -> String {
         .to_owned()
 }
 
-/// Tous les morceaux du serveur. Bloquant (quelques secondes pour une grosse collection).
+/// All the tracks of the server. Blocking (a few seconds for a large collection).
 pub fn fetch(server: &Server) -> Result<Vec<Track>, String> {
     match server.kind {
         Kind::Subsonic => subsonic_tracks(server),
@@ -144,7 +144,7 @@ pub fn fetch(server: &Server) -> Result<Vec<Track>, String> {
 
 // ---------- Subsonic ----------
 
-/// Paramètres d'authentification : jeton = MD5(mot de passe + sel).
+/// Authentication parameters: token = MD5(password + salt).
 fn subsonic_auth(server: &Server) -> String {
     let salt = format!("{:012x}", fastrand::u64(..) & 0xffff_ffff_ffff);
     let token = crate::scrobble::md5_hex(format!("{}{salt}", server.password).as_bytes());
@@ -182,7 +182,7 @@ fn subsonic(server: &Server, method: &str, params: &[(&str, String)]) -> Result<
 }
 
 fn subsonic_tracks(server: &Server) -> Result<Vec<Track>, String> {
-    // La recherche vide rend tous les morceaux (Navidrome, Gonic…), par pages.
+    // The empty search returns every track (Navidrome, Gonic…), in pages.
     let mut songs: Vec<serde_json::Value> = Vec::new();
     let page = 500;
     loop {
@@ -204,7 +204,7 @@ fn subsonic_tracks(server: &Server) -> Result<Vec<Track>, String> {
             break;
         }
     }
-    // Serveurs qui refusent la recherche vide : album par album.
+    // Servers that refuse the empty search: album by album.
     if songs.is_empty() {
         let mut offset = 0;
         loop {
@@ -293,7 +293,7 @@ fn jellyfin_auth(token: &str) -> String {
     h
 }
 
-/// Identifiant d'appareil stable (le nom de la machine), sans rien révéler de l'utilisateur.
+/// Stable device identifier (the machine name), without revealing anything about the user.
 fn whoami() -> u32 {
     let host = std::fs::read_to_string("/etc/hostname").unwrap_or_default();
     host.bytes()
@@ -340,7 +340,7 @@ fn jellyfin_track(server: &Server, i: &serde_json::Value) -> Option<Track> {
         .as_array()
         .map(|g| g.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join("; "))
         .unwrap_or_default();
-    // Pochette de l'album, sinon celle du morceau.
+    // Album art, otherwise the track's.
     let cover = match (i["AlbumId"].as_str(), i["AlbumPrimaryImageTag"].as_str()) {
         (Some(album), Some(_)) => Some(album.to_owned()),
         _ => i["ImageTags"]["Primary"].as_str().map(|_| id.to_owned()),
@@ -407,7 +407,7 @@ pub fn forget(id: &str) {
     let _ = std::fs::remove_file(cache_file(id));
 }
 
-/// « 2024-03-05T18:22:10Z » (ou avec fraction et fuseau) → secondes depuis 1970.
+/// "2024-03-05T18:22:10Z" (or with a fraction and a time zone) → seconds since 1970.
 pub fn parse_iso(s: &str) -> Option<u64> {
     let (date, time) = s.split_once('T').unwrap_or((s, "00:00:00"));
     let mut d = date.split('-').map(|x| x.parse::<i64>().ok());
@@ -423,7 +423,7 @@ pub fn parse_iso(s: &str) -> Option<u64> {
         t.next().flatten().unwrap_or(0),
         t.next().flatten().unwrap_or(0),
     );
-    // Jours depuis 1970 (algorithme des dates civiles).
+    // Days since 1970 (civil dates algorithm).
     let (y, m) = if m <= 2 { (y - 1, m + 9) } else { (y, m - 3) };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
@@ -476,7 +476,7 @@ mod tests {
 mod live {
     use super::*;
 
-    /// Réseau : serveurs de démonstration publics. `cargo test demo_servers -- --ignored --nocapture`
+    /// Network: public demo servers. `cargo test demo_servers -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn demo_servers() {

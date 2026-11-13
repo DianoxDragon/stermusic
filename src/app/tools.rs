@@ -1,5 +1,5 @@
-//! Page « Outils » : l'éditeur de tags et les outils d'entretien rangés au même endroit, plus
-//! Convertir, Extraire un CD et Synchroniser vers un appareil.
+//! "Tools" page: the tag editor and the maintenance tools in one place, plus Convert, Rip a CD
+//! and Sync to a device.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ use crate::library::{plural, Track};
 use crate::trf;
 use crate::{theme, widgets};
 
-/// Lecture d'un CD : ses pistes, et le disque reconnu par MusicBrainz.
+/// Reading a CD: its tracks, and the disc recognized by MusicBrainz.
 type CdRead = Result<(Vec<(Duration, Duration)>, Option<crate::musicbrainz::Disc>), String>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub enum Tool {
     Sync,
 }
 
-/// Un fichier à produire : d'où, vers où, en quel format (`None` : simple copie).
+/// A file to produce: from where, to where, in which format (`None`: plain copy).
 struct Item {
     src: Source,
     out: PathBuf,
@@ -46,7 +46,7 @@ struct JobStatus {
     current: String,
     errors: Vec<String>,
     finished: bool,
-    /// Message de fin (dossier de destination, appareil).
+    /// Final message (destination folder, device).
     summary: String,
 }
 
@@ -55,7 +55,7 @@ struct Job {
     stop: Arc<AtomicBool>,
 }
 
-/// Où synchroniser : un dossier, ou un téléphone en MTP (adresse KIO).
+/// Where to sync: a folder, or a phone over MTP (KIO address).
 #[derive(Clone, Debug, PartialEq)]
 enum Dest {
     Folder(PathBuf),
@@ -66,11 +66,11 @@ enum Dest {
 pub struct ToolsState {
     pub open: Option<Tool>,
     job: Option<Job>,
-    // Convertir.
+    // Convert.
     convert_tracks: Vec<Track>,
     format: Format,
     convert_dest: Option<PathBuf>,
-    // Extraire un CD.
+    // Rip a CD.
     cd_drive: Option<PathBuf>,
     cd_reading: Option<Receiver<CdRead>>,
     cd_tracks: Vec<(Duration, Duration)>,
@@ -80,7 +80,7 @@ pub struct ToolsState {
     cd_year: String,
     cd_error: Option<String>,
     cd_dest: Option<PathBuf>,
-    // Synchroniser.
+    // Sync.
     sync_lists: HashSet<String>,
     sync_dest: Option<Dest>,
     sync_convert: bool,
@@ -96,8 +96,8 @@ impl ToolsState {
     }
 }
 
-/// Lance les conversions et copies l'une après l'autre ; `after` tourne à la fin (copie vers un
-/// téléphone, playlists).
+/// Runs the conversions and copies one after the other; `after` runs at the end (copy to a
+/// phone, playlists).
 fn start_job(
     items: Vec<Item>,
     after: Option<Box<dyn FnOnce() -> Result<String, String> + Send>>,
@@ -148,7 +148,7 @@ fn start_job(
     Job { status, stop }
 }
 
-/// Appareils MTP (téléphones) vus par KDE, sous la forme `mtp:/Appareil/Stockage`.
+/// MTP devices (phones) seen by KDE, in the form `mtp:/Device/Storage`.
 fn mtp_devices() -> Vec<String> {
     let ls = |url: &str| -> Vec<String> {
         std::process::Command::new("kioclient")
@@ -271,7 +271,7 @@ impl SterMusic {
             });
     }
 
-    // ---------- Fenêtres ----------
+    // ---------- Windows ----------
 
     pub(super) fn open_tool(&mut self, ctx: &egui::Context, tool: Tool) {
         self.tools.open = Some(tool);
@@ -282,7 +282,7 @@ impl SterMusic {
         }
     }
 
-    /// « Convertir… » depuis un menu : ces morceaux.
+    /// "Convert…" from a menu: these tracks.
     pub(super) fn convert_tracks(&mut self, tracks: Vec<usize>) {
         self.tools.convert_tracks = tracks.iter().map(|&i| self.lib.tracks[i].clone()).collect();
         self.tools.open = Some(Tool::Convert);
@@ -437,7 +437,7 @@ impl SterMusic {
         }
     }
 
-    /// Avancement d'un travail ; vrai quand on ferme la fenêtre.
+    /// Progress of a job; true when the window is closed.
     fn job_view(&mut self, ui: &mut egui::Ui) -> bool {
         let Some(job) = &self.tools.job else { return true };
         let s = job.status.lock().unwrap();
@@ -780,7 +780,7 @@ impl SterMusic {
             return;
         };
         let format = self.tools.sync_convert.then_some(self.tools.format);
-        // Un téléphone (MTP) reçoit le tout en une copie, préparée dans un dossier de passage.
+        // A phone (MTP) receives everything in one copy, prepared in a staging folder.
         let root = match &dest {
             Dest::Folder(p) => p.join("SterMusic"),
             Dest::Mtp(_) => crate::library::cache_dir().join("sync").join("SterMusic"),
@@ -801,7 +801,7 @@ impl SterMusic {
             let mut entries = Vec::new();
             for &i in tracks {
                 let t = &self.lib.tracks[i];
-                // Copie telle quelle d'un vrai fichier ; sinon (CUE, serveur) conversion.
+                // A real file is copied as is; otherwise (CUE, server) it is converted.
                 let fmt = format.or((!t.is_plain_file()).then_some(Format::Mp3));
                 let ext = match fmt {
                     Some(f) => f.ext().to_owned(),
@@ -864,7 +864,7 @@ impl SterMusic {
     }
 }
 
-/// Carte d'un outil ; vrai si on a cliqué dessus.
+/// Card of a tool; true if it was clicked.
 fn tool_card(ui: &mut egui::Ui, icon: Icon, title: &str, desc: &str, w: f32) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 96.0), Sense::click());
     let h = widgets::hover_t(ui, resp.id, resp.hovered());

@@ -1,5 +1,5 @@
-//! Podcasts : abonnements, recherche, épisodes, et l'écoute d'un épisode (hors de la file
-//! d'attente, avec reprise là où on s'était arrêté).
+//! Podcasts: subscriptions, search, episodes, and listening to an episode (outside the queue,
+//! resuming where you left off).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -18,31 +18,31 @@ use crate::podcasts::{self, Episode, Podcast, Progress};
 use crate::trf;
 use crate::{theme, widgets};
 
-/// L'épisode en cours d'écoute.
+/// The episode being listened to.
 pub struct Playing {
     pub podcast: Podcast,
     pub episode: Episode,
 }
 
 type FeedResult = Result<(Podcast, Vec<Episode>), String>;
-/// Un téléchargement en cours : avancement (‰) et résultat.
+/// A download in progress: progress (‰) and result.
 type Download = (Arc<AtomicU32>, Receiver<Result<PathBuf, String>>);
 
 #[derive(Default)]
 pub struct PodcastState {
     pub playing: Option<Playing>,
-    /// Épisodes de chaque flux (lus sur le disque à la demande).
+    /// Episodes of each feed (read from disk on demand).
     episodes: HashMap<String, Vec<Episode>>,
-    /// Actualisations en cours, et l'heure de la dernière (par flux).
+    /// Refreshes in progress, and the time of the last one (per feed).
     refreshing: Vec<(String, Receiver<FeedResult>)>,
     refreshed: HashMap<String, f64>,
     query: String,
     results: Vec<Podcast>,
     searching: Option<Receiver<Result<Vec<Podcast>, String>>>,
     error: Option<String>,
-    /// Ajout d'un flux par son adresse.
+    /// Adding a feed by its address.
     add_url: Option<String>,
-    /// Téléchargements : avancement (‰) et résultat.
+    /// Downloads: progress (‰) and result.
     downloads: HashMap<String, Download>,
     last_save: f64,
 }
@@ -71,7 +71,7 @@ impl PodcastState {
     }
 }
 
-/// « 12 mars 2024 » (ou « 12 Mar 2024 » en anglais).
+/// "12 mars 2024" (or "12 Mar 2024" in English).
 fn fmt_date(secs: u64) -> String {
     fmt_date_in(secs, crate::i18n::lang())
 }
@@ -100,9 +100,9 @@ fn fmt_date_in(secs: u64, lang: crate::i18n::Lang) -> String {
 }
 
 impl SterMusic {
-    // ---------- Lecture ----------
+    // ---------- Playback ----------
 
-    /// Écoute un épisode, là où on s'était arrêté (le fichier téléchargé s'il existe).
+    /// Plays an episode from where you left off (the downloaded file if it exists).
     pub(super) fn play_episode(&mut self, podcast: Podcast, episode: Episode) {
         self.save_episode_progress();
         self.leave_radio();
@@ -142,14 +142,14 @@ impl SterMusic {
             .copied()
             .unwrap_or_default();
         if !saved.done && saved.position > 5.0 {
-            // Un peu avant l'endroit quitté, pour retrouver le fil.
+            // A little before the place left, to pick up the thread.
             let _ = player.seek(Duration::from_secs_f32(saved.position - 2.0));
         }
         self.podcasts.playing = Some(Playing { podcast, episode });
         self.seeked = true;
     }
 
-    /// Note où en est l'épisode en cours (appelé régulièrement, et en le quittant).
+    /// Records how far the current episode got (called regularly, and when leaving it).
     pub(super) fn save_episode_progress(&mut self) {
         let Some(p) = &self.podcasts.playing else { return };
         let Some(player) = &self.player else { return };
@@ -158,7 +158,7 @@ impl SterMusic {
         }
         let pos = player.position().as_secs_f32();
         let total = p.episode.duration_ms as f32 / 1000.0;
-        // Les dernières secondes (générique) comptent comme fini.
+        // The last seconds (credits) count as finished.
         let done = total > 0.0 && pos >= total - 20.0;
         let entry = self.settings.episode_progress.entry(p.episode.key()).or_default();
         if done {
@@ -171,13 +171,13 @@ impl SterMusic {
         }
     }
 
-    /// Quitte l'épisode en cours (un morceau, une radio va jouer, ou Arrêter).
+    /// Leaves the current episode (a track or a radio is about to play, or Stop).
     pub(super) fn leave_episode(&mut self) {
         self.save_episode_progress();
         self.podcasts.playing = None;
     }
 
-    /// L'épisode est fini : marqué écouté, la lecture s'arrête.
+    /// The episode is finished: marked as played, playback stops.
     pub(super) fn episode_finished(&mut self) {
         if let Some(p) = self.podcasts.playing.take() {
             self.settings.episode_progress.insert(
@@ -211,7 +211,7 @@ impl SterMusic {
                     podcasts::save_episodes(&feed, &episodes);
                     self.podcasts.episodes.insert(feed.clone(), episodes);
                     if let Some(p) = self.settings.podcasts.iter_mut().find(|p| p.feed == feed) {
-                        // Le flux peut avoir changé de titre ou d'image.
+                        // The feed may have changed its title or image.
                         p.title = info.title;
                         p.author = info.author;
                         if !info.image.is_empty() {
@@ -277,7 +277,7 @@ impl SterMusic {
 
     pub(super) fn podcasts_page(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        // Les flux de plus d'une heure sont relus à l'ouverture de la page.
+        // Feeds older than an hour are read again when the page opens.
         let now = ctx.input(|i| i.time);
         for p in self.settings.podcasts.clone() {
             let last = self.podcasts.refreshed.get(&p.feed).copied();
@@ -300,7 +300,7 @@ impl SterMusic {
             .auto_shrink(false)
             .show(ui, |ui| {
                 ui.set_width(ui.available_width() - 16.0);
-                // Recherche dans l'annuaire.
+                // Directory search.
                 ui.horizontal(|ui| {
                     let w = (ui.available_width() - 130.0).clamp(160.0, 420.0);
                     let field = widgets::search_field(
@@ -382,7 +382,7 @@ impl SterMusic {
                     );
                 } else {
                     self.podcast_grid(ui, "subs", &subs, false);
-                    // Les derniers épisodes de tous les abonnements.
+                    // The latest episodes of all subscriptions.
                     let mut latest: Vec<(Podcast, Episode)> = Vec::new();
                     for p in &subs {
                         for e in self.podcasts.episodes(&p.feed).iter().take(5) {
@@ -402,7 +402,7 @@ impl SterMusic {
             });
     }
 
-    /// Grille de podcasts (abonnements, ou résultats de recherche avec « S'abonner »).
+    /// Podcast grid (subscriptions, or search results with "Subscribe").
     fn podcast_grid(&mut self, ui: &mut egui::Ui, salt: &str, list: &[Podcast], results: bool) {
         let ctx = ui.ctx().clone();
         let mut go = None;
@@ -481,7 +481,7 @@ impl SterMusic {
         }
     }
 
-    /// Page d'un podcast : son en-tête et tous ses épisodes.
+    /// Page of a podcast: its header and all its episodes.
     pub(super) fn podcast_page(&mut self, ui: &mut egui::Ui, feed: &str) {
         let ctx = ui.ctx().clone();
         let Some(p) = self.settings.podcasts.iter().find(|p| p.feed == feed).cloned() else {
@@ -584,7 +584,7 @@ impl SterMusic {
             });
     }
 
-    /// Ligne d'un épisode : lecture, date et durée, avancement, téléchargement.
+    /// Row of an episode: play, date and duration, progress, download.
     fn episode_row(&mut self, ui: &mut egui::Ui, p: &Podcast, e: &Episode, i: usize, show_podcast: bool) {
         let w = ui.available_width();
         let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
@@ -612,7 +612,7 @@ impl SterMusic {
                 .rect_filled(rect, CornerRadius::same(8), theme::white(0x04));
         }
         widgets::paint_interaction(ui, rect, 8, &resp);
-        // Bouton lecture rond.
+        // Round play button.
         let play = Rect::from_center_size(pos2(rect.left() + 28.0, rect.center().y), vec2(36.0, 36.0));
         let pr = ui.interact(play, ui.id().with(("ep_play", &key)), Sense::click());
         let ph = widgets::hover_t(ui, pr.id, pr.hovered());
@@ -662,7 +662,7 @@ impl SterMusic {
             tw,
         );
         ui.painter().galley(pos2(x, rect.top() + 31.0), g, theme::TEXT_3);
-        // Avancement, en fin trait sous le texte.
+        // Progress, as a thin line under the text.
         if !progress.done && progress.position > 0.0 && e.duration_ms > 0 {
             let frac = (progress.position * 1000.0 / e.duration_ms as f32).clamp(0.0, 1.0);
             let bar = Rect::from_min_size(pos2(x, rect.bottom() - 10.0), vec2(tw.min(240.0), 3.0));
@@ -672,7 +672,7 @@ impl SterMusic {
             ui.painter()
                 .rect_filled(fill, CornerRadius::same(2), theme::accent_light());
         }
-        // À droite : téléchargement, marquer écouté.
+        // On the right: download, mark as played.
         let cy = rect.center().y;
         let dl = Rect::from_center_size(pos2(rect.right() - 60.0, cy), vec2(32.0, 32.0));
         let mark = Rect::from_center_size(pos2(rect.right() - 22.0, cy), vec2(32.0, 32.0));

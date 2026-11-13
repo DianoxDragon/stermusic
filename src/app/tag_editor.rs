@@ -1,9 +1,9 @@
-//! Éditeur de tags, à la Mp3tag, en page dédiée : une liste de fichiers (de la bibliothèque ou
-//! d'ailleurs) à droite, les champs de la sélection et sa pochette à gauche.
+//! Tag editor, Mp3tag style, on its own page: a list of files (from the library or elsewhere) on
+//! the right, the fields of the selection and its album art on the left.
 //!
-//! Les champs qui diffèrent d'un fichier sélectionné à l'autre restent vides (« valeurs
-//! multiples ») et sont conservés tant qu'on n'y touche pas ; taper une valeur l'applique à
-//! toute la sélection. Rien n'est écrit avant « Enregistrer ».
+//! Fields that differ from one selected file to another stay empty ("multiple values") and are
+//! kept as long as they are not touched; typing a value applies it to the whole selection.
+//! Nothing is written before "Save".
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -52,16 +52,16 @@ const COLUMNS: [(Column, &str, f32); 8] = [
     (Column::Genre, n_("Genre"), 0.08),
 ];
 
-/// Largeur minimale d'une colonne (part de la largeur du tableau).
+/// Minimum width of a column (share of the table width).
 const MIN_COL: f32 = 0.04;
 
-/// Réglages de l'éditeur gardés d'un lancement à l'autre.
+/// Editor settings kept from one launch to the next.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
-    /// Largeur des colonnes (parts de la largeur du tableau, somme 1).
+    /// Column widths (shares of the table width, summing to 1).
     pub cols: [f32; 8],
-    /// Derniers motifs de « Renommer les fichiers » et de « Tags ← nom de fichier ».
+    /// Last patterns of "Rename files" and of "Tags ← file name".
     pub rename: String,
     pub parse: String,
 }
@@ -77,7 +77,7 @@ impl Default for Prefs {
 }
 
 impl Prefs {
-    /// Des largeurs relues d'un fichier de réglages abîmé reviennent à celles d'origine.
+    /// Widths read back from a damaged settings file go back to the original ones.
     pub fn sanitized(mut self) -> Self {
         let sum: f32 = self.cols.iter().sum();
         if self.cols.iter().any(|c| !c.is_finite() || *c < MIN_COL * 0.9) || (sum - 1.0).abs() > 0.02 {
@@ -92,36 +92,36 @@ pub(super) type CoverSlot = Option<(u64, Option<egui::TextureHandle>, [u32; 2])>
 #[derive(Default)]
 pub struct TagEditor {
     pub(super) files: Vec<FileTags>,
-    /// Valeurs en cours d'édition, une copie par fichier.
+    /// Values being edited, one copy per file.
     pub(super) values: Vec<Values>,
-    /// Pochette à écrire, par fichier (`None` : inchangée).
+    /// Album art to write, per file (`None`: unchanged).
     pub(super) covers: Vec<Option<CoverChange>>,
     selected: Vec<bool>,
     anchor: Option<usize>,
-    /// Ordre d'affichage des fichiers (tri par colonne).
+    /// Display order of the files (sorting by column).
     order: Vec<usize>,
     sort: Option<(Column, bool)>,
     filter: String,
-    /// Chemins des fichiers de la liste (un fichier n'y entre qu'une fois).
+    /// Paths of the files in the list (a file only enters it once).
     pub(super) known: HashSet<PathBuf>,
     loading: Vec<Load>,
     saving: Option<Saving>,
     cover_tex: CoverSlot,
-    /// Vignettes des pochettes de la liste, pour « Reprendre une pochette de la liste ».
+    /// Thumbnails of the list's album art, for "Reuse album art from the list".
     cover_thumbs: HashMap<u64, Option<egui::TextureHandle>>,
     pub notice: Option<String>,
     pub(super) mb: Option<MbImport>,
-    /// Outil ouvert (rechercher-remplacer, renommer, tags ← nom de fichier).
+    /// Open tool (search and replace, rename, tags ← file name).
     pub(super) tool: Option<Tool>,
     confirm_clear: bool,
     pub(super) prefs: Prefs,
 }
 
-/// Une lecture de tags en cours (un dossier ou un lot de fichiers ajoutés).
+/// A tag reading in progress (a folder or a batch of added files).
 struct Load {
     rx: Receiver<LoadMsg>,
     cancel: Arc<AtomicBool>,
-    /// Nombre de fichiers à lire ; `None` tant que les dossiers sont parcourus.
+    /// Number of files to read; `None` while the folders are being walked.
     total: Option<usize>,
     done: usize,
 }
@@ -146,7 +146,7 @@ enum SaveMsg {
     },
 }
 
-/// Un fichier à écrire : ses champs modifiés et sa nouvelle pochette.
+/// A file to write: its modified fields and its new album art.
 pub(super) type Job = (PathBuf, Vec<(Field, String)>, Option<CoverChange>);
 
 impl TagEditor {
@@ -157,9 +157,9 @@ impl TagEditor {
         }
     }
 
-    /// Ajoute des fichiers ou des dossiers à la liste. Tout se passe en arrière-plan (parcours
-    /// des dossiers compris : un gros dossier sur un disque externe peut prendre du temps), et
-    /// l'import peut être arrêté ; les nouveaux fichiers sont sélectionnés quand ils arrivent.
+    /// Adds files or folders to the list. Everything happens in the background (walking the
+    /// folders included: a big folder on an external disk can take a while), and the import can be
+    /// stopped; the new files are selected as they arrive.
     fn load(&mut self, paths: Vec<PathBuf>, ctx: &egui::Context) {
         if paths.is_empty() {
             return;
@@ -176,9 +176,9 @@ impl TagEditor {
                 return;
             }
             ctx.request_repaint();
-            // Les morceaux d'un album portent la même pochette : une seule copie en mémoire.
+            // The tracks of an album carry the same album art: a single copy in memory.
             let mut covers: HashMap<u64, Cover> = HashMap::new();
-            // Par paquets : la liste se remplit au fur et à mesure.
+            // In batches: the list fills up as it goes.
             let mut batch = Vec::new();
             let mut sent = Instant::now();
             for p in &files {
@@ -209,7 +209,7 @@ impl TagEditor {
         });
     }
 
-    /// Arrête les lectures en cours ; les fichiers déjà lus restent dans la liste.
+    /// Stops the readings in progress; the files already read stay in the list.
     fn stop_loading(&mut self) {
         for l in self.loading.drain(..) {
             l.cancel.store(true, Ordering::Relaxed);
@@ -220,8 +220,8 @@ impl TagEditor {
         !self.loading.is_empty()
     }
 
-    /// Avancement des lectures : (fichiers lus, fichiers à lire) ; `None` pendant le parcours
-    /// des dossiers.
+    /// Progress of the readings: (files read, files to read); `None` while the folders are being
+    /// walked.
     fn load_progress(&self) -> Option<(usize, usize)> {
         let mut total = 0;
         for l in &self.loading {
@@ -230,7 +230,7 @@ impl TagEditor {
         Some((self.loading.iter().map(|l| l.done).sum(), total))
     }
 
-    /// Vide la liste (et arrête les lectures) ; les réglages de l'éditeur sont gardés.
+    /// Empties the list (and stops the readings); the editor settings are kept.
     fn clear(&mut self) {
         self.stop_loading();
         *self = Self {
@@ -247,7 +247,7 @@ impl TagEditor {
         self.saving.is_some()
     }
 
-    /// Une fenêtre de l'éditeur est ouverte : les raccourcis du lecteur attendent.
+    /// An editor window is open: the player shortcuts wait.
     pub(super) fn modal_open(&self) -> bool {
         self.mb.is_some() || self.tool.is_some() || self.confirm_clear
     }
@@ -264,7 +264,7 @@ impl TagEditor {
         (0..self.files.len()).any(|k| self.file_dirty(k))
     }
 
-    /// Fichiers sélectionnés (lisibles), dans l'ordre d'affichage.
+    /// Selected (readable) files, in display order.
     pub(super) fn scope(&self) -> Vec<usize> {
         self.order
             .iter()
@@ -273,7 +273,7 @@ impl TagEditor {
             .collect()
     }
 
-    /// Tous les fichiers lisibles, dans l'ordre d'affichage.
+    /// All readable files, in display order.
     pub(super) fn all_readable(&self) -> Vec<usize> {
         self.order
             .iter()
@@ -282,12 +282,12 @@ impl TagEditor {
             .collect()
     }
 
-    /// Fichiers sélectionnés, illisibles compris (pour les retirer de la liste).
+    /// Selected files, unreadable ones included (to remove them from the list).
     fn selection(&self) -> Vec<usize> {
         (0..self.files.len()).filter(|&k| self.selected[k]).collect()
     }
 
-    /// Fichiers sélectionnés qui ont des modifications à enregistrer.
+    /// Selected files that have changes to save.
     fn dirty_selected(&self) -> usize {
         (0..self.files.len())
             .filter(|&k| self.selected[k] && self.file_dirty(k))
@@ -307,7 +307,7 @@ impl TagEditor {
         }
     }
 
-    /// Change la pochette de la sélection (revenir à l'originale annule le changement).
+    /// Changes the album art of the selection (going back to the original cancels the change).
     pub fn set_cover(&mut self, cover: CoverChange) {
         let scope = self.scope();
         if scope.is_empty() {
@@ -359,7 +359,7 @@ impl TagEditor {
         self.resort();
     }
 
-    /// Retire de la liste les fichiers qui n'existent plus (mis à la corbeille depuis les doublons).
+    /// Removes from the list the files that no longer exist (moved to the trash from the duplicates tool).
     pub(super) fn remove_paths(&mut self, gone: &HashSet<PathBuf>) {
         let ks: Vec<usize> = (0..self.files.len())
             .filter(|&k| gone.contains(&self.files[k].path))
@@ -400,7 +400,7 @@ impl TagEditor {
         }
     }
 
-    /// Recalcule l'ordre d'affichage (pas à chaque frappe : les lignes ne sautent pas).
+    /// Recomputes the display order (not on every keystroke: rows don't jump around).
     pub(super) fn resort(&mut self) {
         let mut order: Vec<usize> = (0..self.files.len()).collect();
         if let Some((col, asc)) = self.sort {
@@ -425,7 +425,7 @@ impl TagEditor {
         self.order = order;
     }
 
-    /// Lignes affichées : l'ordre de tri, réduit par le filtre.
+    /// Rows shown: the sort order, narrowed by the filter.
     fn visible(&self) -> Vec<usize> {
         let words: Vec<String> = fold(&self.filter).split_whitespace().map(str::to_owned).collect();
         if words.is_empty() {
@@ -474,15 +474,15 @@ impl TagEditor {
         }
     }
 
-    /// Applique une pochette à tous les fichiers de la liste.
+    /// Applies an album art to every file of the list.
     fn set_cover_everywhere(&mut self, cover: &Cover) {
         for k in self.all_readable() {
             self.set_file_cover(k, Some(cover.clone()));
         }
     }
 
-    /// Pochettes différentes présentes dans la liste (modifications en attente comprises), les
-    /// plus fréquentes d'abord, avec le nombre de fichiers qui les portent.
+    /// Different album art present in the list (pending changes included), the most frequent first,
+    /// with the number of files carrying each.
     fn distinct_covers(&self) -> Vec<(Cover, usize)> {
         let mut found: Vec<(Cover, usize)> = Vec::new();
         let mut index: HashMap<u64, usize> = HashMap::new();
@@ -502,15 +502,15 @@ impl TagEditor {
     }
 }
 
-/// Pochette lue depuis une image : JPEG et PNG sont gardés tels quels (sauf s'ils sont très
-/// grands), les autres formats sont convertis en JPEG.
+/// Album art read from an image: JPEG and PNG are kept as is (unless they are very large),
+/// other formats are converted to JPEG.
 pub fn cover_from_bytes(data: Vec<u8>) -> Result<Cover, String> {
     let img = image::load_from_memory(&data).map_err(|_| tr("Image illisible").to_owned())?;
     let known = matches!(
         data.get(..4),
         Some([0x89, b'P', b'N', b'G']) | Some([0xFF, 0xD8, ..])
     );
-    // Au-delà de 1600 px, la pochette alourdit chaque fichier pour rien : on la ramène à 1200 px.
+    // Beyond 1600 px, the album art makes every file heavier for nothing: it is brought down to 1200 px.
     if known && img.width().max(img.height()) <= 1600 {
         return Ok(Cover::new(data));
     }
@@ -545,7 +545,7 @@ pub(super) fn file_name(p: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// Taille lisible : « 312 Ko », « 9,6 Mo » (en anglais : « 312 KB », « 9.6 MB »).
+/// Readable size: "312 Ko", "9,6 Mo" (in English: "312 KB", "9.6 MB").
 pub(super) fn size_text(bytes: u64) -> String {
     let english = crate::i18n::lang() == crate::i18n::Lang::En;
     if bytes >= 1 << 20 {
@@ -560,7 +560,7 @@ pub(super) fn size_text(bytes: u64) -> String {
     }
 }
 
-/// Dessine une pochette (texture gardée tant que la même image est affichée) ; renvoie sa taille.
+/// Draws an album art (texture kept as long as the same image is shown); returns its size.
 pub(super) fn paint_cover_texture(ui: &egui::Ui, slot: &mut CoverSlot, c: &Cover, rect: Rect) -> [u32; 2] {
     if slot.as_ref().map(|t| t.0) != Some(c.hash) {
         let (tex, size) = match image::load_from_memory(&c.data) {
@@ -587,22 +587,22 @@ pub(super) fn paint_cover_texture(ui: &egui::Ui, slot: &mut CoverSlot, c: &Cover
     *size
 }
 
-/// Ce que le panneau de gauche demande à la page.
+/// What the left panel asks of the page.
 enum PanelAction {
     PickCover,
     Tool(ToolKind),
 }
 
-/// Ce que le tableau demande à la page.
+/// What the table asks of the page.
 enum TableAction {
     SaveSelection,
 }
 
 impl SterMusic {
-    /// Ouvre la page de l'éditeur sur ces fichiers ou dossiers. Sans modification en attente,
-    /// la liste repart de zéro ; sinon ils s'y ajoutent (rien n'est perdu).
+    /// Opens the editor page on these files or folders. Without pending changes, the list starts
+    /// from scratch; otherwise they are added to it (nothing is lost).
     pub(super) fn open_tag_editor(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>) {
-        // Morceaux d'un fichier CUE ou d'un serveur : pas de fichier à eux, pas de tags à modifier.
+        // Tracks of a CUE sheet or of a server: no file of their own, no tags to modify.
         let before = paths.len();
         let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.exists()).collect();
         if paths.len() < before {
@@ -628,9 +628,9 @@ impl SterMusic {
         self.go(View::Page(Page::Tags));
     }
 
-    /// Fichiers déposés sur la fenêtre. Sur la page de l'éditeur : morceaux et dossiers
-    /// rejoignent la liste, une image devient la pochette de la sélection. Ailleurs : un dossier
-    /// rejoint la bibliothèque, des morceaux ouvrent l'éditeur.
+    /// Files dropped on the window. On the editor page: tracks and folders join the list, an image
+    /// becomes the album art of the selection. Elsewhere: a folder joins the library, tracks open
+    /// the editor.
     pub(super) fn handle_drop(&mut self, ctx: &egui::Context, dropped: Vec<PathBuf>) {
         let (images, others): (Vec<PathBuf>, Vec<PathBuf>) = dropped.into_iter().partition(|p| is_image(p));
         if self.view == View::Page(Page::Tags) {
@@ -669,7 +669,7 @@ impl SterMusic {
                     Ok(LoadMsg::Files(files)) => {
                         load.done += files.len();
                         for f in files {
-                            // Le même fichier a pu arriver par deux ajouts lancés en même temps.
+                            // The same file may have arrived through two additions started at the same time.
                             if !ed.known.insert(f.path.clone()) {
                                 continue;
                             }
@@ -723,7 +723,7 @@ impl SterMusic {
             return;
         };
         ed.saving = None;
-        // Les fichiers écrits sont relus : la liste montre ce qui est vraiment dans les tags.
+        // Written files are read again: the list shows what is really in the tags.
         let written: Vec<PathBuf> = tracks.iter().map(|t| t.path.clone()).collect();
         let index: HashMap<&Path, usize> = ed
             .files
@@ -744,7 +744,7 @@ impl SterMusic {
         }
         ed.cover_tex = None;
 
-        // Les morceaux de la bibliothèque prennent leurs nouveaux tags (et le cache aussi).
+        // The library tracks take their new tags (and so does the cache).
         let mut all = self.lib.tracks.clone();
         let mut changed = false;
         for t in tracks {
@@ -771,7 +771,7 @@ impl SterMusic {
         }
     }
 
-    /// Écrit les modifications dans les fichiers : toutes, ou celles de la sélection seulement.
+    /// Writes the changes to the files: all of them, or only those of the selection.
     pub(super) fn save_tags(&mut self, ctx: &egui::Context, only_selection: bool) {
         let ed = &self.tag_editor;
         let jobs: Vec<Job> = (0..ed.files.len())
@@ -789,7 +789,7 @@ impl SterMusic {
         self.start_tag_jobs(ctx, jobs);
     }
 
-    /// Options d'écriture des tags, d'après les réglages.
+    /// Tag writing options, from the settings.
     pub(super) fn write_opts(&self) -> tags::WriteOpts {
         tags::WriteOpts {
             id3v23: self.settings.tag_id3v23,
@@ -798,8 +798,8 @@ impl SterMusic {
         }
     }
 
-    /// Écrit des tags en arrière-plan (les modifications de l'éditeur, ou des pochettes trouvées
-    /// pour la bibliothèque) ; l'avancement s'affiche dans l'éditeur. Faux si rien n'est lancé.
+    /// Writes tags in the background (the editor's changes, or album art found for the library);
+    /// progress is shown in the editor. False if nothing was started.
     pub(super) fn start_tag_jobs(&mut self, ctx: &egui::Context, jobs: Vec<Job>) -> bool {
         if self.lib_tools.writing() {
             self.toast(tr(
@@ -808,7 +808,7 @@ impl SterMusic {
             return false;
         }
         let opts = self.write_opts();
-        // Le morceau chargé est écrit via une copie : son décodeur lit encore le fichier.
+        // The loaded track is written through a copy: its decoder is still reading the file.
         let loaded = self.now_loaded.clone();
         let ed = &mut self.tag_editor;
         if ed.saving.is_some() || jobs.is_empty() {
@@ -820,7 +820,7 @@ impl SterMusic {
             done: 0,
             total: jobs.len(),
         });
-        // Seuls les fichiers de la liste de l'éditeur sont relus en entier (pochette comprise).
+        // Only the files of the editor list are fully read again (album art included).
         let listed = ed.known.clone();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
@@ -910,7 +910,7 @@ impl SterMusic {
             }
         }
 
-        // En-tête : titre et actions (de droite à gauche).
+        // Header: title and actions (right to left).
         let mut action = None;
         let mut lib_tool = None;
         ui.horizontal(|ui| {
@@ -991,7 +991,7 @@ impl SterMusic {
                 {
                     action = Some("clear");
                 }
-                // Outils qui portent sur toute la bibliothèque.
+                // Tools covering the whole library.
                 let popup = ui.make_persistent_id("lib_tools_menu");
                 let button = widgets::icon_button(
                     ui,
@@ -1031,7 +1031,7 @@ impl SterMusic {
             Some("folder") => self.add_tag_folder(&ctx),
             Some("files") => self.add_tag_files(&ctx),
             Some("clear") => {
-                // Des modifications en attente : on demande avant de tout perdre.
+                // Pending changes: ask before losing everything.
                 if self.tag_editor.dirty() {
                     self.tag_editor.confirm_clear = true;
                 } else {
@@ -1069,7 +1069,7 @@ impl SterMusic {
                         self.add_tag_folder(&ctx);
                     }
                 });
-                // Les outils de toute la bibliothèque, à portée de main quand la liste est vide.
+                // The whole-library tools, at hand when the list is empty.
                 ui.add_space(26.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
@@ -1130,7 +1130,7 @@ impl SterMusic {
         self.clear_dialog(&ctx);
     }
 
-    /// « Vider la liste ? » quand des modifications ne sont pas enregistrées.
+    /// "Empty the list?" when changes are not saved.
     fn clear_dialog(&mut self, ctx: &egui::Context) {
         if !self.tag_editor.confirm_clear {
             return;
@@ -1169,7 +1169,7 @@ impl SterMusic {
     }
 }
 
-/// Bandeau d'avancement des lectures de tags, avec « Arrêter » ; vrai si on le demande.
+/// Progress banner of the tag readings, with "Stop"; true if it is requested.
 fn loading_bar(ui: &mut egui::Ui, ed: &TagEditor) -> bool {
     let t = crate::anim::toggle(
         ui.ctx(),
@@ -1233,7 +1233,7 @@ fn loading_bar(ui: &mut egui::Ui, ed: &TagEditor) -> bool {
     stop
 }
 
-/// Pendant qu'on survole la fenêtre avec des fichiers : la zone où les lâcher.
+/// While files are dragged over the window: the area to drop them on.
 fn drop_hint(ui: &egui::Ui, rect: Rect) {
     let hovering = ui.ctx().input(|i| !i.raw.hovered_files.is_empty());
     let t = crate::anim::toggle(
@@ -1275,7 +1275,7 @@ fn drop_hint(ui: &egui::Ui, rect: Rect) {
 
 const GAP: f32 = 12.0;
 
-/// Un champ : libellé (avec « annuler » s'il a changé) et zone de saisie.
+/// A field: label (with "undo" if it changed) and input area.
 fn field(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize], f: Field, width: f32, rows: usize) {
     let i = f.index();
     let first = ed.values[scope[0]][i].clone();
@@ -1328,8 +1328,8 @@ fn field(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize], f: Field, width
     let resp = if same {
         resp
     } else {
-        // Calculé au survol seulement : avec des milliers de fichiers sélectionnés, lister les
-        // valeurs à chaque image figerait l'interface.
+        // Only computed on hover: with thousands of selected files, listing the values every frame
+        // would freeze the interface.
         resp.on_hover_ui(|ui| {
             let mut seen: HashSet<&str> = HashSet::new();
             let mut tip: Vec<String> = Vec::new();
@@ -1360,7 +1360,7 @@ fn field(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize], f: Field, width
     ui.add_space(8.0);
 }
 
-/// Champs, pochette et outils de la sélection ; renvoie ce que la page doit faire ensuite.
+/// Fields, album art and tools of the selection; returns what the page must do next.
 fn side_panel(ui: &mut egui::Ui, ed: &mut TagEditor, covers: &mut Covers) -> Option<PanelAction> {
     let mut action = None;
     egui::Frame::NONE
@@ -1474,7 +1474,7 @@ fn cover_section(
             ]
         }
         (None, true) => {
-            // Pas de pochette intégrée : celle du dossier, si elle existe, est montrée pour info.
+            // No embedded album art: the folder's, if it exists, is shown for information.
             let folder = if changed {
                 None
             } else {
@@ -1542,7 +1542,7 @@ fn cover_section(
             }
         }
     });
-    // La pochette affichée peut être donnée à tous les fichiers de la liste.
+    // The album art shown can be given to every file of the list.
     if let (Some(c), true) = (&first, same) {
         let everywhere = ed
             .all_readable()
@@ -1574,7 +1574,7 @@ fn cover_section(
     pick
 }
 
-/// Pochettes déjà présentes dans la liste : un clic donne celle-là à la sélection.
+/// Album art already present in the list: a click gives that one to the selection.
 fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
     let popup = ui.make_persistent_id("tag_cover_picker");
     let button = widgets::icon_button(
@@ -1613,7 +1613,7 @@ fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
                 .color(theme::TEXT_2),
             );
             ui.add_space(6.0);
-            // Une vignette décodée par image affichée : la fenêtre s'ouvre tout de suite.
+            // One thumbnail decoded per frame shown: the window opens right away.
             let mut budget = 1;
             egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                 ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -1667,7 +1667,7 @@ fn cover_picker(ui: &mut egui::Ui, ed: &mut TagEditor) {
     }
 }
 
-/// Outils de la sélection ; renvoie l'outil à ouvrir dans sa fenêtre, s'il y en a un.
+/// Tools of the selection; returns the tool to open in its window, if any.
 fn tools(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize]) -> Option<ToolKind> {
     let mut open = None;
     ui.label(
@@ -1733,8 +1733,8 @@ fn tools(ui: &mut egui::Ui, ed: &mut TagEditor, scope: &[usize]) -> Option<ToolK
 
 const ROW_H: f32 = 28.0;
 
-/// Liste des fichiers, façon tableur : tri par colonne, colonnes redimensionnables, sélection
-/// multiple, filtre.
+/// List of files, spreadsheet style: sorting by column, resizable columns, multiple selection,
+/// filter.
 fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
     let mut action = None;
     let full = ui.max_rect();
@@ -1755,7 +1755,7 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
         (rect.left() + gutter + start * inner_w, cols[c] * inner_w - 10.0)
     };
 
-    // En-tête : un clic trie, un deuxième inverse, un troisième revient à l'ordre d'arrivée.
+    // Header: one click sorts, a second reverses, a third goes back to the order of arrival.
     let head = Rect::from_min_size(rect.min, vec2(rect.width(), 32.0));
     for (c, (col, label, _)) in COLUMNS.iter().enumerate() {
         let label = tr(label);
@@ -1786,8 +1786,8 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
             ed.resort();
         }
     }
-    // Poignées entre les colonnes : glisser pour élargir l'une aux dépens de sa voisine,
-    // double-clic pour revenir aux largeurs d'origine.
+    // Handles between the columns: drag to widen one at the expense of its neighbor, double click
+    // to go back to the original widths.
     for c in 0..COLUMNS.len() - 1 {
         let (next_x, _) = col_x(c + 1);
         let x = next_x - 8.0;
@@ -1892,12 +1892,12 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
                         let mods = ui.input(|i| i.modifiers);
                         ed.click(&rows, i, mods);
                     }
-                    // Clic droit hors de la sélection : la ligne devient la sélection (comme Mp3tag).
+                    // Right click outside the selection: the row becomes the selection (as in Mp3tag).
                     if resp.secondary_clicked() && !selected {
                         ed.click(&rows, i, egui::Modifiers::NONE);
                     }
                     resp.context_menu(|ui| {
-                        // Illisibles compris : on doit pouvoir les retirer de la liste aussi.
+                        // Unreadable ones included: they must be removable from the list too.
                         let targets: Vec<usize> = if ed.selected[k] { ed.selection() } else { vec![k] };
                         let n = targets.len().max(1);
                         let dirty = targets.iter().filter(|&&t| ed.file_dirty(t)).count();
@@ -1940,7 +1940,7 @@ fn file_table(ui: &mut egui::Ui, ed: &mut TagEditor) -> Option<TableAction> {
         let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
     }
 
-    // Pied : filtre et récapitulatif.
+    // Footer: filter and summary.
     let foot = Rect::from_min_max(pos2(full.left(), rect.bottom() + 8.0), full.max);
     ui.scope_builder(
         UiBuilder::new()

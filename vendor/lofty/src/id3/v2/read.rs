@@ -26,9 +26,9 @@ where
 
 	let mut tag_bytes = bytes.take(u64::from(header.size - header.extended_size));
 
-	// SterMusic : correctif repris de lofty 0.25. Avant ID3v2.4, le drapeau de désynchronisation
-	// du tag s'appliquait à tout son contenu. En 2.4, il équivaut au drapeau de chaque cadre : la
-	// défaire ici puis dans chaque cadre retirait des octets légitimes (pochettes JPEG grises).
+	// SterMusic: fix taken from lofty 0.25. Before ID3v2.4, the tag's unsynchronisation flag
+	// applied to its whole content. In 2.4, it is equivalent to the flag of each frame: undoing
+	// it here and then in each frame removed legitimate bytes (gray JPEG album art).
 	let mut ret;
 	if header.flags.unsynchronisation && header.version != Id3v2Version::V4 {
 		// Unsynchronize the entire tag

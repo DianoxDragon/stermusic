@@ -1,9 +1,9 @@
-//! Compatibilité avec les distributions moins récentes.
+//! Compatibility with older distributions.
 //!
-//! glibc 2.43 a publié de nouvelles versions de quelques fonctions mathématiques en simple
-//! précision : un binaire compilé sur une distribution récente les réclamait, et refusait de se
-//! lancer ailleurs (Ubuntu 24.04, Debian 12…). Le programme les fournit donc lui-même, en passant
-//! par la double précision, que glibc offre depuis toujours : il tourne alors dès glibc 2.35.
+//! glibc 2.43 published new versions of a few single-precision math functions: a binary built
+//! on a recent distribution required them, and refused to start anywhere else (Ubuntu 24.04,
+//! Debian 12…). The program therefore provides them itself, going through double precision,
+//! which glibc has always offered: it then runs on glibc 2.35 and later.
 
 #[no_mangle]
 pub extern "C" fn acosf(x: f32) -> f32 {

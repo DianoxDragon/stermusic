@@ -1,4 +1,4 @@
-//! Parcourir la bibliothèque par genre, par année ou par compositeur.
+//! Browse the library by genre, year or composer.
 
 use std::collections::HashMap;
 
@@ -49,7 +49,7 @@ impl BrowseKind {
     }
 }
 
-/// Un genre, une année ou un compositeur, avec ses morceaux et ses albums.
+/// A genre, a year or a composer, with its tracks and albums.
 #[derive(Clone, Debug)]
 pub struct Group {
     pub name: String,
@@ -57,11 +57,11 @@ pub struct Group {
     pub albums: Vec<usize>,
 }
 
-/// Les regroupements, recalculés quand la bibliothèque change.
+/// The groupings, recomputed when the library changes.
 #[derive(Default)]
 pub struct BrowseIndex {
     pub genres: Vec<Group>,
-    /// Années, de la plus récente à la plus ancienne.
+    /// Years, from the most recent to the oldest.
     pub years: Vec<Group>,
     pub composers: Vec<Group>,
 }
@@ -115,14 +115,14 @@ impl BrowseIndex {
     }
 }
 
-/// Regroupe sans tenir compte de la casse ni des accents (« Électro » et « electro »), sous
-/// l'orthographe la plus fréquente.
+/// Groups regardless of case and accents ("Électro" and "electro"), under the most frequent
+/// spelling.
 #[derive(Default)]
 struct Grouper {
     groups: HashMap<String, Pile>,
 }
 
-/// Un regroupement en cours : ses orthographes (et combien de fois chacune), ses morceaux, ses albums.
+/// A grouping being built: its spellings (and how many times each), its tracks, its albums.
 type Pile = (HashMap<String, usize>, Vec<usize>, Vec<usize>);
 
 impl Grouper {
@@ -141,7 +141,7 @@ impl Grouper {
         self.groups
             .into_values()
             .map(|(spellings, tracks, albums)| Group {
-                // À égalité : celle qui a une majuscule, puis le plus d'accents (« Électro »).
+                // On a tie: the one with a capital letter, then the most accents ("Électro").
                 name: spellings
                     .into_iter()
                     .max_by_key(|(n, count)| {
@@ -170,7 +170,7 @@ impl SterMusic {
         self.browse_index.as_ref().unwrap()
     }
 
-    /// Onglet « Parcourir » de la bibliothèque : genres, années ou compositeurs.
+    /// "Browse" tab of the library: genres, years or composers.
     pub(super) fn browse_tab(&mut self, ui: &mut egui::Ui, query: &str) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -213,7 +213,7 @@ impl SterMusic {
         });
     }
 
-    /// Années rangées par décennie.
+    /// Years grouped by decade.
     fn years_by_decade(&mut self, ui: &mut egui::Ui, groups: &[Group]) {
         egui::ScrollArea::vertical()
             .id_salt("browse_years")
@@ -246,7 +246,7 @@ impl SterMusic {
             });
     }
 
-    /// Carte d'un genre, d'une année ou d'un compositeur : mosaïque de ses pochettes.
+    /// Card of a genre, a year or a composer: a mosaic of its album art.
     fn group_card(&mut self, ui: &mut egui::Ui, kind: BrowseKind, group: &Group, w: f32) {
         let (rect, _) = ui.allocate_exact_size(vec2(w, lists::card_height(w)), Sense::hover());
         if !ui.is_rect_visible(rect) {
@@ -270,7 +270,7 @@ impl SterMusic {
             .map(|&a| self.lib.albums[a].tracks[0])
             .collect();
         self.mosaic(ui, cover, &first, false, 8);
-        // Voile en bas de la mosaïque, avec l'icône du regroupement.
+        // Veil at the bottom of the mosaic, with the grouping's icon.
         let band = Rect::from_min_max(pos2(cover.left(), cover.bottom() - 38.0), cover.max);
         ui.painter().rect_filled(
             band,
@@ -323,7 +323,7 @@ impl SterMusic {
         });
     }
 
-    /// Page d'un genre, d'une année ou d'un compositeur : ses albums, puis ses morceaux.
+    /// Page of a genre, a year or a composer: its albums, then its tracks.
     pub(super) fn browse_page(&mut self, ui: &mut egui::Ui, kind: BrowseKind, name: &str) {
         let Some(group) = self.browse_index().find(kind, name).cloned() else {
             ui.label(RichText::new(tr("Plus rien ici : la bibliothèque a changé.")).color(theme::TEXT_3));
@@ -336,7 +336,7 @@ impl SterMusic {
             plural(group.tracks.len(), "morceau", "morceaux"),
             fmt_long(total)
         );
-        // Artistes les plus présents, en sous-titre.
+        // Most frequent artists, as a subtitle.
         let mut counts: HashMap<&str, usize> = HashMap::new();
         for &t in &group.tracks {
             *counts.entry(self.lib.tracks[t].artist_or_unknown()).or_default() += 1;

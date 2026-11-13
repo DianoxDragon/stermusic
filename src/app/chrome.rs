@@ -1,4 +1,4 @@
-//! Habillage de la fenêtre : barre de titre intégrée, barre latérale, dialogues, notifications.
+//! Window chrome: built-in title bar, sidebar, dialogs, notifications.
 
 use eframe::egui::viewport::ResizeDirection;
 use eframe::egui::{
@@ -17,7 +17,7 @@ const RESIZE_MARGIN: f32 = 5.0;
 const SIDEBAR_W: f32 = 264.0;
 const SIDEBAR_MIN: f32 = 60.0;
 
-/// Bord de fenêtre sous la souris (fenêtre sans bordure : on gère le redimensionnement).
+/// Window edge under the mouse (borderless window: resizing is handled here).
 pub fn resize_direction(ctx: &egui::Context) -> Option<ResizeDirection> {
     if ctx.input(|i| i.viewport().maximized.unwrap_or(false) || i.viewport().fullscreen.unwrap_or(false)) {
         return None;
@@ -59,7 +59,7 @@ pub fn apply_resize(ctx: &egui::Context, direction: Option<ResizeDirection>) {
     }
 }
 
-/// Zone qui déplace la fenêtre (glisser) et l'agrandit (double-clic).
+/// Area that moves the window (drag) and maximizes it (double click).
 pub fn drag_area(ui: &mut egui::Ui, rect: Rect, id: &str) {
     let response = ui.interact(rect, ui.id().with(id), Sense::click_and_drag());
     if response.drag_started_by(egui::PointerButton::Primary) {
@@ -79,18 +79,18 @@ enum WinBtn {
     Close,
 }
 
-/// Bouton de fenêtre, style Breeze (KDE) : glyphes fins dans un rond qui se remplit au survol,
-/// rouge Breeze pour fermer.
+/// Window button, Breeze (KDE) style: thin glyphs in a circle that fills on hover, Breeze red
+/// for close.
 fn window_button(ui: &mut egui::Ui, rect: Rect, kind: WinBtn, tooltip: &str) -> egui::Response {
     let response = ui.interact(rect, ui.id().with(("winbtn", kind as u8)), Sense::click());
-    // Survol calculé depuis la position du pointeur : il réagit même quand la fenêtre n'a pas
-    // le focus (egui peut alors ne pas considérer le bouton comme survolé).
+    // Hover computed from the pointer position: it reacts even when the window doesn't have the
+    // focus (egui may then not consider the button hovered).
     let hovered = ui
         .ctx()
         .input(|i| i.pointer.hover_pos())
         .is_some_and(|p| rect.contains(p));
     let t = widgets::hover_t(ui, response.id, hovered);
-    // Fenêtre inactive : glyphes atténués, comme les décorations de KWin.
+    // Inactive window: dimmed glyphs, like KWin's decorations.
     let focused = ui.ctx().input(|i| i.focused);
     let idle = if focused { theme::TEXT_2 } else { theme::TEXT_3 };
     let close = kind == WinBtn::Close;
@@ -174,7 +174,7 @@ impl SterMusic {
                     x += 40.0 * t;
                 }
 
-                // Logo : note de musique sur le dégradé de marque.
+                // Logo: music note on the brand gradient.
                 let logo = Rect::from_center_size(pos2(x + 12.0, rect.center().y), vec2(20.0, 20.0));
                 theme::brand_fill(ui.painter(), logo, 5, 1.0);
                 icons::paint_centered(ui.painter(), Icon::Music, logo.center(), 13.0, Color32::WHITE);
@@ -186,7 +186,7 @@ impl SterMusic {
                     theme::TEXT_2,
                 );
 
-                // Boutons de fenêtre ronds et resserrés, comme ceux de Breeze.
+                // Round, tightly packed window buttons, like Breeze's.
                 let bw = 30.0;
                 let right = rect.right() - 8.0;
                 let close = Rect::from_min_size(pos2(right - bw, rect.top()), vec2(bw, TITLE_HEIGHT));
@@ -226,7 +226,7 @@ impl SterMusic {
                     }
                 }
 
-                // Titre de la fenêtre centré, comme les fenêtres décorées par KWin.
+                // Window title centered, like windows decorated by KWin.
                 {
                     let caption = self.window_title.trim_end_matches(" · SterMusic").to_owned();
                     let caption = if caption == "SterMusic" {
@@ -277,7 +277,7 @@ impl SterMusic {
                 let left = rect.left() + 6.0;
                 let inner_w = w - 12.0;
 
-                // Menu « hamburger ».
+                // "Hamburger" menu.
                 let r = Rect::from_min_size(pos2(left, y), vec2(48.0, 36.0));
                 if ui
                     .put(r, |ui: &mut egui::Ui| {
@@ -289,7 +289,7 @@ impl SterMusic {
                 }
                 y += 42.0;
 
-                // Recherche.
+                // Search.
                 if expanded {
                     let r = Rect::from_min_size(pos2(left + 6.0, y), vec2(inner_w - 12.0, 34.0));
                     self.search_box(ui, r);
@@ -306,7 +306,7 @@ impl SterMusic {
                 }
                 y += 46.0;
 
-                // Navigation principale.
+                // Main navigation.
                 let queue_badge = self.queue.len();
                 let items = [
                     (Page::Home, Icon::Home, tr("Accueil")),
@@ -335,7 +335,7 @@ impl SterMusic {
                     y += 42.0;
                 }
 
-                // Playlists, en accès rapide.
+                // Playlists, for quick access.
                 let bottom_reserved = 94.0;
                 if expanded {
                     y += 6.0;
@@ -377,8 +377,7 @@ impl SterMusic {
                             );
                         });
                     }
-                    // Les playlists épinglées (six au plus), en une rangée de tuiles : leur nom
-                    // apparaît au survol.
+                    // Pinned playlists (six at most), as a row of tiles: their name shows up on hover.
                     let row_w = inner_w - 24.0;
                     let gap = 6.0;
                     let side = ((row_w - gap * 5.0) / 6.0).min(40.0);
@@ -398,8 +397,8 @@ impl SterMusic {
                     }
                 }
 
-                // Outils (éditeur de tags compris), juste au-dessus des paramètres, avec le nombre
-                // de fichiers dont les tags attendent d'être enregistrés.
+                // Tools (tag editor included), right above the settings, with the number of files whose
+                // tags are waiting to be saved.
                 let r = Rect::from_min_size(pos2(left, rect.bottom() - 90.0), vec2(inner_w, 40.0));
                 let selected = matches!(active_page, Some(Page::Tags | Page::Tools));
                 let pending = self.tag_editor.dirty_count();
@@ -414,7 +413,7 @@ impl SterMusic {
                     expanded,
                     badge.as_deref().filter(|_| !busy),
                 );
-                // Lecture ou enregistrement en cours : visible depuis n'importe quelle page.
+                // Playback or recording in progress: visible from any page.
                 if busy {
                     let center = if expanded {
                         pos2(r.right() - 22.0, r.center().y)
@@ -438,7 +437,7 @@ impl SterMusic {
                     self.actions.push(Action::Go(View::Page(Page::Tools)));
                 }
 
-                // Paramètres, en bas.
+                // Settings, at the bottom.
                 let r = Rect::from_min_size(pos2(left, rect.bottom() - 48.0), vec2(inner_w, 40.0));
                 let selected = active_page == Some(Page::Settings);
                 if nav_item(ui, r, Icon::Settings, tr("Paramètres"), selected, expanded, None).clicked() {
@@ -475,7 +474,7 @@ impl SterMusic {
                 StrokeKind::Inside,
             ),
         );
-        // Soulignement à l'accent quand la recherche a le focus (Fluent).
+        // Accent underline when the search has the focus (Fluent).
         if t > 0.0 {
             let line = Rect::from_min_max(
                 pos2(rect.left() + 1.0, rect.bottom() - 2.0),
@@ -659,7 +658,7 @@ impl SterMusic {
                 Some(Dialog::DeleteTheme(id)) => {
                     self.settings.saved_themes.retain(|t| t.id != id);
                     theme::set_saved(&self.settings.saved_themes);
-                    // Le thème supprimé était en cours : on revient à celui du bureau, sinon au premier.
+                    // The deleted theme was the current one: go back to the desktop's, otherwise to the first one.
                     if self.settings.theme == id {
                         self.settings.theme = if theme::system_theme().is_some() {
                             theme::KDE_ID.to_owned()
@@ -718,7 +717,7 @@ impl SterMusic {
             self.toast = None;
             return;
         }
-        // Arrivée : glisse depuis la droite avec un léger rebond ; départ : fondu en descendant.
+        // Arrival: slides in from the right with a slight bounce; departure: fades out moving down.
         let enter = anim::Easing::OutBack.apply((age / 0.35).min(1.0));
         let leave = ((LIFE - age) / 0.4).clamp(0.0, 1.0);
         let fade = (age / 0.2).min(1.0).min(leave).clamp(0.0, 1.0);
@@ -750,9 +749,9 @@ impl SterMusic {
                             ui.label(egui::RichText::new(text).color(theme::TEXT));
                         });
                     });
-                // Filet en bas, sur toute la largeur : le temps qu'il reste avant que la
-                // notification s'en aille. On peint la forme arrondie de la notification,
-                // découpée à une bande en bas : le filet épouse ainsi ses coins.
+                // Thin line at the bottom, across the full width: the time left before the notification
+                // goes away. The rounded shape of the notification is painted, clipped to a band at the
+                // bottom: the line thus follows its corners.
                 let r = frame.response.rect;
                 let strip = Rect::from_min_max(pos2(r.left(), r.bottom() - 3.0), pos2(r.left() + r.width() * left, r.bottom()));
                 let painter = ui.painter().with_clip_rect(strip);
@@ -762,7 +761,7 @@ impl SterMusic {
     }
 }
 
-/// Élément de navigation : icône, libellé, fond au survol et à la sélection.
+/// Navigation item: icon, label, background on hover and when selected.
 fn nav_item(
     ui: &mut egui::Ui,
     rect: Rect,
@@ -777,7 +776,7 @@ fn nav_item(
     let painter = ui.painter();
     if s > 0.0 {
         {
-            // Sélection Breeze : fond teinté de l'accent et liseré de l'accent.
+            // Breeze selection: background tinted with the accent and an accent border.
             painter.rect_filled(
                 rect,
                 CornerRadius::same(5),
@@ -843,9 +842,9 @@ fn nav_item(
 }
 
 impl SterMusic {
-    /// Tuile d'une playlist épinglée : mosaïque de ses pochettes (cœur pour les favoris, icône
-    /// pour une playlist intelligente). Elle arrive en grandissant, se soulève au survol et
-    /// s'entoure de l'accent quand la playlist est ouverte.
+    /// Tile of a pinned playlist: mosaic of its album art (heart for favorites, icon for a smart
+    /// playlist). It grows in when it appears, lifts on hover and gets an accent ring when the
+    /// playlist is open.
     fn pin_tile(&mut self, ui: &mut egui::Ui, cell: Rect, id: PlaylistId, selected: bool) -> egui::Response {
         let key = egui::Id::new(("pin_tile", format!("{id:?}")));
         let resp = ui.interact(cell, key, Sense::click());
@@ -875,8 +874,8 @@ impl SterMusic {
                 let (c1, c2) = theme::seeded_colors(&self.settings.smart_playlists[i].name);
                 ui.painter()
                     .rect_filled(tile, CornerRadius::same(radius), theme::mix(c1, theme::accent(), 0.25));
-                // Lueur vers le haut à droite, gardée à l'intérieur : elle s'éteint avant les
-                // bords (centrée sur le coin, elle en remplissait l'arrondi).
+                // Glow towards the top right, kept inside: it fades out before the edges (centered on the
+                // corner, it filled the rounded part).
                 let w = tile.width();
                 widgets::soft_glow(
                     ui.painter(),
@@ -889,7 +888,7 @@ impl SterMusic {
             }
             PlaylistId::Favorites => self.mosaic(ui, tile, &[], true, radius),
             PlaylistId::User(i) => {
-                // Les premiers morceaux suffisent pour la mosaïque (quatre albums au plus).
+                // The first tracks are enough for the mosaic (four albums at most).
                 let tracks: Vec<usize> = self
                     .settings
                     .playlists

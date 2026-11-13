@@ -1,9 +1,9 @@
-//! Icône dans la zone de notification (StatusNotifierItem : KDE Plasma, et GNOME avec
-//! l'extension AppIndicator).
+//! Icon in the system tray (StatusNotifierItem: KDE Plasma, and GNOME with the AppIndicator
+//! extension).
 //!
-//! Clic : montrer ou cacher la fenêtre ; clic du milieu : lecture / pause ; molette : morceau
-//! suivant ou précédent ; menu : lecture, morceaux, fenêtre, quitter. Le service tourne dans
-//! son propre thread ; les commandes arrivent à l'interface par un canal.
+//! Click: show or hide the window; middle click: play / pause; wheel: next or previous track;
+//! menu: playback, tracks, window, quit. The service runs in its own thread; commands reach
+//! the interface through a channel.
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -14,7 +14,7 @@ use crate::i18n::tr;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Command {
-    /// Montrer la fenêtre si elle est cachée, la cacher sinon.
+    /// Show the window if it is hidden, hide it otherwise.
     Toggle,
     Show,
     PlayPause,
@@ -23,13 +23,13 @@ pub enum Command {
     Quit,
 }
 
-/// Ce que l'icône affiche.
+/// What the icon shows.
 #[derive(Clone, Default, PartialEq)]
 pub struct State {
     pub playing: bool,
-    /// « Titre — Artiste », vide sans morceau.
+    /// "Title — Artist", empty without a track.
     pub track: String,
-    /// La fenêtre est cachée dans la zone de notification.
+    /// The window is hidden in the system tray.
     pub hidden: bool,
 }
 
@@ -141,7 +141,7 @@ impl ksni::Tray for Item {
     }
 }
 
-/// L'icône de l'application, en ARGB (ce qu'attend le protocole), en deux tailles.
+/// The application icon, in ARGB (what the protocol expects), in two sizes.
 fn app_icon() -> Vec<ksni::Icon> {
     let Ok(img) = image::load_from_memory(include_bytes!("../assets/icon.png")) else {
         return Vec::new();
@@ -172,7 +172,7 @@ pub struct Tray {
 }
 
 impl Tray {
-    /// Place l'icône ; `None` si le bureau n'a pas de zone de notification compatible.
+    /// Places the icon; `None` if the desktop has no compatible system tray.
     pub fn start(ctx: &egui::Context, state: State) -> Option<Self> {
         let (tx, rx) = channel();
         let item = Item {
@@ -185,7 +185,7 @@ impl Tray {
         Some(Self { handle, rx, state })
     }
 
-    /// Met à jour ce que montre l'icône (seulement si quelque chose a changé).
+    /// Updates what the icon shows (only if something changed).
     pub fn set_state(&mut self, state: State) {
         if state != self.state {
             self.state = state.clone();
