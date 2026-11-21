@@ -707,11 +707,15 @@ impl SterMusic {
         } else {
             (Icon::Heart, tr("Ajouter à mes stations"))
         };
-        if ui
-            .put(heart, |ui: &mut egui::Ui| {
-                widgets::toggle_icon(ui, saved, icon, tip, 34.0, 16.0)
-            })
-            .clicked()
+        if widgets::toggle_icon(
+            &mut ui.new_child(egui::UiBuilder::new().max_rect(heart)),
+            saved,
+            icon,
+            tip,
+            34.0,
+            16.0,
+        )
+        .clicked()
         {
             self.actions.push(Action::ToggleStation(s.clone()));
         } else if resp.clicked() {

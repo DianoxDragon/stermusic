@@ -1541,10 +1541,18 @@ impl SterMusic {
         } else {
             (Icon::Pin, tr("Épingler dans la barre latérale"))
         };
+        // A child Ui, not `ui.put`: `put` would move the parent cursor back to the
+        // bottom of the pin, so the next row would start inside this one.
         if (pinned || resp.hovered() || ui.rect_contains_pointer(pin_r))
-            && ui
-                .put(pin_r, |ui: &mut egui::Ui| widgets::toggle_icon(ui, pinned, icon, tip, 32.0, 15.0))
-                .clicked()
+            && widgets::toggle_icon(
+                &mut ui.new_child(egui::UiBuilder::new().max_rect(pin_r)),
+                pinned,
+                icon,
+                tip,
+                32.0,
+                15.0,
+            )
+            .clicked()
         {
             self.actions.push(Action::TogglePin(id));
         }

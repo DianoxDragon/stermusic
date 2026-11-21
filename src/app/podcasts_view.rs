@@ -696,11 +696,14 @@ impl SterMusic {
             } else {
                 (Icon::Download, tr("Télécharger pour l'écoute hors ligne"))
             };
-            if ui
-                .put(dl, |ui: &mut egui::Ui| {
-                    widgets::icon_button(ui, icon, tip, 32.0, 15.0)
-                })
-                .clicked()
+            if widgets::icon_button(
+                &mut ui.new_child(egui::UiBuilder::new().max_rect(dl)),
+                icon,
+                tip,
+                32.0,
+                15.0,
+            )
+            .clicked()
             {
                 if have {
                     let _ = std::fs::remove_file(podcasts::download_path(e));
@@ -721,11 +724,14 @@ impl SterMusic {
         } else {
             (Icon::Sparkles, tr("Marquer comme écouté"))
         };
-        if ui
-            .put(mark, |ui: &mut egui::Ui| {
-                widgets::icon_button(ui, icon, tip, 32.0, 15.0)
-            })
-            .clicked()
+        if widgets::icon_button(
+            &mut ui.new_child(egui::UiBuilder::new().max_rect(mark)),
+            icon,
+            tip,
+            32.0,
+            15.0,
+        )
+        .clicked()
         {
             self.settings.episode_progress.insert(
                 key.clone(),
